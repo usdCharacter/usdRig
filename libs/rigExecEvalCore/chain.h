@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -34,7 +35,6 @@
 #include "rigExecEvalCore/kinds.h"
 #include "rigExecEvalCore/skin.h"
 #include "rigExecEvalCore/step.h"
-#include "rigExecMath/blendRangeKernel.h"
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/pointRanges.h"
@@ -52,17 +52,23 @@ enum ChainStepDetail : int32_t {
     kChainDetailNoChunk = 3,
     kChainDetailFold = 4,
     kChainDetailChunk = 5,
-    kChainDetailNoDerived = 6
+    kChainDetailNoDerived = 6,
+    kChainDetailPointCount = 7
 };
 
+/// A range chain's base whose point count is not the compiled rig's: the
+/// error both front ends report, after the chain target's path.
+inline std::string
+ChainPointCountText(size_t count, size_t compiled)
+{
+    return "the base has " + std::to_string(count) +
+           " point(s), but the compiled rig cut its vertex groups from " +
+           std::to_string(compiled);
+}
+
 /// The op ordinals the chain bodies dispatch on, in wire order.
-inline constexpr int kChainOpMatrix = int(fb::RevisionOp::Matrix);
 inline constexpr int kChainOpSkin = int(fb::RevisionOp::Skin);
-inline constexpr int kChainOpBlendShape = int(fb::RevisionOp::BlendShape);
-inline constexpr int kChainOpSmooth = int(fb::RevisionOp::Smooth);
-inline constexpr int kChainOpLattice = int(fb::RevisionOp::Lattice);
 inline constexpr int kChainOpWire = int(fb::RevisionOp::Wire);
-inline constexpr int kChainOpDeltaMush = int(fb::RevisionOp::DeltaMush);
 
 /// Acceptance ordinals both front ends already spell
 /// (RigExecRevisionAcceptance and its playback twin).
@@ -85,6 +91,8 @@ struct ChainInputsAccessT {
     uint64_t *baseVersion = nullptr;
     bool *scheduleDirty = nullptr;
     size_t revisionCount = 0;
+    /// A range chain's Build point count; SIZE_MAX for a Legacy chain.
+    size_t compiledPointCount = SIZE_MAX;
 };
 
 /// The fields one group step reads and writes, as the adapter's revision
@@ -94,7 +102,6 @@ template <class Point> struct GroupStepAccessT {
     bool rangeSetAside = false;
     bool applies = false;
     bool skin = false;
-    bool blendChunked = false;
     bool partitionStale = false;
     bool fullStrength = false;
     size_t precedingCount = 0;
@@ -365,6 +372,11 @@ RunChainInputsStep(Host &host, const StepRef &step)
         return {Outcome::Held, kNoStepDetail};
     }
     const typename Host::ChainPoints &sampled = *access.sampled;
+    if (access.compiledPointCount != SIZE_MAX &&
+        sampled.size() != access.compiledPointCount) {
+        *access.haveBase = false;
+        return {Outcome::Invalid, kChainDetailPointCount};
+    }
     if (*access.haveResult && sampled.size() != access.last->size()) {
         if (!access.result->empty()) {
             ++*access.resultVersion;
@@ -614,18 +626,6 @@ RunGroupStepBody(Host &host, size_t chain, size_t revision, size_t g)
             return {Outcome::Applied, kNoStepDetail};
         }
         RigExecPublishPassedGroup(&state, entering, from);
-        return {Outcome::Applied, kNoStepDetail};
-    }
-    if (access.blendChunked) {
-        host.state().runBlendGroup(chain, revision, g, begin, end, entering,
-                                   &state);
-        state.ok = true;
-        return {Outcome::Applied, kNoStepDetail};
-    }
-    if (!host.state().prepareGroupHalo(chain, revision, g, entering)) {
-        state.ok = false;
-        RigExecPublishPassedGroup(&state, entering, from);
-        host.state().noteGateViolation(chain, revision);
         return {Outcome::Applied, kNoStepDetail};
     }
     const int k = RigExecGroupScratch(&state, end - begin);
@@ -1078,17 +1078,13 @@ RunDerivedStep(Host &host, const StepRef &step)
 }
 
 /// The paired skip switch: the same per-kind flag clears on both front
-/// ends, publishing nothing fabricated. The WeightField arm stays in
-/// each adapter's geometry half exactly as it stands there, so it
-/// answers without touching revision state here too.
+/// ends, publishing nothing fabricated.
 template <class Host>
 void
 RunSkipGeometryStep(Host &host, const StepRef &step)
 {
     static_assert(IsBoundHost<Host>::value, "chain Host is not bound");
     switch (StepKind(step.kind)) {
-    case StepKind::WeightField:
-        return;
     case StepKind::ChainInputs: {
         size_t chain = 0;
         if (host.inputs().chainIndexForObject(step.object, &chain)) {

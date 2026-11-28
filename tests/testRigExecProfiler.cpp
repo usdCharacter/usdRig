@@ -1,8 +1,8 @@
-// Tests for the evaluation profiler (libs/rigExec/profiler.h).
+// Tests for the evaluation profiler (libs/rigExec/api/profiler.h).
 // The profiler is deliberately free of USD dependencies, so this test needs
 // no stage: it covers the enabled/disabled gate, nested scopes, summary
 // aggregation, and Chrome Trace output.
-#include "rigExec/profiler.h"
+#include "rigExec/api/profiler.h"
 
 #include <cstdio>
 #include <fstream>
@@ -128,9 +128,8 @@ main()
             rigExec::RigExecProfileScope scope(&profiler, "WithArgs", "exec");
             scope.AddArg("solvers", "4");
         }
-        std::thread worker([&profiler]() {
-            RIGEXEC_PROFILE_SCOPE(profiler, "Worker");
-        });
+        std::thread worker(
+            [&profiler]() { RIGEXEC_PROFILE_SCOPE(profiler, "Worker"); });
         worker.join();
         const std::vector<rigExec::RigExecProfileEvent> events =
             profiler.GetEvents();
@@ -164,8 +163,7 @@ main()
     {
         rigExec::RigExecProfiler profiler;
         profiler.SetEnabled(true);
-        profiler.Record("First", "pose", 1000000, 1001000,
-                        {{"frame", "1"}});
+        profiler.Record("First", "pose", 1000000, 1001000, {{"frame", "1"}});
         profiler.Record("Second", "geometry", 1000500, 1000700);
         const std::string path = "testRigExecProfiler.trace";
         std::string error;
@@ -202,8 +200,8 @@ main()
         rigExec::RigExecProfiler profiler;
         profiler.SetEnabled(true);
         std::string error;
-        CHECK(!profiler.WriteChromeTrace(
-            "no-such-directory/out.trace", &error));
+        CHECK(
+            !profiler.WriteChromeTrace("no-such-directory/out.trace", &error));
         CHECK(!error.empty());
     }
 
@@ -232,9 +230,9 @@ main()
         const auto events = profiler.GetEvents();
         CHECK(events.size() == 2);
         CHECK(events[0].name == "w");
-        CHECK(events[0].threadIndex != 0);  // the worker, recorded first
+        CHECK(events[0].threadIndex != 0); // the worker, recorded first
         CHECK(events[1].name == "m");
-        CHECK(events[1].threadIndex == 0);  // the thread that enabled it
+        CHECK(events[1].threadIndex == 0); // the thread that enabled it
         CHECK(profiler.GetThreadCount() == 2);
     }
 
@@ -297,8 +295,7 @@ main()
         profiler.RecordInstant("cacheHit", "frameCache", 100, {});
         CHECK(profiler.GetEventCount() == 0);
         profiler.SetEnabled(true);
-        profiler.RecordInstant("cacheHit", "frameCache", 100,
-                               {{"frame", "3"}});
+        profiler.RecordInstant("cacheHit", "frameCache", 100, {{"frame", "3"}});
         profiler.RecordInstant("cacheMiss", "frameCache", 200);
         const auto events = profiler.GetEvents();
         CHECK(events.size() == 2);
@@ -318,10 +315,9 @@ main()
                                {{"queuedDepth", 16}});
         CHECK(profiler.GetEventCount() == 0);
         profiler.SetEnabled(true);
-        profiler.RecordCounter("warmQueue", "scheduler", 50,
-                               {{"queuedDepth", 16},
-                                {"running", 2},
-                                {"canceled", 0}});
+        profiler.RecordCounter(
+            "warmQueue", "scheduler", 50,
+            {{"queuedDepth", 16}, {"running", 2}, {"canceled", 0}});
         const auto events = profiler.GetEvents();
         CHECK(events.size() == 1);
         CHECK(events[0].kind == rigExec::RigExecProfileEventKind::Counter);
@@ -350,13 +346,11 @@ main()
         const auto events = profiler.GetEvents();
         CHECK(events.size() == 4);
         CHECK(events[0].name == "cacheHit");
-        CHECK(events[0].category ==
-              rigExec::kRigExecProfileCategoryFrameCache);
+        CHECK(events[0].category == rigExec::kRigExecProfileCategoryFrameCache);
         CHECK(events[0].kind == rigExec::RigExecProfileEventKind::Instant);
         CHECK(events[1].name == "cacheMiss");
         CHECK(events[2].name == "warmQueue");
-        CHECK(events[2].category ==
-              rigExec::kRigExecProfileCategoryScheduler);
+        CHECK(events[2].category == rigExec::kRigExecProfileCategoryScheduler);
         CHECK(events[2].kind == rigExec::RigExecProfileEventKind::Counter);
         CHECK(events[2].counters.at("canceled") == 1.0);
         CHECK(events[3].name == "warmCancel");

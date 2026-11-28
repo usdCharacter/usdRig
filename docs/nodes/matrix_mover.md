@@ -56,7 +56,7 @@ approximating one with a blend of constraint sources.
 ## How it works
 
 The provider publishes `computeMatrix`, the rest-to-posed map of its
-own frame (computations.cpp:416-432), and the mover blends it over the
+own frame, and the mover blends it over the
 incoming points as `p' = q + w (T q - q)` (schema.usda:2552-2553), where
 `w` is the bound weight field or, with none bound,
 `inputs:defaultWeight`. `rigExecReadPhase` metadata on

@@ -6,8 +6,9 @@
 #include "rigExecMath/skeleton2dKernel.h"
 #include "rigExecMath/jointGroupKernel.h"
 #include "rigExecMath/pointFrame.h"
+#include "pxr/base/gf/math.h"
 namespace rigExec {
-// Defined in rigExec/types.h; held and passed by pointer here.
+// Defined in rigExec/api/types.h; held and passed by pointer here.
 struct RigExecPointFrameArray;
 enum class RigExecSolverKind {
     FkChain,
@@ -94,7 +95,36 @@ struct RigExecSolverRecord {
     /// joint, its nearest namespace ancestor among its joints (-1: none).
     std::vector<RigExecJointGroup> jointGroups;
     std::vector<int32_t> jointGroupMembers, jointGroupParents;
+    /// Ribbon: rigExec:sampleCount, read once at Build. A value that differs
+    /// from it at a run (a drag, an upstream input) rebuilds the program.
+    int ribbonSamples = 0;
+    /// The frames the aggregate holds, fixed at Build. A frame blend's is
+    /// its inputs' count, which they must agree on.
+    size_t frameCount = 0;
 };
+/// The frames a solver publishes, from its record alone; 0 for a frame
+/// blend, whose count is its inputs'.
+inline size_t
+RigExecSolverOwnFrameCount(const RigExecSolverRecord &s)
+{
+    switch (s.kind) {
+    case RigExecSolverKind::FkChain:
+        return s.controlRests.size();
+    case RigExecSolverKind::TwoBoneIk:
+        return 3;
+    case RigExecSolverKind::TwistDistribution:
+        return s.twistWeights.size();
+    case RigExecSolverKind::Ribbon:
+        return s.ribbonSamples >= 2 ? size_t(s.ribbonSamples) : 0;
+    case RigExecSolverKind::SplineIk:
+        return s.splineCount;
+    case RigExecSolverKind::Skeleton2d:
+        return s.bone2dOrder.size();
+    case RigExecSolverKind::BlendPointFrames:
+        return 0;
+    }
+    return 0;
+}
 /// Current graph values, delivered after typed read-phase resolution. Null
 /// aggregate pointers preserve BlendPointFrames unwired-input pass-through.
 struct RigExecSolverInputs {
@@ -103,7 +133,6 @@ struct RigExecSolverInputs {
     const RigExecPointFrameArray *blendA = nullptr, *blendB = nullptr;
     double blendWeight = 0, twistTurns = 0;
     std::vector<GfVec3f> ribbonPoints;
-    int ribbonSampleCount = 0;
     bool refreshIkParams = false;
     double bend = 0, upperOffset = 0, lowerOffset = 0;
     float stretch = 1, softness = 0, pin = 0, softDistance = 0, limbTwist = 0;
@@ -123,6 +152,23 @@ struct RigExecSolverInputs {
     /// Each joint group's rigExec:activeMember (FkChain, Skeleton2d).
     std::vector<double> jointGroupSelectors;
 };
+
+/// The spline IK settings a solve uses: \p input's when the scene refreshed
+/// them (refreshSplineParams), otherwise the constants \p s holds.
+inline RigExecSplineIkParams
+RigExecSolverSplineParams(const RigExecSolverRecord &s,
+                          const RigExecSolverInputs &input)
+{
+    RigExecSplineIkParams params = s.splineParams;
+    if (input.refreshSplineParams) {
+        params.preserveVolume = input.preserveVolume;
+        params.midFollowWeight = input.midFollowWeight;
+        params.roll = GfDegreesToRadians(input.rollDegrees);
+        params.twist = GfDegreesToRadians(input.twistDegrees);
+        params.minLengthRatio = input.minLengthRatio;
+    }
+    return params;
+}
 struct RigExecSolverWorkspace {
     std::vector<RigExecFkChainElement> fkElements;
     std::vector<RigExecPointFrame> spacedFrames;
@@ -136,10 +182,12 @@ struct RigExecSolverWorkspace {
     std::vector<int32_t> jointGroupSlots;
     std::vector<uint8_t> jointGroupActive;
 };
-/// One production numerical body for native and direct SceneDb graphs.
-/// Clears outputs even for malformed/degenerate bindings.
-bool RigExecRunSolver(const RigExecSolverRecord &, const RigExecSolverInputs &,
-                      RigExecSolverWorkspace *, RigExecPointFrameArray *,
-                      std::string *error = nullptr);
+/// The 2D skeleton refusals its op bridge and reference solve give.
+inline constexpr const char *kRigExecSkeleton2dCountsDiffer =
+    "2D skeleton bone, rest, channel and parent-space counts differ";
+inline constexpr const char *kRigExecSkeleton2dMalformed =
+    "2D skeleton solve order is malformed";
+inline constexpr const char *kRigExecSkeleton2dNotFinite =
+    "2D skeleton solve failed (a non-finite channel); publishing setup frames";
 } // namespace rigExec
 #endif

@@ -1,8 +1,8 @@
 // Live inspection reads the host's evaluator without evaluating or authoring.
 #include "rigExecImaging/registry.h"
 #include "rigExecImaging/profilerApi.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
 #include "pxr/base/js/json.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/getenv.h"

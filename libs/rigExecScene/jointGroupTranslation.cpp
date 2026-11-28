@@ -1,7 +1,7 @@
 #include "rigExecSchema/schemaNames.h"
 #include "jointGroupTranslation.h"
 #include "sceneCompileInputs.h"
-#include "rigExec/pathText.h"
+#include "rigExec/internal/pathText.h"
 
 #include "pxr/base/tf/staticTokens.h"
 

@@ -12,6 +12,7 @@
 #define RIGEXEC_MATH_SPACE_MATCH_KERNEL_H
 
 #include "ikFkMatchKernel.h"
+#include "switchMathKernel.h"
 
 #include <algorithm>
 #include <cmath>
@@ -41,15 +42,19 @@ RigExecSpaceMatchSolve(const double target[16], double active,
     for (int pass = 0; pass < kPasses; ++pass) {
         const k::M4 avars = k::Compose(*ch);
         double posed[16];
-        if (!run(avars.data(), active, posed)) return false;
+        if (!run(avars.data(), active, posed))
+            return false;
         double error = 0.0;
         for (int i = 0; i < 16; ++i) {
             error = std::max(error, std::abs(posed[i] - target[i]));
         }
-        if (error < kSettled) return true;
+        if (error < kSettled)
+            return true;
         k::M4 inverse;
-        if (!k::Inverse(avars, &inverse)) return false;
-        if (!k::Solve(goal, k::Mul(inverse, k::Load(posed)), ch)) return false;
+        if (!k::Inverse(avars, &inverse))
+            return false;
+        if (!k::Solve(goal, k::Mul(inverse, k::Load(posed)), ch))
+            return false;
     }
     return true;
 }
@@ -77,6 +82,57 @@ RigExecSpaceMatchSolveAll(const double target[16],
     return true;
 }
 
-}  // namespace rigExec
+/// How RigExecSpaceMatchT ended. NotFinite refuses a target or a switched
+/// transform whose landmarks are not usable (RigExecFrameUsableT); Unsolved
+/// is any other failure: no spaces, a switch that cannot run, a singular
+/// frame or solve.
+enum class RigExecSpaceMatchOutcome { Matched, Unsolved, NotFinite };
+
+/// What a space match op reports: the values it published are the match,
+/// or no match exists this frame (a defined result, not an error); for
+/// NotFinite every evaluator gives one kRigExecSpaceMatchNotFinite line.
+enum class RigExecSpaceMatchStatus : uint32_t { Matched, Unsolved, NotFinite };
+
+/// Every evaluator's diagnostic for NotFinite, after the control's path.
+inline constexpr char kRigExecSpaceMatchNotFinite[] =
+    " could not match its spaces: a landmark is not finite";
+
+/// RigExecSpaceMatchSolveAll over a backend's space switch:
+/// compose(avars, active, &composed) runs the switch, and \p target and
+/// each composed transform are read through their landmarks
+/// (RigExecReadLandmarkMatrixT).
+template <class Mat3, class Vec3, class Mat4, class Compose>
+RigExecSpaceMatchOutcome
+RigExecSpaceMatchT(const Mat4 &target, const RigExecIkFkMatchChannels &current,
+                   size_t spaces, Compose &&compose, double *out)
+{
+    if (!spaces)
+        return RigExecSpaceMatchOutcome::Unsolved;
+    Mat4 read;
+    if (RigExecReadLandmarkMatrixT<Mat3, Vec3>(target, &read) ==
+        RigExecLandmarkRead::NotUsable) {
+        return RigExecSpaceMatchOutcome::NotFinite;
+    }
+    bool refused = false;
+    const auto run = [&](const double *avars, double active, double *posed) {
+        Mat4 composed, matrix;
+        if (!compose(avars, active, &composed))
+            return false;
+        const RigExecLandmarkRead result =
+            RigExecReadLandmarkMatrixT<Mat3, Vec3>(composed, &matrix);
+        refused = result == RigExecLandmarkRead::NotUsable;
+        if (result != RigExecLandmarkRead::Read)
+            return false;
+        std::copy(&matrix[0][0], &matrix[0][0] + 16, posed);
+        return true;
+    };
+    if (RigExecSpaceMatchSolveAll(&target[0][0], current, spaces, run, out)) {
+        return RigExecSpaceMatchOutcome::Matched;
+    }
+    return refused ? RigExecSpaceMatchOutcome::NotFinite
+                   : RigExecSpaceMatchOutcome::Unsolved;
+}
+
+} // namespace rigExec
 
 #endif

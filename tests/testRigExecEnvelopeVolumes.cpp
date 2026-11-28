@@ -1,7 +1,9 @@
-// S9 newly admitted singleton envelopes; the old walk refused this domain.
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
+// Singleton volume envelopes: placement geometry and recovery, count
+// failures and a final-placement cycle.
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/weightField.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"
 #include "pxr/usd/sdf/types.h"
@@ -104,16 +106,15 @@ PlacementGeometryAndRecovery(const std::string &fixture)
     CHECK(property == 3 && constraint == 2 && base == 3 && final == 2);
     bool geometryEdge = false;
     for (const auto &step : B.steps)
-        if (step.kind == RigExecBakedStepKind::WeightField)
+        if (RigExecBakedWeightFieldOf(B, step) >= 0)
             for (const auto &read : step.reads)
                 if (read.domain == RigExecBakedSlotDomain::ChainPoints)
                     geometryEdge = true;
     CHECK(geometryEdge); // Final sample points are a real same-frame producer.
     const auto builds = evaluator.GetBakedProgramBuildCount();
+    // A property envelope whose field fails stops the frame with its error.
     const auto shortField = evaluator.Evaluate(UsdTimeCode(2));
-    CHECK(shortField.valid);
-    CHECK(Scalar(shortField, "base") == 0 && JointX(shortField, "Base") == 0);
-    CHECK(Scalar(shortField, "geometry") == 5);
+    CHECK(!shortField.valid);
     CHECK(CountFailure(shortField));
     const auto recovered = evaluator.Evaluate(UsdTimeCode(3));
     CHECK(recovered.valid);
@@ -121,18 +122,15 @@ PlacementGeometryAndRecovery(const std::string &fixture)
     CHECK(!CountFailure(recovered));
     CHECK(evaluator.GetBakedProgramBuildCount() == builds);
     const auto empty = evaluator.Evaluate(UsdTimeCode(4));
-    CHECK(empty.valid);
-    CHECK(Scalar(empty, "base") == 0 && JointX(empty, "Base") == 0);
+    CHECK(!empty.valid);
     CHECK(CountFailure(empty));
     const auto blocked = evaluator.Evaluate(UsdTimeCode(5));
-    CHECK(blocked.valid);
-    CHECK(Scalar(blocked, "base") == 0 && JointX(blocked, "Base") == 0);
+    CHECK(!blocked.valid);
     bool unavailable = false;
     for (const auto &line : blocked.diagnostics)
         unavailable |= line.find("could not read the points to sample") !=
                        std::string::npos;
     CHECK(unavailable);
-    CHECK(Scalar(blocked, "geometry") == 5);
     const auto restored = evaluator.Evaluate(UsdTimeCode(6));
     CHECK(restored.valid);
     CHECK(Scalar(restored, "base") == 10 && JointX(restored, "Base") == 6);
@@ -197,7 +195,8 @@ FinalPlacementCycle(const std::string &fixture)
     if (!cycle) {
         for (const auto &step : B.steps) {
             if (step.label.find("Self") == std::string::npos &&
-                step.kind != RigExecBakedStepKind::VolumePlacements)
+                RigExecBakedIdentityOf(B, step).kind !=
+                    RigExecBakedStepKind::VolumePlacements)
                 continue;
             std::printf("cycle descriptor %s object=%d\n", step.label.c_str(),
                         step.object);

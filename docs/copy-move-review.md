@@ -33,7 +33,7 @@ connectivity is constant across frames:
   template kernels (`:2596`, `:2601`).
 
 Production callers run per revision per frame
-(`libs/rigExec/moverGraph.cpp:936-945`,
+(`libs/rigExec/internal/moverGraph.cpp:936-945`,
 `libs/rigExecRuntime/geometry.cpp:2592-2601`).
 
 Proposed change: precompute connectivity once per topology compilation,
@@ -58,7 +58,7 @@ arrays convert on every evaluation. Per-frame instances:
   full base point set per derived revision per frame), `:55`, `:75`
   (`VtIntArray`/`VtFloatArray` to `std::vector` per frame).
 - The mover-oracle branches copy points/counts/indices the same way
-  (for example `libs/rigExec/movers/smoothMover.cpp:70-84`,
+  (for example `libs/rigExec/internal/movers/smoothMover.cpp:70-84`,
   `curveMover.cpp:351-370`, `latticeMover.cpp:140-144`), but those are
   parity-reference paths, not production evaluation.
 
@@ -68,7 +68,7 @@ size, or `TfSpan<const T>` from `pxr/base/tf/span.h`) so movers pass
 layer free of stage access. This is a
 structural migration across kernel signatures AND packet/provider
 storage: `RigExecMoverParameters` owns its vectors
-(`libs/rigExec/types.h:290-298`), so changing kernel arguments alone
+(`libs/rigExec/api/types.h:290-298`), so changing kernel arguments alone
 leaves the assemble-time copies intact. Owners must keep span storage
 alive across execution and subsequent retained-input comparisons. H1's
 caching composes with it.
@@ -76,7 +76,7 @@ caching composes with it.
 ### H3. Frozen/baked replay copies the resolved-inputs map per phased revision per frame
 
 `libs/rigExec/frozenGeometry.cpp:1133`, its baked twin
-`libs/rigExec/bakedGeometry.cpp:1513`, and the dynamic path at
+`libs/rigExec/internal/bakedGeometry.cpp:1513`, and the dynamic path at
 `libs/rigExec/rigEvaluatorGeometryEvaluation.cpp:292-295`
 (`revisionInputs = _resolvedInputs;` inside the optional overlay):
 
@@ -85,7 +85,7 @@ revision.revisionInputs = *B.resolvedInputs;  // guarded by !binding.phases.empt
 ```
 
 `RigExecResolvedInputs` holds an
-`unordered_map<SdfPath, VtValue>` (`libs/rigExec/moverGraph.h:525`),
+`unordered_map<SdfPath, VtValue>` (`libs/rigExec/internal/moverGraph.h:525`),
 so every phase-declaring revision per frame copies the map and its
 entries (value payloads are shared, not deep-copied -- `VtValue`
 carries remote payloads by reference-counted handle), only to overlay
@@ -100,7 +100,7 @@ revision-owned buffers for this reason.
 
 ### H4. Baked last-parameters snapshot deep-copies vectors per execution
 
-`libs/rigExec/bakedGeometry.cpp:2444`:
+`libs/rigExec/internal/bakedGeometry.cpp:2444`:
 `revision.lastParameters = revision.parameters;` copies every
 parameter vector per revision per execution for next-run change
 detection (compared elementwise at `:2198`).
@@ -120,7 +120,7 @@ collision. (The adjacent `lastAuxPoints` assignment at `:2030` is a
 `begin()` goes through `data()` and `_DetachIfNotUnique()`). These
 read-only conversions use the mutable iterators on shared arrays:
 
-- `libs/rigExec/bakedGeometry.cpp:1642` (`sample.points.assign` after
+- `libs/rigExec/internal/bakedGeometry.cpp:1642` (`sample.points.assign` after
   the shared assignment at `:1638`), `:2001-2002`, `:2016-2017`
   (`derived.lastBase.begin()/end()`).
 - `libs/rigExec/rigEvaluatorGeometryEvaluation.cpp:593` (after the
@@ -131,9 +131,9 @@ read-only conversions use the mutable iterators on shared arrays:
   projector conversion at `:730-731` can trigger the same detach when
   no earlier consumer did.
 - `libs/rigExec/frozenGeometry.cpp:1402`, `:1409` (derived twin).
-- `libs/rigExec/bakedWeights.cpp:373` (`out->insert` with mutable
+- `libs/rigExec/internal/bakedWeights.cpp:373` (`out->insert` with mutable
   iterators): the local can share cached storage
-  (`libs/rigExec/moverGraph.h:287`) and capture retains it
+  (`libs/rigExec/internal/moverGraph.h:287`) and capture retains it
   (`:369-372`) -- detaching before copying. Runs for target,
   sample, and curve points during weight-packet rebuilding.
 - The shared production array assembler `moverGraph.cpp:1619-1656`:
@@ -232,11 +232,11 @@ commit.
 
 ### M1. Wire-driver measurement copies two matrices per CV
 
-`libs/rigExec/moverGraph.h:1152-1168`
+`libs/rigExec/internal/moverGraph.h:1152-1168`
 `RigExecMeasureWireDriver(GfMatrix4d transform, GfMatrix4d space, ...)`
 takes 256 bytes of matrices by value and is called once per CV per wire
 evaluation (`moverGraph.h:1211`, `:1219` via `:1198`,
-`libs/rigExec/movers/curveMover.cpp:317`).
+`libs/rigExec/internal/movers/curveMover.cpp:317`).
 Only the unscale branch mutates the copies.
 
 Proposed change: take `const GfMatrix4d &` parameters and copy into
@@ -245,7 +245,7 @@ locals inside the `posedPoints || posedDelta` branch.
 ### M2. Envelope resolution allocates a temporary per sparse resolve
 
 `RigExecWeightPacket::ResolveAll`'s sparse arm
-(`libs/rigExec/types.cpp:128-132`) fills a fresh `valuesOut` vector
+(`libs/rigExec/internal/types.cpp:128-132`) fills a fresh `valuesOut` vector
 and swaps it into the destination on every call. All validation exits
 sit above that point, so the atomicity the swap protects (no partial
 write on failure) already holds.
@@ -256,7 +256,7 @@ no current caller aliases the output with the packet's own weights
 (all call sites pass distinct locals or members), but the temp-plus-swap
 is what makes such a call work today, and direct writes would clobber
 the source weights mid-scatter. Separately, the dense caller at
-`libs/rigExec/moverGraph.cpp:501` zero-fills `weights(count)` and then
+`libs/rigExec/internal/moverGraph.cpp:501` zero-fills `weights(count)` and then
 `ResolveAll` assigns over it -- declare the vector empty and let
 `ResolveAll` size it in one pass. (The other production callers at
 `moverGraph.cpp:823,900` already declare empty vectors.) The runtime
@@ -269,7 +269,7 @@ there.
 ### M3. (Fixed in tree) Disabled profile scopes took three mutexes each
 
 `_enabled` is now `std::atomic<bool>` with a lock-free `IsEnabled()`
-(`libs/rigExec/profiler.h:104`, `:477`), so the macro's three checks
+(`libs/rigExec/api/profiler.h:104`, `:477`), so the macro's three checks
 no longer acquire mutexes. See Cleared.
 
 ### M4. Missing move into frozen out-parameter
@@ -288,7 +288,7 @@ assignment at `:34` is unreachable: the guard tests the validity of
 `revision.parameters = inputs.revisionPackets[...];` copies the skin
 packet per skin revision per frame, with cached layouts included.
 Compiled rig layouts already avoid the layout arrays via the shared
-`skinTopology` handle (`libs/rigExec/types.h:332-336`,
+`skinTopology` handle (`libs/rigExec/api/types.h:332-336`,
 `moverGraph.cpp:1871-1897`); what still copies every frame is the
 packet shell plus the transform table -- and that table is the FIXED
 identity table (`bakedGeometry.cpp:829-830`), passed to the assembler
@@ -322,8 +322,8 @@ repeatedly:
 `:478`, `:546`, `:553`.)
 
 Proposed change: hoist each to a file-static `const TfToken`, matching
-the existing convention (`libs/rigExec/moverGraph.cpp:2842-2846`;
-  `libs/rigExec/rigEvaluatorInternal.h:102-114`;
+the existing convention (`libs/rigExec/internal/moverGraph.cpp:2842-2846`;
+  `libs/rigExec/internal/rigEvaluatorInternal.h:102-114`;
   `frozenGeometry.cpp:1411` already does this locally).
 Related: `GetPrimAtPath` per blend input/sample per frame
 (`rigEvaluatorGeometryEvaluation.cpp:545,552`) could cache prims per
@@ -331,7 +331,7 @@ compiled rig; counts are small, so this is the minor half of the finding.
 
 ### M7. Derived publish converts vector to VtArray per execution
 
-`libs/rigExec/bakedGeometry.cpp:2039-2042` resizes `derived.spare`
+`libs/rigExec/internal/bakedGeometry.cpp:2039-2042` resizes `derived.spare`
 (a `VtVec3fArray`) and copies `revision.output` (a
 `std::vector<GfVec3f>`) into it on every publication, then swaps;
 the frozen path repeats it at
@@ -375,7 +375,7 @@ runtime twin.
 
 ### M10. Dense blend samples copied into bake-retention storage every frame
 
-`libs/rigExec/bakedGeometry.cpp:1642-1643` assigns the sampled points
+`libs/rigExec/internal/bakedGeometry.cpp:1642-1643` assigns the sampled points
 both to the evaluation packet and to `boundSample.lastPoints`, a
 `std::vector<GfVec3f>` (`bakedProgramImpl.h:2105`) read only by bake
 capture (`libs/rigExecBake/capture.cpp:501-503`).
@@ -402,10 +402,10 @@ then consider span inputs per H2.
 
 ### M12. Baked assembly copies base points for operations that never consume them
 
-`libs/rigExec/bakedGeometry.cpp:1574-1577` copies the full base point
+`libs/rigExec/internal/bakedGeometry.cpp:1574-1577` copies the full base point
 set for every operation except Matrix, Skin, and Wire. Smooth,
 SurfaceProject, Ribbon, and EmitGuidePoints never read it in their
-assembly branches (`libs/rigExec/moverGraph.cpp:2209-2214`,
+assembly branches (`libs/rigExec/internal/moverGraph.cpp:2209-2214`,
 `:2328-2358`: topology, driver frames, and bind coordinates only),
 and the dynamic path already skips them with its explicit consumer
 predicate (`rigEvaluatorGeometryEvaluation.cpp:524-533`).
@@ -452,7 +452,7 @@ template preserves dynamic/baked/runtime parity.
 
 ### M15. Wire assembly repeats identical matrix inversions across CVs
 
-`RigExecPoseWireDrivers` (`libs/rigExec/moverGraph.h:1182-1234`) calls
+`RigExecPoseWireDrivers` (`libs/rigExec/internal/moverGraph.h:1182-1234`) calls
 `measured()` per CV (`:1211`, `:1219`), and each measurement inverts
 (`:973` `transform * space.GetInverse()`, `:1008`
 `space.GetInverse() * transform`) plus a scale extraction. Driver
@@ -461,7 +461,7 @@ onto few pairs -- one pair for the common single driver/space -- so
 the same inversion and products repeat per CV. M1's reference
 parameters do not remove this work. The runtime twins it at
 `libs/rigExecRuntime/geometry.cpp:3856-3905`; the curve mover's
-per-CV lambda (`libs/rigExec/movers/curveMover.cpp:300-321`) has the
+per-CV lambda (`libs/rigExec/internal/movers/curveMover.cpp:300-321`) has the
 same shape.
 
 Proposed change: cache each selected pair's measured matrix and scale
@@ -482,7 +482,7 @@ into the cache; retain the existing exact comparisons.
 
 ### M17. Sparse-wire cache hits rehash and compare full inputs under a lock
 
-`_CachedWireBasis` (`libs/rigExec/moverGraph.cpp:383-415`) hashes the
+`_CachedWireBasis` (`libs/rigExec/internal/moverGraph.cpp:383-415`) hashes the
 bind coordinates, indices, knots, and scalars on every call
 (`:391-399`), then compares the retained arrays under a process-wide
 static mutex (`:401-413`) -- including on a hit. Every sparse-wire
@@ -584,7 +584,7 @@ with no arithmetic or parity change.
 
 ### M24. Baked/frozen ordinary chains copy unchanged results per publication
 
-The `ChainStatus` step at `libs/rigExec/bakedGeometry.cpp:2076-2078`
+The `ChainStatus` step at `libs/rigExec/internal/bakedGeometry.cpp:2076-2078`
 unconditionally resizes `chain.spare` and copies the current points
 into it, even when every revision output was reused and
 `chain.result` already holds the value. The frozen path shares this
@@ -596,7 +596,7 @@ and revision results are unchanged, respecting first-publication and
 invalidation state; keep recording final snapshots and diagnostics.
 Removes a mesh-sized copy per unchanged chain per frame. The dynamic
 twin is `RigExecMoverGraph::Evaluate`
-(`libs/rigExec/moverGraph.cpp:2770-2772`), which allocates and fills
+(`libs/rigExec/internal/moverGraph.cpp:2770-2772`), which allocates and fills
 a fresh `VtVec3fArray` per call even when VDF reuses all revision
 outputs (invoked per chain per frame at
 `rigEvaluatorGeometryEvaluation.cpp:663-667`): retain the
@@ -619,7 +619,7 @@ phased-read behavior stay intact.
 ### M26. Dynamic graph updates copy disposable parameter packets
 
 `RigExecMoverGraph::UpdateRevision`
-(`libs/rigExec/moverGraph.cpp:2663-2683`) takes the packet by const
+(`libs/rigExec/internal/moverGraph.cpp:2663-2683`) takes the packet by const
 reference and, when it differs, `SetValue(0, parameters)` at
 `:2674-2675` deep-copies every vector into the VDF input. The
 ordinary evaluation caller's packet is dead after the call
@@ -640,7 +640,7 @@ layout and copying every offset and index (`:2961-2966`) -- although
 the wire data stays fixed for the compiled rig. Zero-weight channels still pay this:
 the skip happens later in the summation (`:2228-2229`). The baked
 path instead shares the cached handle
-(`libs/rigExec/bakedGeometry.cpp:1780`, assigned at `:1629`).
+(`libs/rigExec/internal/bakedGeometry.cpp:1780`, assigned at `:1629`).
 
 Proposed change: cache these immutable layouts per program/geometry
 compiled rig and share their handles. Preserve per-frame refused-layout
@@ -664,9 +664,9 @@ compatibility stay unchanged.
 ### M29. Shader-dial evaluation materializes two meshes it never consumes
 
 `RigExecRunProjectorTarget` returns immediately for `ShaderDials`,
-using only the dial reads (`libs/rigExec/moverGraph.cpp:2875-2877`) --
+using only the dial reads (`libs/rigExec/internal/moverGraph.cpp:2875-2877`) --
 but all three USD call sites build two full mesh vectors first: baked
-(`libs/rigExec/bakedGeometry.cpp:2739-2740`), dynamic
+(`libs/rigExec/internal/bakedGeometry.cpp:2739-2740`), dynamic
 (`libs/rigExec/rigEvaluatorGeometryEvaluation.cpp:730-733`), and
 frozen (`libs/rigExec/frozenGeometry.cpp:1378-1379`, reached via the
 dial-reading branch at `:1326-1333` with no early return). The runtime
@@ -695,11 +695,11 @@ ordering and failure behavior.
 
 ### M31. Baked/frozen weight publication deep-copies dense fields
 
-`libs/rigExec/bakedGeometry.cpp:2672` and
-`libs/rigExec/frozenWorker.cpp:732` execute
+`libs/rigExec/internal/bakedGeometry.cpp:2672` and
+`libs/rigExec/internal/frozenWorker.cpp:732` execute
 `field.weights = revision.weightField` per consuming revision per
 publication. The destination owns a `vector<float>`
-(`libs/rigExec/rigEvaluator.h:72-75`), so potentially mesh-sized
+(`libs/rigExec/api/rigEvaluator.h:72-75`), so potentially mesh-sized
 fields copy even when deformation results are reused. M30 covers
 only runtime publication.
 
@@ -751,9 +751,9 @@ behavior, and previous snapshot lifetimes.
 
 ### M35. Envelope blending copies the preceding mesh twice
 
-`libs/rigExec/bakedGeometry.cpp:2322` seeds `revision.output` from
+`libs/rigExec/internal/bakedGeometry.cpp:2322` seeds `revision.output` from
 the preceding buffer, then the shared wrapper copies it again into
-`preceding` (`libs/rigExec/moverGraph.cpp:1115-1117`) for the
+`preceding` (`libs/rigExec/internal/moverGraph.cpp:1115-1117`) for the
 non-full-strength envelope blend -- two mesh-sized copies where the
 original preceding storage (`PointsBefore`,
 `bakedGeometry.cpp:1147-1155`) would serve. The runtime repeats
@@ -813,7 +813,7 @@ parity.
 ### M38. Smoothing duplicates the already-seeded preceding mesh
 
 Baked/frozen execution seeds its output
-(`libs/rigExec/bakedGeometry.cpp:2322`), then smoothing allocates a
+(`libs/rigExec/internal/bakedGeometry.cpp:2322`), then smoothing allocates a
 second full copy as its read source
 (`const std::vector<GfVec3f> source = *points;`,
 `libs/rigExecMath/geometryKernels.cpp:253`). The runtime repeats
@@ -829,7 +829,7 @@ full-strength cases M35 does not cover.
 ### M39. Derived kernels blend through a disposable full-strength envelope
 
 `RigExecApplyDerivedKernel`
-(`libs/rigExec/moverGraph.cpp:881-909`) computes normals/extent into
+(`libs/rigExec/internal/moverGraph.cpp:881-909`) computes normals/extent into
 a const local (`:886`), resolves a dense envelope (`:900-901`), and
 blends elementwise (`:905-906`). The runtime twins it
 (`libs/rigExecRuntime/geometry.cpp:2308-2325`). Synthesized derived
@@ -847,7 +847,7 @@ plus a float-buffer allocation per normals recomputation.
 ### M40. Blend-shape kernels resolve a disposable full-strength envelope
 
 `RigExecApplyBlendShapeKernel`
-(`libs/rigExec/moverGraph.cpp:823-826`) resolves the full envelope
+(`libs/rigExec/internal/moverGraph.cpp:823-826`) resolves the full envelope
 array unconditionally; the runtime twins it
 (`libs/rigExecRuntime/geometry.cpp:2274-2275`). At full strength the
 per-point result is just `preceding + delta[i]`, so the mesh-sized
@@ -875,7 +875,7 @@ template.
 
 ### M42. Current-phase weight assembly copies arrays immediately discarded
 
-`libs/rigExec/bakedGeometry.cpp:2141-2142` copies the whole retained
+`libs/rigExec/internal/bakedGeometry.cpp:2141-2142` copies the whole retained
 packet into `revision.currentPhasePacket`; success then replaces
 values/indices/default/valid at `:2154-2159`, failure replaces the
 entire packet at `:2165`. Only the source `rangePolicy` survives
@@ -891,7 +891,7 @@ reference when only its policy is needed.
 
 ### M43. Matrix kernels resolve a disposable full-strength envelope
 
-`libs/rigExec/moverGraph.cpp:501-505` sizes a weights vector and
+`libs/rigExec/internal/moverGraph.cpp:501-505` sizes a weights vector and
 resolves the full envelope even for a valid constant-one envelope;
 `libs/rigExecRuntime/geometry.cpp:871-875` duplicates it. M2 removes
 the redundant initialization but leaves this allocation and fill.
@@ -907,11 +907,11 @@ Per revision, `weights = snapshot.Get<RigExecWeightPacket>(tap)`
 (`libs/rigExec/rigEvaluatorGeometryEvaluation.cpp:446-447`)
 deep-copies the packet's vectors even for ordinary, non-current-phase
 revisions (M42 covers only the replacement case), and the assembler
-copies them again (`libs/rigExec/moverGraph.cpp:1563-1564`). The
+copies them again (`libs/rigExec/internal/moverGraph.cpp:1563-1564`). The
 same pattern affects driver frames: `:319-320` copies
 `snapshot.Get<RigExecPointFrameArray>(...)`, then `:2349` copies
 `params.frames = *frames`. The templated `Get` returns by value
-(`libs/rigExec/tapSet.h:109-111`), and both packet types own vectors
+(`libs/rigExec/api/tapSet.h:109-111`), and both packet types own vectors
 (`types.h:28-29,71-72`).
 
 Proposed change: borrow checked const references through the
@@ -928,7 +928,7 @@ parity.
 (`libs/rigExecMath/deltaMushKernel.h:79-138`) allocates and
 accumulates `restNormals` (`:79-102`), then repeats the rest-neighbor
 search and tangent construction per vertex (`:124-138`). This runs
-for surface-frame blends (`libs/rigExec/moverGraph.cpp:832`) and
+for surface-frame blends (`libs/rigExec/internal/moverGraph.cpp:832`) and
 delta-mush (`deltaMushKernel.h:210`). H1's connectivity cache and
 H6's smoothed-rest cache leave this rest-side work intact.
 
@@ -952,7 +952,7 @@ normal arithmetic, and published geometry.
 
 ### M47. Current-phase volume weights copy an already-materialized mesh
 
-`libs/rigExec/rigEvaluatorGeometry.cpp:355`
+`libs/rigExec/internal/rigEvaluatorGeometry.cpp:355`
 (`samplePoints = *currentPoints`) copies the entire input, used
 afterward only for cardinality checks (`:367`) and read-only weight
 kernels (`:424`, `:460`, `:472`, taking `const vector&`). Production
@@ -968,11 +968,11 @@ M42 covers packet replacement, not this point-buffer copy.
 
 ### M48. Combine-weight assembly deep-copies every input packet
 
-`libs/rigExec/bakedWeights.cpp:290`
+`libs/rigExec/internal/bakedWeights.cpp:290`
 (`inputs.push_back(packets[size_t(input)])`; frozen twin at
 `libs/rigExec/frozenGeometry.cpp:187`) copies each input packet's
 owning vectors before the read-only builder consumes them
-(`libs/rigExec/weightPackets.cpp:453`). Baked execution rebuilds
+(`libs/rigExec/internal/weightPackets.cpp:453`). Baked execution rebuilds
 these per frame (`bakedWeights.cpp:552-553`).
 
 Proposed change: add a builder overload accepting ordered const
@@ -998,11 +998,11 @@ the runtime implementation.
 
 ### M50. Static-weight assembly copies disposable input arrays
 
-`libs/rigExec/bakedWeights.cpp:267-268`
+`libs/rigExec/internal/bakedWeights.cpp:267-268`
 (`inputs.values/indices = object.values/indices`; frozen twin at
 `libs/rigExec/frozenGeometry.cpp:162-163`) copies the owning vectors
 into a disposable inputs struct, and the read-only builder copies
-dense values again (`libs/rigExec/weightPackets.cpp:62`). The baked
+dense values again (`libs/rigExec/internal/weightPackets.cpp:62`). The baked
 step rebuilds packets per frame (`bakedWeights.cpp:552-553`).
 
 Proposed change: add a builder interface accepting borrowed array
@@ -1012,9 +1012,9 @@ contents; the retained source arrays must remain unchanged.
 
 ### M51. Combine-weight resolution binary-searches sparse support per point
 
-`libs/rigExec/weightPackets.cpp:518-520`
+`libs/rigExec/internal/weightPackets.cpp:518-520`
 (`field[i] = in.Resolve(i, elementCount)`) reaches
-`std::lower_bound` per point (`libs/rigExec/types.cpp:26-27`) --
+`std::lower_bound` per point (`libs/rigExec/internal/types.cpp:26-27`) --
 O(N log S) per sparse input per combine evaluation. The runtime
 repeats it (`libs/rigExecRuntime/weights.cpp:1023`, `:253-254`).
 
@@ -1025,13 +1025,13 @@ substitute `ResolveAll`: its validation is stricter than `Resolve`.
 
 ### M52. Combine-weight evaluation retains every expanded dense input
 
-`libs/rigExec/weightPackets.cpp:515-525` allocates one dense field
+`libs/rigExec/internal/weightPackets.cpp:515-525` allocates one dense field
 per input and retains them all before folding into `:528-529` --
 O(inputs x points) temporary storage, even for constant or sparse
 inputs. The runtime duplicates it
 (`libs/rigExecRuntime/weights.cpp:1017-1032`); current-phase
 resolution has the same structure
-(`libs/rigExec/rigEvaluatorGeometry.cpp:293-303`).
+(`libs/rigExec/internal/rigEvaluatorGeometry.cpp:293-303`).
 
 Proposed change: validate first, then fold inputs into a private
 accumulator with reusable scratch, reducing temporary storage to
@@ -1042,7 +1042,7 @@ these expanded buffers.
 
 ### M53. Radial matrix deformation repeats one decomposition per weight change
 
-`libs/rigExec/moverGraph.cpp:330-332` calls
+`libs/rigExec/internal/moverGraph.cpp:330-332` calls
 `RigExecPartialTransform(p.transform, w)` whenever the weight
 differs from the preceding one (the sparse branch repeats it at
 `:485-487`). Each fractional weight repeats scale extraction,
@@ -1061,9 +1061,9 @@ bypass does not address fractional weights.
 
 ### M54. Static sparse weights re-sort compiled rig support every frame
 
-`libs/rigExec/weightPackets.cpp:68` sorts the sparse pairs on every
+`libs/rigExec/internal/weightPackets.cpp:68` sorts the sparse pairs on every
 build, reached through the per-frame rebuild at
-`libs/rigExec/bakedWeights.cpp:552-553` -- although the source
+`libs/rigExec/internal/bakedWeights.cpp:552-553` -- although the source
 arrays are folded at build time (`bakedWeights.cpp:131-143`) and
 only the default weight changes per frame. Frozen replay uses the
 same builder; the runtime repeats the sort at
@@ -1077,7 +1077,7 @@ O(S log S) work.
 
 ### M55. Current-phase volume resolution rebuilds the falloff LUT per resolve
 
-`libs/rigExec/rigEvaluatorGeometry.cpp:381`
+`libs/rigExec/internal/rigEvaluatorGeometry.cpp:381`
 (`params.curve = _BakeFalloffLut(prim)`) rebakes the table on every
 resolve. Authored curves allocate a table and call
 `spline.Eval(x, &value)` for all 257 samples (`:188-198`; size at
@@ -1092,7 +1092,7 @@ arithmetic. Compile already builds these tables
 
 ### M56. Current-phase volume/combine resolution fills a discarded dense output
 
-`libs/rigExec/rigEvaluatorGeometry.cpp:485`
+`libs/rigExec/internal/rigEvaluatorGeometry.cpp:485`
 (`weights->assign(count, 1.0f)`) fills the output, but the
 volume/combine branch then resolves into separate storage (`:505`)
 and move-assigns over it (`:529`) -- discarding the entire initial
@@ -1123,8 +1123,8 @@ sparse searches.
 
 ### M58. Volume weights gather a target mesh used only for cardinality
 
-`libs/rigExec/bakedWeights.cpp:378-379` gathers both point arrays,
-but `libs/rigExec/weightPackets.cpp:263-275` only checks the
+`libs/rigExec/internal/bakedWeights.cpp:378-379` gathers both point arrays,
+but `libs/rigExec/internal/weightPackets.cpp:263-275` only checks the
 target's size before selecting `&inputs.samplePoints` when samples
 are nonempty. Frozen replay repeats the unnecessary copy at
 `libs/rigExec/frozenGeometry.cpp:239-240`; the runtime repeats it
@@ -1141,7 +1141,7 @@ parity across implementations.
 
 ### M59. Current-phase sparse resolution rebuilds duplicate-detection trees
 
-`libs/rigExec/rigEvaluatorGeometry.cpp:730,739` creates
+`libs/rigExec/internal/rigEvaluatorGeometry.cpp:730,739` creates
 `std::set<int> seen` and inserts every sparse entry -- O(S log S)
 work and per-entry node allocations on each resolve. Reached
 through mixed current-phase combinations
@@ -1160,7 +1160,7 @@ work.
 
 ### M60. Current-phase dynamic weights rebuild two sparse-support trees
 
-`libs/rigExec/rigEvaluatorGeometry.cpp:634-636` constructs
+`libs/rigExec/internal/rigEvaluatorGeometry.cpp:634-636` constructs
 `std::set<int>` from both the dynamic and base support arrays --
 repeating sorting and per-entry allocations whenever a sparse
 dynamic weight authors nonempty support. Reached through mixed
@@ -1179,7 +1179,7 @@ these two additional trees.
 
 ### M61. External movers duplicate an already-disposable mesh buffer
 
-`libs/rigExec/moverGraph.cpp:1056`
+`libs/rigExec/internal/moverGraph.cpp:1056`
 (`std::vector<GfVec3f> candidate = *pts`) copies the mesh on every
 external-kernel execution. Both callers already hold a disposable
 buffer with the preceding result preserved elsewhere: dynamic
@@ -1198,12 +1198,12 @@ across dynamic/baked evaluation.
 
 ### M62. Derived normals copy authored output that full-strength recomputation replaces
 
-`libs/rigExec/bakedGeometry.cpp:2001` copies `derived.lastBase`
+`libs/rigExec/internal/bakedGeometry.cpp:2001` copies `derived.lastBase`
 into `values` before the kernel; frozen
 (`libs/rigExec/frozenGeometry.cpp:1402`) and runtime
 (`libs/rigExecRuntime/geometry.cpp:5128`) repeat it. Synthesized
 derived packets are `Constant(1.0f)`
-(`libs/rigExec/moverGraph.cpp:2171-2172`), so the successful
+(`libs/rigExec/internal/moverGraph.cpp:2171-2172`), so the successful
 kernel needs only the authored cardinality, not those copied
 values. M39's result move still leaves this initial
 allocation/copy.
@@ -1215,7 +1215,7 @@ Preserve validation, status, and dynamic/baked/runtime results.
 
 ### M63. Publication detaches shared spare buffers immediately before overwriting them
 
-`libs/rigExec/bakedGeometry.cpp:2076-2077` resizes `chain.spare`
+`libs/rigExec/internal/bakedGeometry.cpp:2076-2077` resizes `chain.spare`
 (a `VtVec3fArray`) and copies into `spare.data()`. In the
 steady state `resize` is a size-match no-op (`array.h:577-578`),
 so when an older pose retains that buffer the mutable `data()`
@@ -1235,17 +1235,17 @@ parity.
 
 Cold paths and minor cleanups, in decreasing order of value:
 
-- L1. `libs/rigExec/bakedProgram.cpp:852-853`: `retained.emplace`
+- L1. `libs/rigExec/internal/bakedProgram.cpp:852-853`: `retained.emplace`
   with an explicitly built `pair` key; fully in-place construction
   needs `std::piecewise_construct` with separate key/value tuples.
 - L2. `RigExecResolvedInputs::SetProperty`
-  (`libs/rigExec/moverGraph.h:382-384`): `_values[path] = value;`
+  (`libs/rigExec/internal/moverGraph.h:382-384`): `_values[path] = value;`
   looks up then copy-assigns; take the `VtValue` by value and
   `insert_or_assign` with a move.
-- L3. `libs/rigExec/moverGraph.cpp:465`:
+- L3. `libs/rigExec/internal/moverGraph.cpp:465`:
   `p.transform == GfMatrix4d(1.0)` builds an identity temporary per
   call; compare against a shared static const identity.
-- L4. `libs/rigExec/frozenWorker.cpp:1057`: `.reset()` after moving
+- L4. `libs/rigExec/internal/frozenWorker.cpp:1057`: `.reset()` after moving
   `_lastFrozenSlots` out is redundant (a moved-from `shared_ptr` is
   already null); drop the line.
 - L5. `libs/rigExecAuthoring/rigBuilder.cpp:2463-2464`:

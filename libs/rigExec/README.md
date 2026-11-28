@@ -16,7 +16,17 @@ reports cycles, assigns canonical IDs and lowers safe linear clusters.
 | `bakedOpGraph.cpp`, `bakedOpValues.cpp` | Native graph adapter, exact value keys and unavailable cycle outputs |
 | `bakedSchedule.cpp` | Operation dispatch, timing and graph reports |
 | `rigExecGraph/opGraph.cpp` | Common producer compiler, SCC reporting, clusters and readiness executor |
-| `rigExecScene/sceneProgramTranslation.cpp` | Detached typed graph assembly from composed scene descriptors |
+
+## Layout
+
+Public headers are in `api/` and install; everything else is in
+`internal/` and does not, except the internal headers that installed
+headers still include (`tools/rigexec_installed_internal.txt`). Include
+them as `rigExec/api/...` and `rigExec/internal/...`. Outside rigExec, only
+rigExecBinary, rigExecBake and tests may include `rigExec/internal/`;
+`tools/check_internal_includes.py` holds today's other uses as an
+allowlist that may only shrink. The file names below are under
+`internal/`.
 
 ## Build layers
 
@@ -30,7 +40,7 @@ with `$<TARGET_OBJECTS:...>`.
 | `rigExecCompile` | Discovery, validation, scene dispatch, dependency and value descriptors, digests, the compiled program |
 | `rigExecEval` | Domain bodies, mover and solver execution, weight packets, upstream and windowed reads, the GPU deformation and cloth jobs |
 | `rigExecSchedule` | Frame and task caches, the invalidation index, frozen snapshots, sampling and workers |
-| `rigExecVerify` | Baked verification, oracle dispatch, scalar reference adaptation, input replay and the tap set |
+| `rigExecVerify` | Baked verification, oracle dispatch, scalar reference adaptation and input replay |
 
 Those targets are build boundaries, not shipped libraries: none is
 installed, exported, aliased or linked, so callers still link `rigExec`
@@ -75,12 +85,12 @@ retained USD handles remain unused in worker execution.
 
 `libs/rigExecOracle/scalarReference.cpp` and `weightReference.cpp` judge
 captured inputs independently of production graph results.
-`bakedExecCrossCheckRows.cpp` compares eligible operation rows and records
-explicit reasons when no equivalent row exists; see
-[OpenExec reference checks](../../docs/concepts/baked-vs-dynamic.md#openexec-reference-checks). `goldenPose.cpp` encodes
+`bakedExecCrossCheckRows.cpp` captures operation rows for the exec-row goldens
+and records explicit reasons when no equivalent row exists; see
+[exec-row goldens](../../docs/concepts/baked-vs-dynamic.md#exec-row-goldens). `goldenPose.cpp` encodes
 published values with exact floating-point bits; `goldenSuite.cpp` checks
 complete evaluator histories. Those files are `librigExecOracle.so`. `librigExec.so` does not link it.
-A test links it when that test runs a cpu-reference, golden, or exec
-cross-check. Imaging, playback, and runtime tests do not. `inputReplay.cpp` records
+A test links it when that test runs a cpu-reference, golden, or exec-row
+capture. Imaging, playback, and runtime tests do not. `inputReplay.cpp` records
 caller actions and source edits for replay against a separately instrumented
 original host.

@@ -1,0 +1,1237 @@
+// Compile-time validation of scalar connections and weight domains.
+
+#include "rigExecSchema/schemaNames.h"
+#include "rigExecSchema/schemaTokens.h"
+#include "rigExec/internal/rigEvaluatorInternal.h"
+#include "rigExec/internal/rigEvaluatorConstraints.h"
+#include "rigExec/api/moverRegistry.h"
+#include "rigExec/internal/moverGraph.h"
+#include "rigExecMath/harmonicsKernel.h"
+
+#include "pxr/base/tf/staticTokens.h"
+#include "pxr/usd/usd/attribute.h"
+#include "pxr/usd/usd/prim.h"
+#include "pxr/usd/usd/relationship.h"
+#include "pxr/usd/usdGeom/mesh.h"
+#include "pxr/usd/usdGeom/xformable.h"
+#include "pxr/usd/usdGeom/pointBased.h"
+
+#include <algorithm>
+#include <set>
+
+namespace rigExec {
+
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    ((rigExecRepresentation, SchemaAttrText::rigExecRepresentation))
+    ((rigExecRangePolicy, SchemaAttrText::rigExecRangePolicy))
+    ((rigExecValues, SchemaAttrText::rigExecValues))
+    ((rigExecIndices, SchemaAttrText::rigExecIndices))
+    ((rigExecDefaultWeight, SchemaAttrText::rigExecDefaultWeight))
+    ((rigExecOperation, SchemaAttrText::rigExecOperation))
+    ((inputsDriver, SchemaAttrText::inputsDriver))
+    ((inputsScale, SchemaAttrText::inputsScale))
+    ((inputsBias, SchemaAttrText::inputsBias))
+    ((rigExecBaseWeight, SchemaAttrText::rigExecBaseWeight))
+    ((rigExecCombineMode, SchemaAttrText::rigExecCombineMode))
+    ((rigExecWeightTarget, SchemaAttrText::rigExecWeightTarget))
+    ((rigExecInputWeights, SchemaAttrText::rigExecInputWeights))
+    (multiply)
+    (add)
+    (subtract)
+    (max)
+    (min)
+    (average)
+    (overlay)
+    ((rigExecTransformReadPhase, SchemaAttrText::rigExecTransformReadPhase))
+    ((rigExecCageReadPhase, SchemaAttrText::rigExecCageReadPhase))
+    ((rigExecSurfaceReadPhase, SchemaAttrText::rigExecSurfaceReadPhase))
+    ((rigExecDriverCurveReadPhase, SchemaAttrText::rigExecDriverCurveReadPhase))
+    ((rigExecPointsReadPhase, SchemaAttrText::rigExecPointsReadPhase))
+    ((rigExecTransform, SchemaAttrText::rigExecTransform))
+    ((rigExecInfluences, SchemaAttrText::rigExecInfluences))
+    ((rigExecDriverTransforms, SchemaAttrText::rigExecDriverTransforms))
+    ((rigExecCage, SchemaAttrText::rigExecCage))
+    ((rigExecSurface, SchemaAttrText::rigExecSurface))
+    ((rigExecBindCoordinates, SchemaAttrText::rigExecBindCoordinates))
+    ((rigExecDriverCurve, SchemaAttrText::rigExecDriverCurve))
+    (faceVertexCounts)
+    (faceVertexIndices)
+    (holeIndices)
+    (curveVertexCounts)
+    (cornerIndices)
+    (cornerSharpnesses)
+    (creaseIndices)
+    (creaseLengths)
+    (creaseSharpnesses)
+    (subdivisionScheme)
+    (type)
+    (basis)
+    (wrap)
+    (orientation)
+    (doubleSided)
+    ((rigExecWaves, SchemaAttrText::rigExecWaves))
+    ((rigExecWaveLength, SchemaAttrText::rigExecWaveLength))
+    ((rigExecFrequency, SchemaAttrText::rigExecFrequency))
+    ((inputsDefaultWeight, SchemaAttrText::inputsDefaultWeight))
+    ((inputsEnabled, SchemaAttrText::inputsEnabled))
+    ((rigExecWeightObject, SchemaAttrText::rigExecWeightObject))
+    ((inputsWeight, SchemaAttrText::inputsWeight))
+    ((inputsAffectX, SchemaAttrText::inputsAffectX))
+    ((inputsAffectY, SchemaAttrText::inputsAffectY))
+    ((inputsAffectZ, SchemaAttrText::inputsAffectZ))
+    ((inputsAffectTranslationX, SchemaAttrText::inputsAffectTranslationX))
+    ((inputsAffectTranslationY, SchemaAttrText::inputsAffectTranslationY))
+    ((inputsAffectTranslationZ, SchemaAttrText::inputsAffectTranslationZ))
+    ((inputsAffectRotationX, SchemaAttrText::inputsAffectRotationX))
+    ((inputsAffectRotationY, SchemaAttrText::inputsAffectRotationY))
+    ((inputsAffectRotationZ, SchemaAttrText::inputsAffectRotationZ))
+    ((inputsAffectScaleX, SchemaAttrText::inputsAffectScaleX))
+    ((inputsAffectScaleY, SchemaAttrText::inputsAffectScaleY))
+    ((inputsAffectScaleZ, SchemaAttrText::inputsAffectScaleZ))
+    ((inputsTranslationOffset, SchemaAttrText::inputsTranslationOffset))
+    ((inputsRotationOffset, SchemaAttrText::inputsRotationOffset))
+    ((inputsScaleOffset, SchemaAttrText::inputsScaleOffset))
+    ((rigExecRotationOrder, SchemaAttrText::rigExecRotationOrder))
+    ((rigExecPreserve, SchemaAttrText::rigExecPreserve))
+    (origin)
+    (scale)
+    ((rigExecMode, SchemaAttrText::rigExecMode))
+    ((rigExecWorldUpType, SchemaAttrText::rigExecWorldUpType))
+    ((rigExecAimAxis, SchemaAttrText::rigExecAimAxis))
+    ((rigExecUpPolicy, SchemaAttrText::rigExecUpPolicy))
+    ((rigExecSolverMode, SchemaAttrText::rigExecSolverMode))
+    ((rigExecPoleVectorMode, SchemaAttrText::rigExecPoleVectorMode))
+    ((rigExecEvaluationMode, SchemaAttrText::rigExecEvaluationMode))
+    ((rigExecOrientationMode, SchemaAttrText::rigExecOrientationMode)));
+
+using namespace evaluatorDetail;
+
+namespace evaluatorDetail {
+
+// Scalar AttributeValue inputs compile to one provider edge. Validate that
+// edge recursively so the graph and the independent CPU resolver never choose
+// different fallbacks for a malformed, dangling, or cyclic source chain.
+bool
+_ValidateScalarConnection(const UsdStageRefPtr &stage,
+                          const UsdAttribute &attribute,
+                          const SdfValueTypeName &expectedType,
+                          std::set<SdfPath> *visiting, std::string *error)
+{
+    if (!attribute) {
+        return true;
+    }
+    if (!visiting->insert(attribute.GetPath()).second) {
+        *error = attribute.GetPath().GetString() +
+                 ": scalar attribute connection contains a cycle";
+        return false;
+    }
+    struct _EraseOnReturn {
+        std::set<SdfPath> *paths;
+        SdfPath path;
+        ~_EraseOnReturn()
+        {
+            paths->erase(path);
+        }
+    } erase{visiting, attribute.GetPath()};
+
+    const SdfPathVector sources = _AuthoredConnections(attribute);
+    if (sources.size() > 1) {
+        *error = attribute.GetPath().GetString() +
+                 ": scalar input must have at most one connection";
+        return false;
+    }
+    if (sources.empty()) {
+        return true;
+    }
+    const UsdAttribute source = stage->GetAttributeAtPath(sources[0]);
+    if (!source) {
+        *error = attribute.GetPath().GetString() +
+                 ": connection targets missing attribute " +
+                 sources[0].GetString();
+        return false;
+    }
+    // A float input may read a double source (an avar): the read is cast.
+    const bool coerced = expectedType == SdfValueTypeNames->Float &&
+                         source.GetTypeName() == SdfValueTypeNames->Double;
+    if (source.GetTypeName() != expectedType && !coerced) {
+        *error = attribute.GetPath().GetString() + ": connection target " +
+                 sources[0].GetString() + " has type " +
+                 source.GetTypeName().GetAsToken().GetString() + ", expected " +
+                 expectedType.GetAsToken().GetString() +
+                 (expectedType == SdfValueTypeNames->Float ? " or double" : "");
+        return false;
+    }
+    return _ValidateScalarConnection(
+        stage, source, coerced ? SdfValueTypeNames->Double : expectedType,
+        visiting, error);
+}
+
+// Validates the complete weight-object composition against one mover domain.
+// Point domains retain the long-standing PointBased-prim -> .points
+// canonicalization. Scalar property and transform domains are exact: there is
+// no second value on those targets for the compiler to infer. An atomic
+// multi-target mover uses its own prim as a one-element operation domain.
+// Every composed input is checked too, so a CombineWeight cannot hide a field
+// painted for a different target behind a compatible top-level declaration.
+bool
+_ValidateWeightObjectDomain(const UsdStageRefPtr &stage,
+                            const SdfPath &weightPath,
+                            const SdfPath &moverTarget, bool pointDomain,
+                            bool operationDomain, size_t logicalCount,
+                            std::set<SdfPath> *visiting, std::string *error)
+{
+    if (!weightPath.IsPrimPath()) {
+        *error = "rigExec:weightObject must target a weight-object prim, got " +
+                 weightPath.GetString();
+        return false;
+    }
+    const UsdPrim weightPrim = stage->GetPrimAtPath(weightPath);
+    if (!weightPrim || !_IsWeightObjectType(weightPrim.GetTypeName())) {
+        *error = "rigExec:weightObject targets missing or incompatible prim " +
+                 weightPath.GetString();
+        return false;
+    }
+    // This object is already being validated on the current closure path.
+    // Keep the authored back-edge for the common operation SCC; every unique
+    // object still receives the domain, type and target checks below.
+    if (!visiting->insert(weightPath).second)
+        return true;
+    struct _EraseOnReturn {
+        std::set<SdfPath> *paths;
+        SdfPath path;
+        ~_EraseOnReturn()
+        {
+            paths->erase(path);
+        }
+    } erase{visiting, weightPath};
+
+    const TfToken typeName = weightPrim.GetTypeName();
+    const bool volumeEnvelope = !pointDomain && _IsVolumeWeightType(typeName);
+    auto readToken = [&weightPrim](const TfToken &name,
+                                   const TfToken &fallback) {
+        TfToken value(fallback);
+        if (const UsdAttribute attr = weightPrim.GetAttribute(name)) {
+            attr.Get(&value, UsdTimeCode::Default());
+        }
+        return value;
+    };
+    const TfToken representation =
+        readToken(_tokens->rigExecRepresentation,
+                  SchemaFallback::RepresentationFor(typeName));
+    const TfToken rangePolicy = readToken(
+        _tokens->rigExecRangePolicy, SchemaFallback::RangePolicyFor(typeName));
+    if (rangePolicy != SchemaValueText::strict &&
+        rangePolicy != SchemaValueText::clamp) {
+        *error = weightPath.GetString() + ": unknown rigExec:rangePolicy '" +
+                 rangePolicy.GetString() + "'";
+        return false;
+    }
+    if (typeName == SchemaTypeName::RigExecStaticWeight ||
+        typeName == SchemaTypeName::RigExecDynamicWeight) {
+        if (representation != SchemaValueText::constant &&
+            representation != SchemaValueText::dense &&
+            representation != SchemaValueText::sparse) {
+            *error = weightPath.GetString() +
+                     ": unknown rigExec:representation '" +
+                     representation.GetString() + "'";
+            return false;
+        }
+    } else if (representation != SchemaValueText::dense) {
+        *error = weightPath.GetString() +
+                 ": generated/composed weights require dense " +
+                 std::string(SchemaAttrText::rigExecRepresentation);
+        return false;
+    }
+
+    if (typeName == SchemaTypeName::RigExecStaticWeight) {
+        // Static means the complete descriptor and field are authored once.
+        // A time sample or value-producing connection would make Exec consume
+        // a changing packet while the CPU oracle and compiled rig treated it
+        // as frozen.
+        const TfToken staticFields[] = {
+            _tokens->rigExecValues, _tokens->rigExecIndices,
+            _tokens->rigExecDefaultWeight, _tokens->rigExecRepresentation,
+            _tokens->rigExecRangePolicy};
+        for (const TfToken &field : staticFields) {
+            const UsdAttribute attr = weightPrim.GetAttribute(field);
+            if (attr && (attr.GetNumTimeSamples() > 0 ||
+                         attr.HasAuthoredConnections())) {
+                *error = weightPath.GetString() + ": static weight field " +
+                         field.GetString() +
+                         " must not have time samples or connections";
+                return false;
+            }
+        }
+
+        VtFloatArray values;
+        VtIntArray indices;
+        float defaultWeight = 0.0f;
+        if (const UsdAttribute attr =
+                weightPrim.GetAttribute(_tokens->rigExecValues)) {
+            attr.Get(&values, UsdTimeCode::Default());
+        }
+        if (const UsdAttribute attr =
+                weightPrim.GetAttribute(_tokens->rigExecIndices)) {
+            attr.Get(&indices, UsdTimeCode::Default());
+        }
+        if (const UsdAttribute attr =
+                weightPrim.GetAttribute(_tokens->rigExecDefaultWeight)) {
+            attr.Get(&defaultWeight, UsdTimeCode::Default());
+        }
+        // Values and the sparse/constant fallback are value-generation state,
+        // not descriptor shape.  Their finite/range policy is enforced while
+        // building the current packet so a bad edit fails this application
+        // atomically without rebuilding (or invalidating) the whole compiled rig.
+        if (representation == SchemaValueText::constant) {
+            if (!values.empty() || !indices.empty()) {
+                *error = weightPath.GetString() +
+                         ": constant weights must not author values or "
+                         "indices";
+                return false;
+            }
+        } else if (representation == SchemaValueText::dense) {
+            if (!indices.empty() || values.size() != logicalCount ||
+                defaultWeight != 0.0f) {
+                *error = weightPath.GetString() +
+                         ": dense weight must have exactly " +
+                         std::to_string(logicalCount) +
+                         " values, no indices, and canonical "
+                         "defaultWeight 0";
+                return false;
+            }
+        } else {
+            if (indices.size() != values.size()) {
+                *error = weightPath.GetString() +
+                         ": sparse index/value size mismatch";
+                return false;
+            }
+            std::set<int> support;
+            for (int index : indices) {
+                if (index < 0 || static_cast<size_t>(index) >= logicalCount ||
+                    !support.insert(index).second) {
+                    *error = weightPath.GetString() +
+                             ": sparse indices must be unique and within "
+                             "the weighted domain";
+                    return false;
+                }
+            }
+        }
+    }
+
+    if (typeName == SchemaTypeName::RigExecDynamicWeight) {
+        const TfToken operation =
+            readToken(_tokens->rigExecOperation, _tokens->multiply);
+        if (operation != SchemaValueText::multiply) {
+            *error = weightPath.GetString() + ": unknown rigExec:operation '" +
+                     operation.GetString() + "'";
+            return false;
+        }
+        for (const TfToken &name : {_tokens->inputsDriver, _tokens->inputsScale,
+                                    _tokens->inputsBias}) {
+            const UsdAttribute input = weightPrim.GetAttribute(name);
+            std::set<SdfPath> visitingConnections;
+            if (!_ValidateScalarConnection(stage, input,
+                                           SdfValueTypeNames->Float,
+                                           &visitingConnections, error)) {
+                return false;
+            }
+        }
+        SdfPathVector bases;
+        if (const UsdRelationship rel =
+                weightPrim.GetRelationship(_tokens->rigExecBaseWeight)) {
+            rel.GetTargets(&bases);
+        }
+        if (bases.size() > 1) {
+            *error = weightPath.GetString() +
+                     ": rigExec:baseWeight must have at most one target";
+            return false;
+        }
+        if (bases.empty() && representation != SchemaValueText::constant) {
+            *error = weightPath.GetString() +
+                     ": a DynamicWeight without a base must be constant";
+            return false;
+        }
+        if (bases.size() == 1) {
+            const UsdPrim base = stage->GetPrimAtPath(bases[0]);
+            TfToken actualBaseRepresentation;
+            if (base) {
+                actualBaseRepresentation =
+                    SchemaFallback::RepresentationFor(base.GetTypeName());
+                if (const UsdAttribute attr =
+                        base.GetAttribute(_tokens->rigExecRepresentation)) {
+                    attr.Get(&actualBaseRepresentation, UsdTimeCode::Default());
+                }
+            }
+            if (!base || actualBaseRepresentation != representation) {
+                *error = weightPath.GetString() +
+                         ": dynamic/base representation mismatch";
+                return false;
+            }
+            if (representation == SchemaValueText::sparse) {
+                VtIntArray mine, theirs;
+                if (const UsdAttribute attr =
+                        weightPrim.GetAttribute(_tokens->rigExecIndices)) {
+                    attr.Get(&mine, UsdTimeCode::Default());
+                }
+                if (const UsdAttribute attr =
+                        base.GetAttribute(_tokens->rigExecIndices)) {
+                    attr.Get(&theirs, UsdTimeCode::Default());
+                }
+                if (!mine.empty() &&
+                    std::set<int>(mine.begin(), mine.end()) !=
+                        std::set<int>(theirs.begin(), theirs.end())) {
+                    *error = weightPath.GetString() +
+                             ": dynamic/base sparse support mismatch";
+                    return false;
+                }
+            }
+        }
+    }
+
+    if (typeName == SchemaTypeName::RigExecCombineWeight) {
+        const TfToken mode =
+            readToken(_tokens->rigExecCombineMode, _tokens->multiply);
+        const TfToken modes[] = {_tokens->multiply, _tokens->add,
+                                 _tokens->subtract, _tokens->max,
+                                 _tokens->min,      _tokens->average,
+                                 _tokens->overlay};
+        if (std::find(std::begin(modes), std::end(modes), mode) ==
+            std::end(modes)) {
+            *error = weightPath.GetString() +
+                     ": unknown rigExec:combineMode '" + mode.GetString() + "'";
+            return false;
+        }
+    }
+    if (operationDomain && !volumeEnvelope) {
+        if (representation != SchemaValueText::constant) {
+            *error = weightPath.GetString() +
+                     ": an atomic multi-target mover requires a constant "
+                     "one-element weight field";
+            return false;
+        }
+    }
+
+    SdfPathVector declaredTargets;
+    if (const UsdRelationship rel =
+            weightPrim.GetRelationship(_tokens->rigExecWeightTarget)) {
+        rel.GetTargets(&declaredTargets);
+    }
+    if (declaredTargets.size() != 1) {
+        *error = weightPath.GetString() +
+                 ": rigExec:weightTarget must have exactly one target";
+        return false;
+    }
+    const SdfPath declared =
+        pointDomain ? _ResolveGeometryInput(stage, declaredTargets[0])
+                    : declaredTargets[0];
+    if (declared != moverTarget) {
+        *error = weightPath.GetString() +
+                 ": rigExec:weightTarget does not match mover target " +
+                 moverTarget.GetString();
+        return false;
+    }
+
+    for (const TfToken &relName :
+         {_tokens->rigExecInputWeights, _tokens->rigExecBaseWeight}) {
+        SdfPathVector inputs;
+        if (const UsdRelationship rel = weightPrim.GetRelationship(relName)) {
+            rel.GetTargets(&inputs);
+        }
+        for (const SdfPath &input : inputs) {
+            if (!_ValidateWeightObjectDomain(stage, input, moverTarget,
+                                             pointDomain, operationDomain,
+                                             logicalCount, visiting, error)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+} // namespace evaluatorDetail
+
+namespace {
+
+// Names every mover's checks below look up, interned once at load:
+// interning takes the token registry's lock.
+
+// A read-phase attribute replaced by metadata, and the input it moved to.
+struct _RemovedPhase {
+    TfToken name;
+    const char *input;
+};
+
+const _RemovedPhase _removedPhases[] = {
+    {_tokens->rigExecTransformReadPhase,
+     "rigExec:transform, rigExec:influences or rigExec:driverTransforms"},
+    {_tokens->rigExecCageReadPhase, SchemaAttrText::rigExecCage},
+    {_tokens->rigExecSurfaceReadPhase, SchemaAttrText::rigExecSurface},
+    {_tokens->rigExecDriverCurveReadPhase, SchemaAttrText::rigExecDriverCurve},
+    {_tokens->rigExecPointsReadPhase, SchemaAttrText::rigExecTargetPoints},
+};
+
+const TfToken _phasedInputs[] = {
+    _tokens->rigExecTransform,        _tokens->rigExecInfluences,
+    _tokens->rigExecDriverTransforms, _tokens->rigExecCage,
+    _tokens->rigExecSurface,          _tokens->rigExecBindCoordinates,
+    _tokens->rigExecDriverCurve};
+
+} // namespace
+
+bool
+RigExecRigEvaluator::_DiscoverMovers(
+    std::vector<RigExecMoverRecord> &newMovers,
+    std::vector<_SurfaceProjectorRecord> &newSurfaceProjectors,
+    SdfPathVector &inertMovers, std::vector<std::string> *errors,
+    _CompileFailure *failure) const
+{
+    const auto fail = [failure](const std::string &message,
+                                SdfPathVector operations = {}) {
+        *failure = {message, std::move(operations)};
+        return false;
+    };
+    // Same channel, different verdict: a notice is reported to the author and
+    // the compile CONTINUES. It exists so that "this is not wired up" can be
+    // said out loud without being fatal -- an incomplete mover is inert, not a
+    // reason to refuse the whole rig. Fatal failures use fail; notices leave compilation running.
+    auto reportNotice = [errors](const std::string &message) {
+        if (errors) {
+            errors->push_back(message);
+        }
+    };
+    // Mover discovery: reverse-sibling post-order walk of the whole composed
+    // rig. Carrying rigExec:moves is what makes a prim a mover -- the scope it
+    // sits under is an authoring convention, never a requirement (see
+    // _GetMoverExecutionOrder). Descendants run before their mover parent;
+    // sibling branches run bottom-to-top in usdview (reverse composed child
+    // order).
+    /// Mover-bearing prims discovered but skipped because nothing is wired to
+    /// their rigExec:moves yet. They are not outputs, but they ARE evidence
+    /// that the rig root points somewhere real.
+    inertMovers.clear();
+    const UsdPrim moverRig = _stage->GetPrimAtPath(_rigPath);
+    int ordinal = 0;
+    if (moverRig) {
+        for (const UsdPrim &prim : _GetMoverExecutionOrder(moverRig)) {
+            if (_IsSkippedOperation(prim.GetPath())) {
+                continue;
+            }
+            const UsdRelationship moves = prim.GetRelationship(_movesRel);
+            if (!moves) {
+                if (_IsFrameConstraintType(prim.GetTypeName())) {
+                    return fail(
+                        prim.GetTypeName().GetString() + " " +
+                            prim.GetPath().GetString() +
+                            " has executable constraint semantics but no "
+                            "rigExec:moves relationship",
+                        {prim.GetPath()});
+                }
+                // Not a mover: a solver, a control, a joint, a weight, or a
+                // grouping scope. Solvers pose joints through the rig-wide
+                // solver discovery above; the rest are read, not applied.
+                continue;
+            }
+            if (prim.GetTypeName() == SchemaTypeName::RigExecSurfaceProjector) {
+                // Not a mover record: compile makes it derived targets on
+                // the chain it rides, which run on that chain's final
+                // points as the normals and extent maintenance do.
+                SdfPathVector projected;
+                moves.GetTargets(&projected);
+                for (const SdfPath &t : projected) {
+                    if (!t.IsPropertyPath() || t.GetNameToken() != "points") {
+                        return fail("RigExecSurfaceProjector " +
+                                    prim.GetPath().GetString() + " target " +
+                                    t.GetString() +
+                                    " is not a points property");
+                    }
+                    _SurfaceProjectorRecord record;
+                    record.path = prim.GetPath();
+                    record.target = t;
+                    newSurfaceProjectors.push_back(std::move(record));
+                }
+                continue;
+            }
+            SdfPathVector targets;
+            moves.GetTargets(&targets);
+            if (targets.empty()) {
+                // An unwired mover writes nothing, so it is INERT -- not a
+                // reason to fail the rig. The stack is dynamic: disconnecting
+                // rigExec:moves is the ordinary interactive edit, and taking
+                // every other mover down with it makes a node graph unusable
+                // the moment a wire is pulled.
+                // This is the same treatment a prim with no rigExec:moves at
+                // all already gets just above, with one difference: that case
+                // is silent because every scope, control and joint in the rig
+                // would otherwise announce itself, while an authored but
+                // empty write set is a wire the author meant to connect.
+                // So it is skipped and SAID, never skipped silently.
+                inertMovers.push_back(prim.GetPath());
+                reportNotice("Mover has no moves targets: " +
+                             prim.GetPath().GetString() +
+                             "; it is inert this generation");
+                continue;
+            }
+
+            RigExecMoverRecord record;
+            record.moverPath = prim.GetPath();
+            record.schemaType = prim.GetTypeName();
+            record.handler = RigExecFindMoverHandler(record.schemaType);
+            record.ordinal = ordinal++;
+
+            // Structural/topology properties are never writable move
+            // targets.
+            const TfToken structuralProperties[] = {_tokens->faceVertexCounts,
+                                                    _tokens->faceVertexIndices,
+                                                    _tokens->holeIndices,
+                                                    _tokens->curveVertexCounts,
+                                                    _tokens->cornerIndices,
+                                                    _tokens->cornerSharpnesses,
+                                                    _tokens->creaseIndices,
+                                                    _tokens->creaseLengths,
+                                                    _tokens->creaseSharpnesses,
+                                                    _tokens->subdivisionScheme,
+                                                    _tokens->type,
+                                                    _tokens->basis,
+                                                    _tokens->wrap,
+                                                    _tokens->orientation,
+                                                    _tokens->doubleSided};
+            const SdfPath assetRoot = _rigPath.GetParentPath();
+
+            for (const SdfPath &t : targets) {
+                const SdfPath canonical = t;
+                const SdfPath primPath = canonical.GetPrimPath();
+                // Reject dangling targets.
+                // A layer opened without its geometry sets the mover aside;
+                // a missing property of a prim that exists fails the rig.
+                if (!_stage->GetPrimAtPath(primPath)) {
+                    return fail("Mover " + prim.GetPath().GetString() +
+                                    " targets missing prim " +
+                                    primPath.GetString(),
+                                {prim.GetPath()});
+                }
+                // Cross-rig writes are rejected.
+                if (!primPath.HasPrefix(assetRoot)) {
+                    return fail("Mover " + prim.GetPath().GetString() +
+                                    " targets outside the rig asset: " +
+                                    canonical.GetString(),
+                                {prim.GetPath()});
+                }
+                if (canonical.IsPropertyPath()) {
+                    if (std::find(std::begin(structuralProperties),
+                                  std::end(structuralProperties),
+                                  canonical.GetNameToken()) !=
+                        std::end(structuralProperties)) {
+                        return fail("Mover " + prim.GetPath().GetString() +
+                                        " targets structural property " +
+                                        canonical.GetString(),
+                                    {prim.GetPath()});
+                    }
+                    // Derived properties are compiler-maintained: no
+                    // authored mover writes them.
+                    if (canonical.GetNameToken() == "normals" ||
+                        canonical.GetNameToken() == "extent") {
+                        return fail(
+                            "Mover " + prim.GetPath().GetString() +
+                                " targets derived property " +
+                                canonical.GetString() +
+                                "; normals/extent maintenance is synthesized "
+                                "by the compiler",
+                            {prim.GetPath()});
+                    }
+                    if (!_stage->GetAttributeAtPath(canonical)) {
+                        return fail("Mover " + prim.GetPath().GetString() +
+                                    " targets missing property " +
+                                    canonical.GetString());
+                    }
+                }
+                // Duplicate targets after canonicalization are rejected.
+                if (std::find(record.targets.begin(), record.targets.end(),
+                              canonical) != record.targets.end()) {
+                    return fail("Mover " + prim.GetPath().GetString() +
+                                    " has duplicate canonical target " +
+                                    canonical.GetString(),
+                                {prim.GetPath()});
+                }
+                record.targets.push_back(canonical);
+            }
+
+            // Transform constraints use rigExec:moves for FBX's singleton
+            // ConstrainedObject connection, so source constraints write
+            // exactly one transform provider. SingleChainIK is the one
+            // multi-output exception: its write set is the complete inferred
+            // joint chain and is validated during constraint compilation.
+            if (_IsSourceFrameConstraintType(record.schemaType)) {
+                if (record.targets.size() != 1) {
+                    return fail(
+                        record.schemaType.GetString() + " " +
+                            prim.GetPath().GetString() +
+                            " must move exactly one transform-provider prim",
+                        {prim.GetPath()});
+                }
+                const SdfPath &constraintTarget = record.targets[0];
+                // <prim>.points names the geometry domain. It is a legal
+                // spelling the compiler must recognise, not a malformed
+                // transform target.
+                if (constraintTarget.IsPropertyPath() &&
+                    constraintTarget.GetNameToken() == "points") {
+                    const UsdPrim owner =
+                        _stage->GetPrimAtPath(constraintTarget.GetPrimPath());
+                    if (!owner || !owner.IsA<UsdGeomPointBased>()) {
+                        return fail(
+                            record.schemaType.GetString() + " " +
+                                prim.GetPath().GetString() + " targets " +
+                                constraintTarget.GetString() +
+                                ", whose owner is not a UsdGeomPointBased prim",
+                            {prim.GetPath()});
+                    }
+                    // Legal: the geometry domain. The prim must still be able
+                    // to supply a base frame, because the delta is measured
+                    // against it exactly as in the transform domain.
+                    if (!UsdGeomXformable(owner)) {
+                        return fail(
+                            record.schemaType.GetString() + " " +
+                                prim.GetPath().GetString() + " targets " +
+                                constraintTarget.GetString() +
+                                ", whose owner cannot supply a base frame",
+                            {prim.GetPath()});
+                    }
+                } else {
+                    // The transform domain: the target must be able to carry
+                    // a transform. This is the predicate bindFrameSource
+                    // already applies to sources, and it admits any
+                    // UsdGeomXformable -- Mesh and BasisCurves included.
+                    const UsdPrim targetPrim =
+                        constraintTarget.IsPrimPath()
+                            ? _stage->GetPrimAtPath(constraintTarget)
+                            : UsdPrim();
+                    if (!targetPrim || !UsdGeomXformable(targetPrim)) {
+                        return fail(
+                            record.schemaType.GetString() + " " +
+                                prim.GetPath().GetString() + " targets " +
+                                constraintTarget.GetString() +
+                                ", which is not a transform provider; a "
+                                "constraint target must be a UsdGeomXformable",
+                            {prim.GetPath()});
+                    }
+                }
+            } else if (record.schemaType ==
+                       SchemaTypeName::RigExecSingleChainIkConstraint) {
+                if (record.targets.size() < 2 ||
+                    std::any_of(
+                        record.targets.begin(), record.targets.end(),
+                        [](const SdfPath &p) { return !p.IsPrimPath(); })) {
+                    return fail(
+                        "RigExecSingleChainIkConstraint " +
+                            prim.GetPath().GetString() +
+                            " must move every joint in a chain of at least two "
+                            "prim targets",
+                        {prim.GetPath()});
+                }
+            } else if (record.schemaType ==
+                       SchemaTypeName::RigExecHarmonicsConstraint) {
+                // One joint or control, which is both what it measures and
+                // what it revises; the window must be finite and bounded.
+                const UsdPrim targetPrim =
+                    record.targets.size() == 1 && record.targets[0].IsPrimPath()
+                        ? _stage->GetPrimAtPath(record.targets[0])
+                        : UsdPrim();
+                const TfToken targetType =
+                    targetPrim ? targetPrim.GetTypeName() : TfToken();
+                if (targetType != SchemaTypeName::RigExecJoint &&
+                    targetType != SchemaTypeName::RigExecControl) {
+                    return fail("RigExecHarmonicsConstraint " +
+                                    prim.GetPath().GetString() +
+                                    " must move exactly one RigExecJoint or "
+                                    "RigExecControl",
+                                {prim.GetPath()});
+                }
+                RigExecHarmonicsSettings settings;
+                const auto readUniform = [&prim](const TfToken &name,
+                                                 auto *value) {
+                    if (const UsdAttribute a = prim.GetAttribute(name))
+                        a.Get(value);
+                };
+                readUniform(_tokens->rigExecWaves, &settings.waves);
+                readUniform(_tokens->rigExecWaveLength, &settings.waveLength);
+                readUniform(_tokens->rigExecFrequency, &settings.frequency);
+                if (!RigExecHarmonicsSettingsValid(settings)) {
+                    return fail(
+                        "RigExecHarmonicsConstraint " +
+                            prim.GetPath().GetString() +
+                            " needs finite rigExec:waves, rigExec:waveLength "
+                            "and "
+                            "rigExec:frequency above zero, with a window of at "
+                            "most " +
+                            std::to_string(RigExecHarmonicsMaxWindowFrames -
+                                           2) +
+                            " frames",
+                        {prim.GetPath()});
+                }
+            } else if (record.schemaType ==
+                       SchemaTypeName::RigExecIkFkMatchConstraint) {
+                // The controls it revises; which is which is read from its
+                // role relationships during constraint compilation.
+                if (record.targets.size() != 5 ||
+                    std::any_of(
+                        record.targets.begin(), record.targets.end(),
+                        [](const SdfPath &p) { return !p.IsPrimPath(); })) {
+                    return fail(
+                        "RigExecIkFkMatchConstraint " +
+                            prim.GetPath().GetString() +
+                            " must move its IK control, pole and three FK "
+                            "controls",
+                        {prim.GetPath()});
+                }
+            } else if (const _ConstraintHandler *unevaluated =
+                           _FindConstraintHandler(record.schemaType);
+                       unevaluated && !unevaluated->solve &&
+                       !unevaluated->dispatchesInline) {
+                // A registered operator with neither a solve nor an inline
+                // branch has no evaluator at all. Attaching a write set to
+                // one would otherwise compile and silently do nothing -- the
+                // most dangerous possible behavior. Reading this off the
+                // table rather than the type name means a future operator
+                // cannot be registered without an evaluator and quietly pass.
+                return fail(
+                    record.schemaType.GetString() + " " +
+                        prim.GetPath().GetString() +
+                        " has rigExec:moves but no registered evaluator",
+                    {prim.GetPath()});
+            }
+
+            // A write set no op in this build can run fails here, not as
+            // pass-through at evaluation.
+            if (!RigExecFindMoverHandler(record.schemaType) &&
+                !_FindConstraintHandler(record.schemaType) &&
+                !_IsSourceFrameConstraintType(record.schemaType) &&
+                record.schemaType !=
+                    SchemaTypeName::RigExecSingleChainIkConstraint &&
+                record.schemaType !=
+                    SchemaTypeName::RigExecHarmonicsConstraint &&
+                record.schemaType !=
+                    SchemaTypeName::RigExecIkFkMatchConstraint) {
+                return fail(record.schemaType.GetString() + " " +
+                                prim.GetPath().GetString() +
+                                " has rigExec:moves but no op is registered "
+                                "for its type in this build",
+                            {prim.GetPath()});
+            }
+
+            // Mover target rules and mover-specific validation, from the
+            // mover's own row (see movers/). The generic rules check every
+            // target's domain and the single-target cardinality; the row's validate
+            // step checks only what is specific to its mover. Unregistered
+            // types (constraints, solvers) have no row and are validated by
+            // their own checks.
+            if (const RigExecMoverHandler *moverHandler =
+                    RigExecFindMoverHandler(record.schemaType)) {
+                std::string moverError;
+                if (!RigExecValidateMoverTargets(_stage, prim, moverHandler,
+                                                 record.targets, &moverError)) {
+                    return fail(moverError, {prim.GetPath()});
+                }
+                if (moverHandler->validate) {
+                    const RigExecMoverValidateContext moverCtx{
+                        _stage, prim, record.targets, moverHandler, errors};
+                    if (!moverHandler->validate(moverCtx, &moverError)) {
+                        return fail(moverError, {prim.GetPath()});
+                    }
+                }
+            }
+
+            // Universal MoverAPI envelope. A mover either broadcasts its
+            // normalized inputs:defaultWeight or binds one compatible total
+            // weight field; the relationship never multiplies the scalar.
+            {
+                for (const auto &commonInput :
+                     {std::make_pair(_tokens->inputsDefaultWeight,
+                                     SdfValueTypeNames->Float),
+                      std::make_pair(_tokens->inputsEnabled,
+                                     SdfValueTypeNames->Bool)}) {
+                    std::set<SdfPath> visitingConnections;
+                    std::string connectionError;
+                    if (!_ValidateScalarConnection(
+                            _stage, prim.GetAttribute(commonInput.first),
+                            commonInput.second, &visitingConnections,
+                            &connectionError)) {
+                        return fail(record.schemaType.GetString() + " " +
+                                        prim.GetPath().GetString() + ": " +
+                                        connectionError,
+                                    {prim.GetPath()});
+                    }
+                }
+                SdfPathVector weightObjects;
+                if (const UsdRelationship rel =
+                        prim.GetRelationship(_tokens->rigExecWeightObject)) {
+                    rel.GetTargets(&weightObjects);
+                }
+                if (weightObjects.size() > 1) {
+                    return fail(record.schemaType.GetString() + " " +
+                                    prim.GetPath().GetString() +
+                                    " binds more than one rigExec:weightObject",
+                                {prim.GetPath()});
+                }
+                if (!weightObjects.empty()) {
+                    // A mover with multiple write targets is one atomic
+                    // operation envelope, not an ambiguous spatial field per
+                    // target. It therefore binds a constant, one-element
+                    // field whose weightTarget is the mover itself; that
+                    // scalar broadcasts to every application/joint.
+                    const bool operationDomain = record.targets.size() != 1;
+                    const SdfPath target =
+                        operationDomain ? prim.GetPath() : record.targets[0];
+                    const UsdPrim owner =
+                        target.IsPropertyPath()
+                            ? _stage->GetPrimAtPath(target.GetPrimPath())
+                            : UsdPrim();
+                    const bool pointDomain =
+                        !operationDomain && target.IsPropertyPath() &&
+                        target.GetNameToken() == "points" && owner &&
+                        owner.IsA<UsdGeomPointBased>();
+                    size_t logicalCount = 1;
+                    if (pointDomain) {
+                        const UsdAttribute pointsAttr =
+                            _stage->GetAttributeAtPath(target);
+                        VtVec3fArray points;
+                        std::vector<double> sampleTimes;
+                        if (pointsAttr) {
+                            pointsAttr.GetTimeSamples(&sampleTimes);
+                        }
+                        const bool hasAuthoredDefault =
+                            pointsAttr &&
+                            pointsAttr.GetResolveInfo(UsdTimeCode::Default())
+                                    .GetSource() == UsdResolveInfoSourceDefault;
+                        bool resolvedCardinality = false;
+                        if (hasAuthoredDefault &&
+                            pointsAttr.Get(&points, UsdTimeCode::Default())) {
+                            logicalCount = points.size();
+                            resolvedCardinality = true;
+                        }
+                        for (double sampleTime : sampleTimes) {
+                            VtVec3fArray sampled;
+                            if (!pointsAttr.Get(&sampled,
+                                                UsdTimeCode(sampleTime))) {
+                                continue;
+                            }
+                            if (!resolvedCardinality) {
+                                logicalCount = sampled.size();
+                                resolvedCardinality = true;
+                            } else if (sampled.size() != logicalCount) {
+                                return fail(
+                                    record.schemaType.GetString() + " " +
+                                        prim.GetPath().GetString() +
+                                        ": weighted point-domain cardinality "
+                                        "changes across the compiled rig at " +
+                                        target.GetString(),
+                                    {prim.GetPath()});
+                            }
+                        }
+                        if (!resolvedCardinality && pointsAttr &&
+                            pointsAttr.Get(&points, UsdTimeCode::Default())) {
+                            // Schema fallback (usually an empty array) is the
+                            // only remaining base when neither a default nor
+                            // a sample is authored.
+                            logicalCount = points.size();
+                            resolvedCardinality = true;
+                        }
+                        if (!resolvedCardinality) {
+                            return fail(
+                                record.schemaType.GetString() + " " +
+                                    prim.GetPath().GetString() +
+                                    ": cannot resolve the weighted point "
+                                    "domain's compile-time cardinality at " +
+                                    target.GetString(),
+                                {prim.GetPath()});
+                        }
+                    }
+                    std::set<SdfPath> visitingWeights;
+                    std::string weightError;
+                    if (!_ValidateWeightObjectDomain(
+                            _stage, weightObjects[0], target, pointDomain,
+                            operationDomain, logicalCount, &visitingWeights,
+                            &weightError)) {
+                        return fail(record.schemaType.GetString() + " " +
+                                        prim.GetPath().GetString() + ": " +
+                                        weightError,
+                                    {prim.GetPath()});
+                    }
+                }
+            }
+
+            // Read-phase attributes are refused; use rigExecReadPhase metadata
+            // on the input relationship.
+            for (const _RemovedPhase &removed : _removedPhases) {
+                const UsdAttribute old = prim.GetAttribute(removed.name);
+                if (old && old.HasAuthoredValue()) {
+                    return fail(record.schemaType.GetString() + " " +
+                                    prim.GetPath().GetString() + " authors " +
+                                    removed.name.GetString() +
+                                    ", which was replaced by "
+                                    "rigExecReadPhase metadata on " +
+                                    removed.input,
+                                {prim.GetPath()});
+                }
+            }
+            // Read phases, validated from the AUTHORED stage.
+            // Binding resolution parses these too, but it has to be total --
+            // it returns a binding, not a verdict -- so an unparseable phase
+            // there degrades to `base`. That is the wrong answer delivered
+            // silently: the author asked for a specific revision and got the
+            // authored value. The parse verdict belongs here, in Phase A,
+            // where it can reject the compile before any compiled rig state moves.
+            for (const TfToken &relName : _phasedInputs) {
+                RigExecReadPhase phase;
+                std::string phaseError;
+                if (!RigExecResolveReadPhase(prim.GetRelationship(relName),
+                                             &phase, &phaseError)) {
+                    return fail(record.schemaType.GetString() + " " +
+                                    prim.GetPath().GetString() + ": " +
+                                    phaseError,
+                                {prim.GetPath()});
+                }
+            }
+            if (const RigExecMoverHandler *handler =
+                    RigExecFindMoverHandler(record.schemaType);
+                handler && handler->assembleExternal) {
+                for (const UsdRelationship &rel : prim.GetRelationships()) {
+                    RigExecReadPhase phase;
+                    std::string phaseError;
+                    if (!RigExecResolveReadPhase(rel, &phase, &phaseError)) {
+                        return fail(record.schemaType.GetString() + " " +
+                                        prim.GetPath().GetString() + ": " +
+                                        phaseError,
+                                    {prim.GetPath()});
+                    }
+                }
+            }
+            // Structure-determining tokens must be static. `uniform` is a
+            // convention, not an enforcement: USD permits time samples on a
+            // uniform attribute, and these tokens select the compiled
+            // operation and read phase. Sampling them per-frame would let the
+            // op or binding change under a compiled rig without changing
+            // the compiled rig digest, so reject samples here rather than
+            // resolving them at evaluation time. The same rule
+            // the aggregate cardinality attributes already follow.
+            std::vector<TfToken> structuralTokens = {_tokens->rigExecMode,
+                                                     _tokens->rigExecOperation};
+            // Which operators carry a rotation order is a table column, not
+            // a list of type names repeated at each site that asks.
+            const _ConstraintHandler *orderHandler =
+                _FindConstraintHandler(record.schemaType);
+
+            // No authored constraint property is ever silently ignored.
+            if (orderHandler) {
+                // Spelled only when a message needs it: this runs for every
+                // mover, and almost none of them has anything to report.
+                const auto who = [&record, &prim]() {
+                    return record.schemaType.GetString() + " " +
+                           prim.GetPath().GetAsString();
+                };
+                const auto authored = [&prim](const TfToken &name) {
+                    const UsdAttribute a = prim.GetAttribute(name);
+                    return a && a.HasAuthoredValue();
+                };
+
+                // Not a schema name; refused so it is not ignored.
+                if (authored(_tokens->inputsWeight)) {
+                    return fail(
+                        who() + " authors inputs:weight, which a constraint no"
+                                " longer has; the envelope is now"
+                                " inputs:defaultWeight",
+                        {prim.GetPath()});
+                }
+
+                // Refused; use the group-qualified spelling.
+                for (const TfToken &legacyMask :
+                     {_tokens->inputsAffectX, _tokens->inputsAffectY,
+                      _tokens->inputsAffectZ}) {
+                    if (authored(legacyMask)) {
+                        return fail(
+                            who() + " authors " + legacyMask.GetString() +
+                                ", which named a different channel on every"
+                                " operator; use the group-qualified spelling"
+                                " (inputs:affectTranslation*, affectRotation* "
+                                "or"
+                                " affectScale*)",
+                            {prim.GetPath()});
+                    }
+                }
+
+                struct _ChannelProperty {
+                    TfToken name;
+                    _ChannelGroup group;
+                    bool isMask;
+                };
+                const _ChannelProperty kChannelProperties[] = {
+                    {_tokens->inputsAffectTranslationX,
+                     _ChannelGroup::Translation, true},
+                    {_tokens->inputsAffectTranslationY,
+                     _ChannelGroup::Translation, true},
+                    {_tokens->inputsAffectTranslationZ,
+                     _ChannelGroup::Translation, true},
+                    {_tokens->inputsAffectRotationX, _ChannelGroup::Rotation,
+                     true},
+                    {_tokens->inputsAffectRotationY, _ChannelGroup::Rotation,
+                     true},
+                    {_tokens->inputsAffectRotationZ, _ChannelGroup::Rotation,
+                     true},
+                    {_tokens->inputsAffectScaleX, _ChannelGroup::Scale, true},
+                    {_tokens->inputsAffectScaleY, _ChannelGroup::Scale, true},
+                    {_tokens->inputsAffectScaleZ, _ChannelGroup::Scale, true},
+                    {_tokens->inputsTranslationOffset,
+                     _ChannelGroup::Translation, false},
+                    {_tokens->inputsRotationOffset, _ChannelGroup::Rotation,
+                     false},
+                    {_tokens->inputsScaleOffset, _ChannelGroup::Scale, false},
+                };
+                for (const _ChannelProperty &channel : kChannelProperties) {
+                    if (!authored(channel.name)) {
+                        continue;
+                    }
+                    const _ChannelGroup honored =
+                        channel.isMask ? orderHandler->maskGroup
+                                       : orderHandler->offsetGroup;
+                    if (honored == channel.group ||
+                        (channel.isMask && honored == _ChannelGroup::All)) {
+                        continue;
+                    }
+                    return fail(
+                        who() + " authors " + channel.name.GetString() +
+                            ", which it does "
+                            "not honor; the operator writes a different "
+                            "channel "
+                            "group" +
+                            (orderHandler->offsetGroup == _ChannelGroup::None &&
+                                     !channel.isMask
+                                 ? " and composes per-source offset arrays "
+                                   "instead"
+                                 : ""),
+                        {prim.GetPath()});
+                }
+
+                if (authored(_tokens->rigExecRotationOrder) &&
+                    !orderHandler->usesRotationOrder) {
+                    return fail(
+                        who() + " authors rigExec:rotationOrder, which it does"
+                                " not honor; only the operators that compose a"
+                                " rotation read it",
+                        {prim.GetPath()});
+                }
+
+                // rigExec:preserve: inverse channel mask (components left
+                // alone), where inputs:affect* names the ones it writes. Its
+                // default ["origin", "scale"] says an aim writes orientation
+                // only, which is exactly what the kernel does -- it modifies
+                // the decomposed rotation and reconstructs, leaving
+                // translation and scale untouched. So the default needs no
+                // implementation; it is already the behavior.
+                // Any OTHER value does not. ["scale"] alone would ask an aim
+                // to move the origin too, which requires writing the
+                // translation group that Aim does not write. Any other value
+                // is rejected.
+                if (const UsdAttribute preserve =
+                        prim.GetAttribute(_tokens->rigExecPreserve)) {
+                    VtTokenArray value;
+                    if (preserve.HasAuthoredValue() && preserve.Get(&value)) {
+                        const VtTokenArray expected{_tokens->origin,
+                                                    _tokens->scale};
+                        if (value != expected) {
+                            return fail(
+                                who() +
+                                    " authors a non-default rigExec:preserve;"
+                                    " only [\"origin\", \"scale\"] is"
+                                    " implemented, which is the "
+                                    "orientation-only"
+                                    " solve the kernel already performs. Use "
+                                    "the"
+                                    " inputs:affect* masks to vary which "
+                                    "channels"
+                                    " are written",
+                                {prim.GetPath()});
+                        }
+                    }
+                }
+            }
+            if (orderHandler && orderHandler->usesRotationOrder) {
+                structuralTokens.push_back(_tokens->rigExecRotationOrder);
+            }
+            if (record.schemaType == SchemaTypeName::RigExecAimConstraint) {
+                structuralTokens.insert(structuralTokens.end(),
+                                        {_tokens->rigExecWorldUpType,
+                                         _tokens->rigExecAimAxis,
+                                         _tokens->rigExecUpPolicy});
+            } else if (record.schemaType ==
+                       SchemaTypeName::RigExecSingleChainIkConstraint) {
+                structuralTokens.insert(structuralTokens.end(),
+                                        {_tokens->rigExecSolverMode,
+                                         _tokens->rigExecPoleVectorMode,
+                                         _tokens->rigExecEvaluationMode,
+                                         _tokens->rigExecOrientationMode});
+            }
+            for (const TfToken &name : structuralTokens) {
+                const UsdAttribute a = prim.GetAttribute(name);
+                if (a && a.GetNumTimeSamples() > 0) {
+                    return fail(record.schemaType.GetString() + " " +
+                                    prim.GetPath().GetString() + ": " +
+                                    name.GetString() +
+                                    " must not be time-sampled (it selects the "
+                                    "compiled operation/read phase)",
+                                {prim.GetPath()});
+                }
+            }
+
+            auto validateToken =
+                [&](const TfToken &name,
+                    std::initializer_list<const char *> allowed) {
+                    const UsdAttribute attr = prim.GetAttribute(name);
+                    if (!attr) {
+                        return true;
+                    }
+                    TfToken value;
+                    if (!attr.Get(&value) || !_TokenIsOneOf(value, allowed)) {
+                        return fail(record.schemaType.GetString() + " " +
+                                        prim.GetPath().GetString() + ": " +
+                                        name.GetString() +
+                                        " has unsupported value '" +
+                                        value.GetString() + "'",
+                                    {prim.GetPath()});
+                    }
+                    return true;
+                };
+            const std::initializer_list<const char *> eulerOrders = {
+                SchemaValueText::xyz, "XZY", "YXZ", "YZX", "ZXY", "ZYX"};
+            if (orderHandler && orderHandler->usesRotationOrder &&
+                !validateToken(_tokens->rigExecRotationOrder, eulerOrders)) {
+                return false;
+            }
+            if (record.schemaType == SchemaTypeName::RigExecAimConstraint &&
+                (!validateToken(_tokens->rigExecWorldUpType,
+                                {"sceneUp", "objectUp", "objectRotationUp",
+                                 "vector", SchemaValueText::none}) ||
+                 !validateToken(_tokens->rigExecAimAxis,
+                                {SchemaValueText::x, SchemaValueText::y,
+                                 SchemaValueText::z}) ||
+                 !validateToken(_tokens->rigExecUpPolicy,
+                                {"preserveInputUp"}))) {
+                return false;
+            }
+            if (record.schemaType ==
+                    SchemaTypeName::RigExecSingleChainIkConstraint &&
+                (!validateToken(_tokens->rigExecSolverMode,
+                                {"rotatePlane", "singleChain"}) ||
+                 !validateToken(_tokens->rigExecPoleVectorMode,
+                                {"vector", "object"}) ||
+                 !validateToken(_tokens->rigExecEvaluationMode,
+                                {"neverTS", "autoDetect", "alwaysTS"}) ||
+                 !validateToken(_tokens->rigExecOrientationMode,
+                                {"aimX", "preserve"}))) {
+                return false;
+            }
+            newMovers.push_back(std::move(record));
+        }
+    }
+
+    return true;
+}
+
+} // namespace rigExec

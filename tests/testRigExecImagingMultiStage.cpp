@@ -40,7 +40,7 @@
 #include "rigExecImaging/registry.h"
 #include "rigExecImaging/sceneIndices.h"
 #include "rigExecImaging/touchPose.h"
-#include "rigExec/backgroundScheduler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec2d.h"

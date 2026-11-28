@@ -36,7 +36,7 @@
 //     already pinned against the studio's Python at 3.41e-11
 //     (testRigExecRbf); what this adds is that the EVALUATOR hands it the
 //     rotation it is supposed to.
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecMath/rbf.h"
 
 #include "pxr/base/gf/quatf.h"
@@ -76,8 +76,13 @@ SkipsOperations(RigExecRigEvaluator &evaluator,
 }
 
 static int failures = 0;
-#define CHECK(condition) do { if (!(condition)) { ++failures; \
-    std::printf("FAIL %d: %s\n", __LINE__, #condition); } } while (0)
+#define CHECK(condition)                                                       \
+    do {                                                                       \
+        if (!(condition)) {                                                    \
+            ++failures;                                                        \
+            std::printf("FAIL %d: %s\n", __LINE__, #condition);                \
+        }                                                                      \
+    } while (0)
 
 namespace {
 
@@ -91,7 +96,7 @@ const SdfPath kMesh("/Asset/Geom/Mesh.points");
 // wide enough that the kernels meet in the middle, narrow enough that each
 // pose still owns its own place.
 constexpr double kSpacing = 0.78539816339744830961;
-constexpr float kDelta = 10.0f;   ///< what the corrective moves the mesh by
+constexpr float kDelta = 10.0f; ///< what the corrective moves the mesh by
 
 SdfPath
 PoseWeight(const char *name)
@@ -111,8 +116,7 @@ AboutZ(double degrees)
 VtVec3fArray
 BasePoints()
 {
-    return VtVec3fArray{GfVec3f(0.0f, 0.0f, 0.0f),
-                        GfVec3f(1.0f, 0.0f, 0.0f)};
+    return VtVec3fArray{GfVec3f(0.0f, 0.0f, 0.0f), GfVec3f(1.0f, 0.0f, 0.0f)};
 }
 
 VtVec3fArray
@@ -142,13 +146,12 @@ MakeRig()
     stage->DefinePrim(kParent, TfToken("RigExecControl"));
     stage->DefinePrim(kDriver, TfToken("RigExecControl"));
 
-    const UsdPrim mesh = stage->DefinePrim(kMesh.GetPrimPath(),
-                                           TfToken("Mesh"));
+    const UsdPrim mesh =
+        stage->DefinePrim(kMesh.GetPrimPath(), TfToken("Mesh"));
     mesh.GetAttribute(TfToken("points")).Set(BasePoints());
-    const UsdPrim target = stage->DefinePrim(SdfPath("/Asset/Targets/Full"),
-                                             TfToken("Points"));
-    target.CreateAttribute(TfToken("points"),
-                           SdfValueTypeNames->Point3fArray)
+    const UsdPrim target =
+        stage->DefinePrim(SdfPath("/Asset/Targets/Full"), TfToken("Points"));
+    target.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
         .Set(TargetPoints());
 
     stage->DefinePrim(SdfPath("/Asset/Rig/PoseInterpolators"),
@@ -178,16 +181,16 @@ MakeRig()
 
     // The consumer. inputs:weight is CONNECTED rather than authored: that
     // connection is the whole path from the phase to the deformation.
-    const UsdPrim input = stage->DefinePrim(
-        SdfPath("/Asset/Rig/BlendInputs/Corrective"),
-        TfToken("RigExecBlendInput"));
+    const UsdPrim input =
+        stage->DefinePrim(SdfPath("/Asset/Rig/BlendInputs/Corrective"),
+                          TfToken("RigExecBlendInput"));
     UsdAttribute weight = input.GetAttribute(TfToken("inputs:weight"));
     weight.Set(0.0f);
     weight.AddConnection(
         forward.GetPath().AppendProperty(TfToken("outputs:weight")));
-    const UsdPrim sample = stage->DefinePrim(
-        SdfPath("/Asset/Rig/BlendInputs/Corrective/Full"),
-        TfToken("RigExecBlendSample"));
+    const UsdPrim sample =
+        stage->DefinePrim(SdfPath("/Asset/Rig/BlendInputs/Corrective/Full"),
+                          TfToken("RigExecBlendSample"));
     sample.GetAttribute(TfToken("rigExec:activation")).Set(1.0f);
     sample.CreateRelationship(TfToken("rigExec:targetPoints"))
         .SetTargets({SdfPath("/Asset/Targets/Full.points")});
@@ -195,8 +198,8 @@ MakeRig()
         .SetTargets({sample.GetPath()});
 
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
-    const UsdPrim blend = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Blend"), TfToken("RigExecBlendShapeMover"));
+    const UsdPrim blend = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Blend"),
+                                            TfToken("RigExecBlendShapeMover"));
     blend.ApplyAPI(TfToken("RigExecMoverAPI"));
     blend.GetRelationship(TfToken("rigExec:moves")).SetTargets({kMesh});
     blend.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
@@ -292,13 +295,12 @@ MeshDisplacement(const RigExecRigPose &pose)
 }
 
 void
-SetRotation(const UsdStageRefPtr &stage, const SdfPath &control,
-            double degrees)
+SetRotation(const UsdStageRefPtr &stage, const SdfPath &control, double degrees)
 {
-    stage->GetPrimAtPath(control).GetAttribute(TfToken("avars:rz"))
+    stage->GetPrimAtPath(control)
+        .GetAttribute(TfToken("avars:rz"))
         .Set(degrees);
 }
-
 
 // A rig standing still reads its neutral at 1 and everything else at 0, and
 // a rig standing on a pose reads THAT pose at 1. Exactly, not approximately:
@@ -311,16 +313,16 @@ TestTheWeightsAtRestAndAtAPose()
     if (!CompileOrReport(&evaluator)) {
         return;
     }
-    CheckWeights(evaluator.Evaluate(UsdTimeCode::Default()),
-                 1.0, 0.0, 0.0, "rest");
+    CheckWeights(evaluator.Evaluate(UsdTimeCode::Default()), 1.0, 0.0, 0.0,
+                 "rest");
 
     SetRotation(stage, kDriver, 45.0);
-    CheckWeights(evaluator.Evaluate(UsdTimeCode::Default()),
-                 0.0, 1.0, 0.0, "driver on Forward");
+    CheckWeights(evaluator.Evaluate(UsdTimeCode::Default()), 0.0, 1.0, 0.0,
+                 "driver on Forward");
 
     SetRotation(stage, kDriver, -45.0);
-    CheckWeights(evaluator.Evaluate(UsdTimeCode::Default()),
-                 0.0, 0.0, 1.0, "driver on Back");
+    CheckWeights(evaluator.Evaluate(UsdTimeCode::Default()), 0.0, 0.0, 1.0,
+                 "driver on Back");
 
     // Half way between neutral and Forward the two share the rig and Back is
     // pushed negative -- which is a real instruction to lean away from it,
@@ -328,8 +330,8 @@ TestTheWeightsAtRestAndAtAPose()
     // still sum to one; that is what normalization is.
     SetRotation(stage, kDriver, 22.5);
     const RigExecRigPose between = evaluator.Evaluate(UsdTimeCode::Default());
-    const double sum = Weight(between, "neutral") +
-                       Weight(between, "Forward") + Weight(between, "Back");
+    const double sum = Weight(between, "neutral") + Weight(between, "Forward") +
+                       Weight(between, "Back");
     CHECK(std::abs(sum - 1.0) < 1e-5);
     CHECK(Weight(between, "neutral") > 0.3);
     CHECK(Weight(between, "Forward") > 0.3);
@@ -356,8 +358,8 @@ TestTheDeltaIsLocalToTheDriversParent()
 
     // And the parent alone leaves the driver on its neutral.
     SetRotation(stage, kDriver, 0.0);
-    CheckWeights(evaluator.Evaluate(UsdTimeCode::Default()),
-                 1.0, 0.0, 0.0, "parent turned, driver at its rest");
+    CheckWeights(evaluator.Evaluate(UsdTimeCode::Default()), 1.0, 0.0, 0.0,
+                 "parent turned, driver at its rest");
 }
 
 // The weight reaches the deformation, through the connection and in the
@@ -398,19 +400,21 @@ TestADisabledInterpolatorPublishesZeros()
         return;
     }
     SetRotation(stage, kDriver, 45.0);
-    CheckWeights(evaluator.Evaluate(UsdTimeCode::Default()),
-                 0.0, 1.0, 0.0, "enabled");
+    CheckWeights(evaluator.Evaluate(UsdTimeCode::Default()), 0.0, 1.0, 0.0,
+                 "enabled");
 
     stage->GetPrimAtPath(kInterpolator)
-        .GetAttribute(TfToken("inputs:enabled")).Set(false);
+        .GetAttribute(TfToken("inputs:enabled"))
+        .Set(false);
     const RigExecRigPose off = evaluator.Evaluate(UsdTimeCode::Default());
     CheckWeights(off, 0.0, 0.0, 0.0, "interpolator disabled");
     CHECK(std::abs(MeshDisplacement(off)) < 1e-5);
 
     stage->GetPrimAtPath(kInterpolator)
-        .GetAttribute(TfToken("inputs:enabled")).Set(true);
-    CheckWeights(evaluator.Evaluate(UsdTimeCode::Default()),
-                 0.0, 1.0, 0.0, "enabled again");
+        .GetAttribute(TfToken("inputs:enabled"))
+        .Set(true);
+    CheckWeights(evaluator.Evaluate(UsdTimeCode::Default()), 0.0, 1.0, 0.0,
+                 "enabled again");
 }
 
 // A disabled POSE is left out of the solve, which changes what the others
@@ -426,11 +430,12 @@ TestADisabledPoseLeavesTheSolve()
         return;
     }
     SetRotation(stage, kDriver, 45.0);
-    CheckWeights(evaluator.Evaluate(UsdTimeCode::Default()),
-                 0.0, 1.0, 0.0, "three poses");
+    CheckWeights(evaluator.Evaluate(UsdTimeCode::Default()), 0.0, 1.0, 0.0,
+                 "three poses");
 
     stage->GetPrimAtPath(kInterpolator.AppendChild(TfToken("Back")))
-        .GetAttribute(TfToken("inputs:enabled")).Set(false);
+        .GetAttribute(TfToken("inputs:enabled"))
+        .Set(false);
     const RigExecRigPose two = evaluator.Evaluate(UsdTimeCode::Default());
     // Back is silenced outright, and Forward still owns its own pose.
     CheckWeights(two, 0.0, 1.0, 0.0, "Back disabled, driver on Forward");
@@ -462,10 +467,9 @@ TestParityWithTheSolverDrivenDirectly()
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
         const GfQuatf q = AboutZ(degrees);
         std::vector<double> expected;
-        reference.Evaluate(
-            RigExecRbfEulerFromQuaternion(
-                GfQuatd(q.GetReal(), GfVec3d(q.GetImaginary()))),
-            nullptr, &expected, true);
+        reference.Evaluate(RigExecRbfEulerFromQuaternion(
+                               GfQuatd(q.GetReal(), GfVec3d(q.GetImaginary()))),
+                           nullptr, &expected, true);
         CHECK(expected.size() == 3);
         if (expected.size() != 3) {
             continue;
@@ -516,10 +520,9 @@ TestInterpolatorVersionDependencies()
 
         const GfQuatf q = AboutZ(degrees);
         std::vector<double> expected;
-        reference.Evaluate(
-            RigExecRbfEulerFromQuaternion(
-                GfQuatd(q.GetReal(), GfVec3d(q.GetImaginary()))),
-            nullptr, &expected, true);
+        reference.Evaluate(RigExecRbfEulerFromQuaternion(
+                               GfQuatd(q.GetReal(), GfVec3d(q.GetImaginary()))),
+                           nullptr, &expected, true);
         if (expected.size() == 3) {
             CheckWeights(pose, expected[0], expected[1], expected[2],
                          "through the program", 1e-6);
@@ -537,13 +540,15 @@ TestInterpolatorVersionDependencies()
     // A disabled interpolator is a per-frame input the step reads through
     // the prologue: zeros, and the corrective goes with them.
     stage->GetPrimAtPath(kInterpolator)
-        .GetAttribute(TfToken("inputs:enabled")).Set(false);
+        .GetAttribute(TfToken("inputs:enabled"))
+        .Set(false);
     const RigExecRigPose off = evaluator.Evaluate(UsdTimeCode::Default());
 
     CheckWeights(off, 0.0, 0.0, 0.0, "program, interpolator disabled");
     CHECK(std::abs(MeshDisplacement(off)) < 1e-5);
     stage->GetPrimAtPath(kInterpolator)
-        .GetAttribute(TfToken("inputs:enabled")).Set(true);
+        .GetAttribute(TfToken("inputs:enabled"))
+        .Set(true);
     const RigExecRigPose on = evaluator.Evaluate(UsdTimeCode::Default());
 
     CheckWeights(on, 0.0, 1.0, 0.0, "program, enabled again");
@@ -564,10 +569,9 @@ TestInterpolatorVersionDependencies()
 void
 TestStructuralValidation()
 {
-    {   // A driver that publishes no frame.
+    { // A driver that publishes no frame.
         UsdStageRefPtr stage = MakeRig();
-        stage->DefinePrim(SdfPath("/Asset/Rig/NotAProvider"),
-                          TfToken("Scope"));
+        stage->DefinePrim(SdfPath("/Asset/Rig/NotAProvider"), TfToken("Scope"));
         stage->GetPrimAtPath(kInterpolator)
             .GetRelationship(TfToken("rigExec:driver"))
             .SetTargets({SdfPath("/Asset/Rig/NotAProvider")});
@@ -576,15 +580,16 @@ TestStructuralValidation()
         CHECK(SkipsOperations(evaluator, {kInterpolator}, &errors));
         CHECK(!errors.empty());
     }
-    {   // No driver at all.
+    { // No driver at all.
         UsdStageRefPtr stage = MakeRig();
         stage->GetPrimAtPath(kInterpolator)
-            .GetRelationship(TfToken("rigExec:driver")).SetTargets({});
+            .GetRelationship(TfToken("rigExec:driver"))
+            .SetTargets({});
         RigExecRigEvaluator evaluator(stage, kRig);
         std::vector<std::string> errors;
         CHECK(SkipsOperations(evaluator, {kInterpolator}, &errors));
     }
-    {   // A child that is not a pose.
+    { // A child that is not a pose.
         UsdStageRefPtr stage = MakeRig();
         stage->DefinePrim(kInterpolator.AppendChild(TfToken("Stray")),
                           TfToken("Scope"));
@@ -592,7 +597,7 @@ TestStructuralValidation()
         std::vector<std::string> errors;
         CHECK(SkipsOperations(evaluator, {kInterpolator}, &errors));
     }
-    {   // outputs:weight is a source; an authored connection on it says
+    { // outputs:weight is a source; an authored connection on it says
         // otherwise.
         UsdStageRefPtr stage = MakeRig();
         stage->GetPrimAtPath(kInterpolator.AppendChild(TfToken("Forward")))
@@ -605,7 +610,7 @@ TestStructuralValidation()
     }
 }
 
-}  // namespace
+} // namespace
 
 int
 main()

@@ -1,19 +1,18 @@
 # rigExecVerify: the checking layer. Baked verification, oracle dispatch,
-# scalar reference adaptation, input replay and the computation tap set. A
-# build boundary, not a shipped library: the objects are composed into
-# librigExec by the root list, and this target is never installed, exported
-# or linked. It becomes an opt-in shared library later.
+# scalar reference adaptation and input replay. A build boundary, not a
+# shipped library: the objects are composed into librigExec by the root
+# list, and this target is never installed, exported or linked. It becomes
+# an opt-in shared library later.
 add_library(rigExecVerify OBJECT
-    libs/rigExec/bakedVerify.cpp
-    libs/rigExec/oracleDispatch.cpp
-    libs/rigExec/scalarReferenceAdapter.cpp
-    libs/rigExec/inputReplay.cpp
-    libs/rigExec/tapSet.cpp
-    libs/rigExec/computations.cpp)
+    libs/rigExec/internal/bakedVerify.cpp
+    libs/rigExec/internal/oracleDispatch.cpp
+    libs/rigExec/internal/scalarReferenceAdapter.cpp
+    libs/rigExec/internal/inputReplay.cpp
+    libs/rigExec/internal/verifyObservers.cpp)
 target_compile_features(rigExecVerify PRIVATE cxx_std_17)
 target_include_directories(rigExecVerify PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/libs")
 target_link_libraries(rigExecVerify PRIVATE
-    rigExecGraph rigExecMath
-    tf gf vt sdf ts usd usdGeom usdSkel plug work exec execUsd ef vdf)
+    rigExecGraph rigExecMathGf rigExecEvalCore
+    tf gf vt sdf ts usd usdGeom plug work)
 set_target_properties(rigExecVerify PROPERTIES POSITION_INDEPENDENT_CODE ON)

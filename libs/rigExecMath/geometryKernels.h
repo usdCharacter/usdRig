@@ -13,6 +13,8 @@
 #include "meshConnectivity.h"
 #include "normalsLayoutKernel.h"
 #include "deltaMushSettings.h"
+#include "matrixKernel.h"
+#include "patchKernel.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec2f.h"
@@ -24,15 +26,15 @@
 #include <vector>
 #include "rigExecMath/deltaMushKernel.h"
 #include "rigExecMath/spatialAccel.h"
+#include "rigExecMath/ribbonFramesKernel.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
 
 namespace rigExec {
 
-/// The concrete delta-mush rest state the evaluator caches: GfVec3f
-/// points, GfVec3d working frames -- the instantiation every USD-side
-/// caller shares. (The binary runtime instantiates the same templates
-/// over its own vector types; the alias lives here, with USD, rather
-/// than in the USD-free kernel header.)
+/// The concrete delta-mush rest state the evaluator caches: GfVec3f points,
+/// GfVec3d working frames -- the instantiation every USD-side caller shares.
+/// (The binary runtime instantiates the same templates over its own vector
+/// types; the alias lives here, with USD, rather than in the kernel header.)
 using RigExecDeltaMushRest = RigExecDeltaMushRestData<GfVec3f, GfVec3d>;
 
 /// The concrete transport rest state every USD-side caller shares:
@@ -182,15 +184,7 @@ GfMatrix4d RigExecPartialTransform(const GfMatrix4d &transform, double weight);
 /// pivot. Decomposing once and applying per weight keeps an
 /// alternating fractional falloff from paying a decomposition per
 /// distinct weight; endpoints need no decomposition at all.
-struct RigExecPartialDecomposition {
-    GfVec3d scale{1.0};
-    GfVec3d axis{1.0, 0.0, 0.0};
-    double angle = 0.0;
-    GfVec3d translation{0.0};
-    double along = 0.0;
-    GfVec3d pivot{0.0};
-    bool smallAngle = true;
-};
+using RigExecPartialDecomposition = RigExecPartialDecompositionOf<GfVec3d>;
 
 /// The decomposition behind RigExecPartialTransform, for callers
 /// that apply several weights to one transform.
@@ -512,18 +506,7 @@ void RigExecApplySurfaceProject(std::vector<GfVec3f> *points,
 
 /// Sampled curve frames: positions plus a rotation-minimizing frame per
 /// sample, parameterized by normalized arc length.
-struct RigExecCurveFrameSamples {
-    std::vector<GfVec3f> positions;
-    std::vector<GfVec3f> tangents;
-    std::vector<GfVec3f> normals; ///< rotation-minimizing
-    std::vector<GfVec3f> binormals;
-    std::vector<float> parameters; ///< normalized arc length in [0, 1]
-
-    size_t GetSize() const
-    {
-        return positions.size();
-    }
-};
+using RigExecCurveFrameSamples = RigExecCurveFrameSamplesT<GfVec3f>;
 
 /// Samples a single nonperiodic cubic uniform B-spline (the stock
 /// BasisCurves "cubic"/"bspline" contract) at sampleCount arc-length
@@ -563,40 +546,8 @@ void RigExecApplyRibbonTransport(std::vector<GfVec3f> *points,
                                  const RigExecCurveFrameSamples &restSamples,
                                  const RigExecCurveFrameSamples &posedSamples);
 
-/// A tensor-product NURBS surface patch as UsdGeomNurbsPatch authors one
-/// (tensor-product basis evaluation per Piegl and Tiller, see
-/// docs/references.md): uVertexCount * vVertexCount control points in
-/// u-fastest order, optional rational pointWeights, orders (degree + 1) and
-/// knot vectors of vertexCount + order entries in u and v, and open or
-/// periodic/closed form per parameter direction.
-struct RigExecNurbsPatch {
-    const GfVec3f *points = nullptr;
-    size_t pointCount = 0;
-    const double *pointWeights = nullptr;
-    size_t pointWeightCount = 0;
-    int uVertexCount = 0;
-    int vVertexCount = 0;
-    int uOrder = 0;
-    int vOrder = 0;
-    const double *uKnots = nullptr;
-    size_t uKnotCount = 0;
-    const double *vKnots = nullptr;
-    size_t vKnotCount = 0;
-    bool uPeriodic = false;
-    bool vPeriodic = false;
-
-    /// True when the arrays and counts describe an evaluable NURBS patch.
-    bool IsValid() const;
-    /// Active parameter domains [knots[order-1], knots[vertexCount]].
-    double UDomainStart() const;
-    double UDomainEnd() const;
-    double VDomainStart() const;
-    double VDomainEnd() const;
-    /// Evaluates the patch at normalized parameters (uNorm, vNorm) in [0, 1],
-    /// clamping for open form and wrapping into [0, 1) for periodic/closed
-    /// form before mapping to the active knot domain.
-    GfVec3f EvaluateNormalized(double uNorm, double vNorm) const;
-};
+/// The patch mover's NURBS patch over Gf points (rigExecMath/patchKernel.h).
+using RigExecNurbsPatch = RigExecNurbsPatchKernel<GfVec3f>;
 
 /// Evaluates \p patch at normalized (u, v) = (uvPoints[i][0], uvPoints[i][1])
 /// for each point in \p points (or broadcasts uvPoints[0] when uvPointCount == 1

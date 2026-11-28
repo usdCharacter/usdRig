@@ -1,8 +1,6 @@
-#include "rigExecSchema/schemaTokens.h"
 // Diagnostic probe: isolates which phase of evaluator compilation emits
 // the nonfatal "Applying predicate to invalid prim" coding error.
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/tapSet.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/errorMark.h"
@@ -82,19 +80,6 @@ main(int argc, char **argv)
         ribbon.Compile();
         ribbon.Evaluate(UsdTimeCode(1024));
         Report("ribbon compile + evaluate", ribbonMark);
-    }
-
-    // Phase D: plain tap set over authored providers only (no compile).
-    {
-        UsdStageRefPtr s4 = UsdStage::Open(examplesDir + "/ArmRig.usda");
-        TfErrorMark tapMark;
-        RigExecTapSet taps(s4);
-        taps.Add(
-            RigExecValueAddress::Prim(SdfPath("/ArmAsset/Rig/Joints/Wrist"),
-                                      SchemaComputation::computePointFrame));
-        taps.Prepare();
-        taps.Evaluate(UsdTimeCode::Default());
-        Report("plain taps (authored only)", tapMark);
     }
 
     return 0;

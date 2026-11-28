@@ -1,0 +1,548 @@
+// RigExecBlendShapeMover: everything about the blend-shape mover. A
+// blend-shape mover accumulates channel-weighted delta samples onto the
+// points: p'_i = p_i + sum_k alpha_k(w_k) d_{k,i}, with deltas derived
+// against the authored base. This TU owns its revision binder, its compile
+// validator, and its parity-oracle branch, and registers the row that
+// points at them.
+#include "rigExec/api/moverRegistry.h"
+#include "rigExec/internal/moverPacket.h"
+#include "rigExec/internal/moverGraph.h"
+
+#include "rigExecMath/geometryKernels.h"
+
+#include "pxr/base/tf/stringUtils.h"
+#include "pxr/usd/usdGeom/mesh.h"
+
+#include <algorithm>
+#include "rigExecSchema/schemaNames.h"
+
+using rigExec::RigExecBlendChannel;
+using rigExec::RigExecBlendSampleData;
+using rigExec::RigExecMoverParameters;
+
+PXR_NAMESPACE_USING_DIRECTIVE
+
+// Relationship names the binders and validators read, interned once:
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_relTokens,
+    ((blendInputs, rigExec::SchemaAttrText::rigExecBlendInputs))
+    ((samples, rigExec::SchemaAttrText::rigExecSamples))
+    ((targetPoints, rigExec::SchemaAttrText::rigExecTargetPoints))
+    ((blendShape, rigExec::SchemaAttrText::rigExecBlendShape)));
+
+// Interned once: callbacks and validators run on parallel lanes, and
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_blendShapeTokens,
+    (blendShape)
+    (faceVertexCounts)
+    (faceVertexIndices)
+    ((targetPoints, rigExec::SchemaAttrText::rigExecTargetPoints))
+    ((deltaSpace, rigExec::SchemaAttrText::rigExecDeltaSpace))
+    ((moves, rigExec::SchemaAttrText::rigExecMoves))
+    ((blendInputs, rigExec::SchemaAttrText::rigExecBlendInputs))
+    ((samples, rigExec::SchemaAttrText::rigExecSamples))
+    ((rigExecBlendShape, rigExec::SchemaAttrText::rigExecBlendShape))
+    ((blendShapeType, rigExec::BlendShapeText::typeName))
+    ((normalOffsets, rigExec::BlendShapeText::normalOffsets))
+    (target));
+
+namespace {
+const TfToken _oracleToken0(rigExec::SchemaAttrText::rigExecBlendInputs);
+const TfToken _oracleToken1("inputs:weight");
+const TfToken _oracleToken2(rigExec::SchemaAttrText::rigExecSamples);
+const TfToken _oracleToken3(rigExec::SchemaAttrText::rigExecTargetPoints);
+const TfToken _oracleToken4(rigExec::SchemaAttrText::rigExecBlendShape);
+const TfToken _oracleToken5(rigExec::SchemaAttrText::rigExecActivation);
+const TfToken _oracleToken6(rigExec::SchemaAttrText::rigExecDeltaSpace);
+const TfToken _oracleToken7("faceVertexCounts");
+const TfToken _oracleToken8("faceVertexIndices");
+const TfToken _oracleToken9("target");
+
+// Interned once at load: validation asks per sample, and interning takes
+// the token registry's lock.
+const TfToken
+    _removedPointsPhase(rigExec::SchemaAttrText::rigExecPointsReadPhase);
+
+void
+_BindBlendShapeMover(const rigExec::RigExecMoverBindContext &ctx)
+{
+    rigExec::RigExecRevisionBinding &binding = *ctx.binding;
+    const UsdPrim &moverPrim = ctx.moverPrim;
+    const SdfPath &target = ctx.target;
+    const SdfPath &ownerPath = ctx.ownerPath;
+    if (moverPrim.GetStage()->GetPrimAtPath(ownerPath).IsA<UsdGeomMesh>()) {
+        binding.topologyCounts =
+            ownerPath.AppendProperty(_blendShapeTokens->faceVertexCounts);
+        binding.topologyIndices =
+            ownerPath.AppendProperty(_blendShapeTokens->faceVertexIndices);
+    }
+    binding.blendInputs =
+        rigExec::RigExecRelationshipTargets(moverPrim, _relTokens->blendInputs);
+    std::sort(binding.blendInputs.begin(), binding.blendInputs.end());
+    for (const SdfPath &input : binding.blendInputs) {
+        const UsdPrim channel = moverPrim.GetStage()->GetPrimAtPath(input);
+        for (const SdfPath &samplePath : rigExec::RigExecRelationshipTargets(
+                 channel, _relTokens->samples)) {
+            const UsdPrim sample =
+                moverPrim.GetStage()->GetPrimAtPath(samplePath);
+            const SdfPathVector points = rigExec::RigExecRelationshipTargets(
+                sample, _relTokens->targetPoints);
+            const SdfPathVector shapes = rigExec::RigExecRelationshipTargets(
+                sample, _relTokens->blendShape);
+            // Exactly one of the two. Both authored is not a precedence
+            // question: two shapes that disagree with a silent winner is
+            // the worst of the three outcomes, so the sample is dropped
+            // here and compile reports it.
+            if (points.size() + shapes.size() != 1) {
+                continue;
+            }
+            rigExec::RigExecReadPhase phase;
+            std::string error;
+            if (shapes.size() == 1) {
+                // A sparse sample has no phased points property to read:
+                // its offsets are authored data on a UsdSkelBlendShape,
+                // not a chain result, so there is no "preceding" or
+                // "final" revision of them to select.
+                binding.blendSamples[input].push_back(
+                    {samplePath, SdfPath(), phase, shapes[0]});
+                continue;
+            }
+            rigExec::RigExecResolveReadPhase(
+                sample.GetRelationship(_blendShapeTokens->targetPoints), &phase,
+                &error);
+            binding.blendSamples[input].push_back(
+                {samplePath, rigExec::RigExecPointsOf(points[0]), phase,
+                 SdfPath()});
+        }
+    }
+    binding.base = target;
+}
+
+bool
+_ValidateBlendShapeMover(const rigExec::RigExecMoverValidateContext &ctx,
+                         std::string *error)
+{
+    const UsdStageRefPtr &stage = ctx.stage;
+    const UsdPrim &prim = ctx.prim;
+    TfToken deltaSpace = _blendShapeTokens->target;
+    prim.GetAttribute(_blendShapeTokens->deltaSpace).Get(&deltaSpace);
+    if (deltaSpace != "target" && deltaSpace != "surfaceFrame") {
+        *error = prim.GetPath().GetString() + ": invalid blend deltaSpace";
+        return false;
+    }
+    if (deltaSpace == "surfaceFrame") {
+        SdfPathVector targets;
+        prim.GetRelationship(_blendShapeTokens->moves).GetTargets(&targets);
+        for (const auto &target : targets) {
+            if (!stage->GetPrimAtPath(target.GetPrimPath())
+                     .IsA<UsdGeomMesh>()) {
+                *error = prim.GetPath().GetString() +
+                         ": surfaceFrame blend requires mesh targets";
+                return false;
+            }
+        }
+    }
+    SdfPathVector inputs;
+    prim.GetRelationship(_blendShapeTokens->blendInputs).GetTargets(&inputs);
+    for (const SdfPath &inputPath : inputs) {
+        const UsdPrim input = stage->GetPrimAtPath(inputPath);
+        if (!input) {
+            continue;
+        }
+        SdfPathVector samples;
+        input.GetRelationship(_blendShapeTokens->samples).GetTargets(&samples);
+        for (const SdfPath &samplePath : samples) {
+            const UsdPrim sample = stage->GetPrimAtPath(samplePath);
+            if (!sample) {
+                continue;
+            }
+            // A sample states its shape exactly one way. Both
+            // authored is refused rather than resolved by
+            // precedence: two shapes that disagree with a silent
+            // winner is worse than either shape being wrong.
+            SdfPathVector densePoints, sparseShape;
+            if (UsdRelationship rel =
+                    sample.GetRelationship(_blendShapeTokens->targetPoints)) {
+                rel.GetTargets(&densePoints);
+            }
+            if (UsdRelationship rel = sample.GetRelationship(
+                    _blendShapeTokens->rigExecBlendShape)) {
+                rel.GetTargets(&sparseShape);
+            }
+            if (!densePoints.empty() && !sparseShape.empty()) {
+                *error = samplePath.GetString() +
+                         ": blend sample authors both rigExec:targetPoints"
+                         " and rigExec:blendShape; exactly one is allowed";
+                return false;
+            }
+            if (!sparseShape.empty()) {
+                if (sparseShape.size() != 1 ||
+                    !stage->GetPrimAtPath(sparseShape[0].GetPrimPath())
+                         .IsA(_blendShapeTokens->blendShapeType)) {
+                    *error = samplePath.GetString() +
+                             ": rigExec:blendShape must name exactly one"
+                             " UsdSkelBlendShape prim";
+                    return false;
+                }
+                if (ctx.notices) {
+                    const UsdPrim shape =
+                        stage->GetPrimAtPath(sparseShape[0].GetPrimPath());
+                    bool hasInbetweens = false;
+                    for (const UsdProperty &property :
+                         shape.GetPropertiesInNamespace(
+                             rigExec::BlendShapeText::inbetweensPrefix)) {
+                        const UsdAttribute attr = property.As<UsdAttribute>();
+                        if (attr &&
+                            TfStringStartsWith(
+                                attr.GetName(),
+                                rigExec::BlendShapeText::inbetweensPrefix) &&
+                            !TfStringEndsWith(
+                                attr.GetName(),
+                                rigExec::BlendShapeText::
+                                    inbetweenNormalOffsetsSuffix)) {
+                            hasInbetweens = true;
+                            break;
+                        }
+                    }
+                    const UsdAttribute normals =
+                        shape.GetAttribute(_blendShapeTokens->normalOffsets);
+                    const bool hasNormals =
+                        normals && normals.HasAuthoredValue();
+                    if (hasInbetweens || hasNormals) {
+                        ctx.notices->push_back(
+                            sparseShape[0].GetString() +
+                            ": UsdSkelBlendShape authors " +
+                            (hasInbetweens ? "inbetweens" : "") +
+                            (hasInbetweens && hasNormals ? " and " : "") +
+                            (hasNormals ? "normalOffsets" : "") +
+                            ", which RigExec does not apply; only offsets "
+                            "and pointIndices are used");
+                    }
+                }
+                // No phased read to validate: the offsets are
+                // authored data, not a chain revision, so there
+                // is no preceding or final version of them.
+                continue;
+            }
+            if (const UsdAttribute old =
+                    sample.GetAttribute(_removedPointsPhase);
+                old && old.HasAuthoredValue()) {
+                *error = samplePath.GetString() +
+                         ": authors rigExec:pointsReadPhase, which was "
+                         "replaced by rigExecReadPhase metadata on " +
+                         rigExec::SchemaAttrText::rigExecTargetPoints;
+                return false;
+            }
+            rigExec::RigExecReadPhase phase;
+            std::string phaseError;
+            if (!rigExec::RigExecResolveReadPhase(
+                    sample.GetRelationship(_blendShapeTokens->targetPoints),
+                    &phase, &phaseError)) {
+                *error = samplePath.GetString() +
+                         ": blend sample points read phase: " + phaseError;
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+rigExec::RigExecOracleResult
+_OracleBlendShapeMover(const rigExec::RigExecMoverOracleContext &ctx)
+{
+    using rigExec::RigExecOracleResult;
+    const rigExec::RigExecOracleScene &stage = ctx.stage;
+    const rigExec::RigExecOraclePrim &prim = ctx.prim;
+    const SdfPath &moverPath = ctx.moverPath;
+    const SdfPath &target = ctx.target;
+    const UsdTimeCode time = ctx.time;
+    const rigExec::RigExecOracleScene &resolved = ctx.resolved;
+    std::vector<std::string> *diagnostics = ctx.diagnostics;
+    VtVec3fArray &points = *ctx.points;
+    const VtVec3fArray &basePoints = ctx.basePoints;
+    // p'_i = p_i + sum_k alpha_k(w_k) d_{k,i}.
+    SdfPathVector inputs;
+    if (rigExec::RigExecOracleRelationship rel =
+            prim.GetRelationship(_oracleToken0)) {
+        rel.GetTargets(&inputs);
+    }
+    // Active inputs accumulate in canonical input-path order;
+    // authored relationship order is non-semantic.
+    std::sort(inputs.begin(), inputs.end());
+
+    VtVec3fArray next = points;
+    bool failed = false;
+    for (const SdfPath &inputPath : inputs) {
+        const rigExec::RigExecOraclePrim input =
+            stage->GetPrimAtPath(inputPath);
+        if (!input) {
+            diagnostics->push_back("MoverFailed " + moverPath.GetString() +
+                                   ": missing blend input " +
+                                   inputPath.GetString());
+            failed = true;
+            break;
+        }
+        float channel = 0;
+        // Through the resolver so driven weights are seen: a plain Get()
+        // sees only an authored `inputs:weight`.
+        resolved.GetAttribute(input.GetAttribute(_oracleToken1), time,
+                              &channel);
+        if (!std::isfinite(channel)) {
+            diagnostics->push_back("MoverFailed " + moverPath.GetString() +
+                                   ": non-finite channel weight on " +
+                                   inputPath.GetString());
+            failed = true;
+            break;
+        }
+        SdfPathVector samplePaths;
+        if (rigExec::RigExecOracleRelationship rel =
+                input.GetRelationship(_oracleToken2)) {
+            rel.GetTargets(&samplePaths);
+        }
+
+        // Collect samples: activation plus target-shape points.
+        // Activations must be finite, strictly positive, and
+        // unique; samples compile in (activation, canonicalPath)
+        // order with an implicit zero-delta sample at activation 0
+        // and the channel weight clamped to [0, lastActivation].
+        struct _Sample {
+            float activation;
+            SdfPath path;
+            VtVec3fArray shape;
+        };
+        std::vector<_Sample> samples;
+        if (samplePaths.empty()) {
+            diagnostics->push_back(
+                "MoverFailed " + moverPath.GetString() +
+                ": blend input has no samples: " + inputPath.GetString());
+            failed = true;
+            break;
+        }
+        for (const SdfPath &samplePath : samplePaths) {
+            const rigExec::RigExecOraclePrim sample =
+                stage->GetPrimAtPath(samplePath.GetPrimPath());
+            if (!sample) {
+                diagnostics->push_back("MoverFailed " + moverPath.GetString() +
+                                       ": missing blend sample " +
+                                       samplePath.GetString());
+                failed = true;
+                break;
+            }
+            SdfPathVector shapeTargets, sparseTargets;
+            if (rigExec::RigExecOracleRelationship rel =
+                    sample.GetRelationship(_oracleToken3)) {
+                rel.GetTargets(&shapeTargets);
+            }
+            if (rigExec::RigExecOracleRelationship rel =
+                    sample.GetRelationship(_oracleToken4)) {
+                rel.GetTargets(&sparseTargets);
+            }
+            if (shapeTargets.size() + sparseTargets.size() != 1) {
+                diagnostics->push_back(
+                    "MoverFailed " + moverPath.GetString() +
+                    ": blend sample must name exactly one of "
+                    "rigExec:targetPoints or rigExec:blendShape: " +
+                    samplePath.GetString());
+                failed = true;
+                break;
+            }
+            _Sample s;
+            s.path = sample.GetPath();
+            if (sparseTargets.size() == 1) {
+                // The oracle is a SCALAR REFERENCE, so it reads the
+                // blend shape straight off the stage and expands it
+                // to a full moved-points array. Oracle bypasses
+                // RigExecBlendSampleCache to detect stale layouts.
+                rigExec::RigExecBlendSampleLayout layout;
+                rigExec::RigExecResolveBlendSampleLayout(
+                    stage, sparseTargets[0], basePoints.size(), &layout);
+                if (!layout.valid) {
+                    diagnostics->push_back("MoverFailed " +
+                                           moverPath.GetString() +
+                                           ": unusable blend shape at " +
+                                           sparseTargets[0].GetString());
+                    failed = true;
+                    break;
+                }
+                s.shape = VtVec3fArray(basePoints.begin(), basePoints.end());
+                if (layout.indices.empty()) {
+                    for (size_t i = 0; i < layout.offsets.size(); ++i) {
+                        s.shape[i] += layout.offsets[i];
+                    }
+                } else {
+                    for (size_t k = 0; k < layout.indices.size(); ++k) {
+                        s.shape[size_t(layout.indices[k])] += layout.offsets[k];
+                    }
+                }
+                s.activation = 1;
+                if (rigExec::RigExecOracleAttribute a =
+                        sample.GetAttribute(_oracleToken5)) {
+                    resolved.GetAttribute(a, time, &s.activation);
+                }
+                if (!std::isfinite(s.activation) || s.activation <= 0) {
+                    diagnostics->push_back(
+                        "MoverFailed " + moverPath.GetString() +
+                        ": non-positive activation at " + s.path.GetString());
+                    failed = true;
+                    break;
+                }
+                samples.push_back(std::move(s));
+                continue;
+            }
+            const rigExec::RigExecOracleAttribute shapeAttr =
+                stage->GetAttributeAtPath(shapeTargets[0]);
+            bool gotShape = shapeAttr && shapeAttr.Get(&s.shape, time);
+            // A phased sample read answers from the recorded
+            // snapshot, resolved through the compiled chain.
+            if (const VtValue *value =
+                    ctx.sampleSnapshot(inputPath, samplePath)) {
+                if (value->IsHolding<VtVec3fArray>()) {
+                    s.shape = value->UncheckedGet<VtVec3fArray>();
+                    gotShape = true;
+                }
+            }
+            if (!gotShape || s.shape.size() != basePoints.size()) {
+                diagnostics->push_back("MoverFailed " + moverPath.GetString() +
+                                       ": sample cardinality mismatch at " +
+                                       shapeTargets[0].GetString());
+                failed = true;
+                break;
+            }
+            s.activation = 1;
+            if (rigExec::RigExecOracleAttribute a =
+                    sample.GetAttribute(_oracleToken5)) {
+                resolved.GetAttribute(a, time, &s.activation);
+            }
+            if (!std::isfinite(s.activation) || s.activation <= 0) {
+                diagnostics->push_back("MoverFailed " + moverPath.GetString() +
+                                       ": non-positive activation at " +
+                                       s.path.GetString());
+                failed = true;
+                break;
+            }
+            samples.push_back(std::move(s));
+        }
+        if (failed) {
+            break;
+        }
+        if (samples.empty()) {
+            continue;
+        }
+        std::sort(samples.begin(), samples.end(),
+                  [](const _Sample &x, const _Sample &y) {
+                      return x.activation != y.activation
+                                 ? x.activation < y.activation
+                                 : x.path < y.path;
+                  });
+        for (size_t k = 1; k < samples.size(); ++k) {
+            if (samples[k].activation == samples[k - 1].activation) {
+                diagnostics->push_back("MoverFailed " + moverPath.GetString() +
+                                       ": duplicate activation at " +
+                                       samples[k].path.GetString());
+                failed = true;
+                break;
+            }
+        }
+        if (failed) {
+            break;
+        }
+
+        const float w =
+            std::min(std::max(channel, 0.0f), samples.back().activation);
+        if (w == 0.0f) {
+            continue;
+        }
+        // Piecewise-linear interpolation between the bracketing
+        // activation samples; the lower bracket may be the
+        // implicit zero-delta sample at activation 0. Deltas
+        // derive against the destination BASE points,
+        // then accumulate onto the preceding revision.
+        size_t hi = 0;
+        while (hi < samples.size() && samples[hi].activation < w) {
+            ++hi;
+        }
+        if (hi >= samples.size()) {
+            hi = samples.size() - 1;
+        }
+        const float aHi = samples[hi].activation;
+        const float aLo = hi > 0 ? samples[hi - 1].activation : 0.0f;
+        const float t = aHi > aLo ? (w - aLo) / (aHi - aLo) : 1.0f;
+        const VtVec3fArray *shapeLo = hi > 0 ? &samples[hi - 1].shape : nullptr;
+        const VtVec3fArray &shapeHi = samples[hi].shape;
+        for (size_t i = 0; i < next.size(); ++i) {
+            const GfVec3f deltaHi = shapeHi[i] - basePoints[i];
+            const GfVec3f deltaLo =
+                shapeLo ? (*shapeLo)[i] - basePoints[i] : GfVec3f(0);
+            const GfVec3f delta = deltaLo + (deltaHi - deltaLo) * t;
+            next[i] += delta;
+        }
+    }
+    if (!failed) {
+        TfToken space = _oracleToken9;
+        prim.GetAttribute(_oracleToken6).Get(&space);
+        if (space == "surfaceFrame") {
+            VtIntArray counts, indices;
+            stage->GetPrimAtPath(target.GetPrimPath())
+                .GetAttribute(_oracleToken7)
+                .Get(&counts, time);
+            stage->GetPrimAtPath(target.GetPrimPath())
+                .GetAttribute(_oracleToken8)
+                .Get(&indices, time);
+            std::vector<GfVec3f> deltas(next.size()), transported;
+            for (size_t i = 0; i < next.size(); ++i) {
+                deltas[i] = next[i] - points[i];
+            }
+            if (rigExec::RigExecTransportSurfaceOffsets(
+                    std::vector<GfVec3f>(basePoints.begin(), basePoints.end()),
+                    std::vector<GfVec3f>(points.begin(), points.end()),
+                    std::vector<int>(counts.begin(), counts.end()),
+                    std::vector<int>(indices.begin(), indices.end()), deltas,
+                    &transported)) {
+                for (size_t i = 0; i < next.size(); ++i) {
+                    next[i] = points[i] + transported[i];
+                }
+            } else {
+                failed = true;
+                diagnostics->push_back("MoverFailed " + moverPath.GetString() +
+                                       ": degenerate blend surface frame");
+            }
+        }
+        if (!failed) {
+            points = next;
+        }
+    }
+    // The blend branch never passes through: even on failure it falls
+    // to the shared envelope blend over the unmodified points, exactly
+    // as the in-evaluator branch did.
+    return RigExecOracleResult::Blend;
+}
+
+rigExec::RigExecMoverHandler
+_MakeHandler()
+{
+    rigExec::RigExecMoverHandler handler(
+        rigExec::SchemaTypeName::RigExecBlendShapeMover,
+        &rigExec::RigExecFixedMoverOp<rigExec::RigExecRevisionOp::BlendShape>,
+        rigExec::RigExecMoverDomain::Points);
+    handler.bind = &_BindBlendShapeMover;
+    handler.validate = &_ValidateBlendShapeMover;
+    handler.oracle = &_OracleBlendShapeMover;
+    return handler;
+}
+
+// RigExecMlMover applies its morph targets as this mover does: its blend
+// inputs' weights connect to its own RigExecMlOutput children, which its
+// network publishes in the pose domain (poseSceneTranslation.cpp), so the
+// revision is a blend-shape revision in every respect.
+rigExec::RigExecMoverHandler
+_MakeMlHandler()
+{
+    rigExec::RigExecMoverHandler handler = _MakeHandler();
+    handler.schemaType = rigExec::SchemaTypeName::RigExecMlMover;
+    return handler;
+}
+
+} // namespace
+
+RIGEXEC_REGISTER_MOVER(_MakeHandler());
+RIGEXEC_REGISTER_MOVER(_MakeMlHandler());

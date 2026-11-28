@@ -1,12 +1,12 @@
 // The .rigexec file format: one FlatBuffer, schema libs/rigExecBinary/
-// rigexec.fbs, file identifier "REXB". The generated object API types live
-// in namespace rigExec::fb with the RigExecWire prefix (RigExecWireFile,
-// RigExecWireSolver, ...) and are aliased into namespace rigExec under the
-// same names; the schema's math and POD structs map onto the value types
-// of rigExecBinary/wireTypes.h through the Pack/UnPack pairs declared
-// here. Open is the decoder and Write the encoder: there is no
-// hand-written schema codec. An optional versioned lossless transport wraps
-// the same validated FlatBuffer; raw files remain accepted. USD-free.
+// rigexec.fbs, file identifier "REXB". The generated object API types live in
+// namespace rigExec::fb with the RigExecWire prefix (RigExecWireFile,
+// RigExecWireSolver, ...) and are aliased into namespace rigExec under the same
+// names; the schema's math and POD structs map onto the value types of
+// rigExecBinary/wireTypes.h through the Pack/UnPack pairs declared here. Open
+// is the decoder and Write the encoder: there is no hand-written schema codec.
+// An optional versioned lossless transport wraps the same validated FlatBuffer;
+// raw files remain accepted.
 #ifndef RIGEXEC_BINARY_FORMAT_H
 #define RIGEXEC_BINARY_FORMAT_H
 
@@ -526,11 +526,11 @@ inline constexpr uint8_t RigExecWireConstraintWorldUpRotationOnly =
     uint8_t(fb::ConstraintFlags::WorldUpRotationOnly);
 inline constexpr uint8_t RigExecWireConstraintRadialBlend =
     uint8_t(fb::ConstraintFlags::RadialBlend);
+inline constexpr uint8_t RigExecWireConstraintPreserveJointOrientation =
+    uint8_t(fb::ConstraintFlags::PreserveJointOrientation);
 
-/// The format version every writer writes; every change to rigexec.fbs or
-/// to what its records mean bumps it. Open reads it and every version from
-/// RigExecFormatOldestReadable on; it refuses older versions with an S3
-/// re-export message and unknown future versions with a rebake message.
+/// The format version every writer writes; every change to rigexec.fbs or to
+/// what its records mean bumps it.
 ///
 /// Format 21 adds the extended Delta Mush, lattice and surface settings
 /// (RigExecFormatExtendedSettingNames): mover attributes the revision reads
@@ -544,19 +544,17 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 ///
 /// Format 23 adds the property movers' quantize and path operations: a path
 /// revision names its curve's points slot and carries its uniform settings
-/// (PropertyRevision.path_*). Older files hold neither operation.
+/// (PropertyRevision.path_*).
 ///
 /// Format 24 adds RigLogic's radial-basis solves to PoseInterpolator (method
-/// and its extra driver slots) and three pose-solver kernels to RbfKernel,
-/// and two more solves to the same table: an ML mover's network (network,
-/// mask, float value inputs, any number of them) and animated maps (maps,
-/// primvar_slots, primvar_sources). Older files hold none of them, so every
-/// interpolator plays the pose solve.
+/// and its extra driver slots) and three pose-solver kernels to RbfKernel, and
+/// two more solves to the same table: an ML mover's network (network, mask,
+/// float value inputs, any number of them) and animated maps (maps,
+/// primvar_slots, primvar_sources).
 ///
-/// Format 25 adds windowed operations (File.windowed_ops, whose solve reads
-/// the inputs it captured over earlier ticks) and the harmonics constraint's
-/// fields to Constraint (harmonics and the harmonics_* fields, window).
-/// Older files hold neither.
+/// Format 25 adds windowed operations (File.windowed_ops, whose solve reads the
+/// inputs it captured over earlier ticks) and the harmonics constraint's fields
+/// to Constraint (harmonics and the harmonics_* fields, window).
 ///
 /// Format 26 changes the cloth mover's external revision
 /// (rigExecBinary/clothPlayback.h): its compiled rig is RCL3, which adds
@@ -568,41 +566,188 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// window and no material model. The tables are unchanged.
 ///
 /// Format 27 admits volume falloff sample arrays through the existing typed
-/// path-read rows. Older files use their compiled falloff table.
+/// path-read rows.
 ///
-/// Format 28 admits Smooth and DeltaMush as Range ops: a group step for part
-/// k also reads the groups of its entering version holding a point group k's
-/// results read (its halo: a smooth's edge neighbours, a delta mush's
-/// smoothing region), declared as their RevisionOut slots. Older files hold
-/// neither as a Range revision. Format 29 lets sparse target-space blends
-/// carry channel keys on chunks and read those weights at each chunk.
-/// Format 30 admits Range DQ skins and independent Range status summaries.
+/// Format 28 admits Smooth and DeltaMush as Range ops: a group step for part k
+/// also reads the groups of its entering version holding a point group k's
+/// results read (its halo: a smooth's edge neighbours, a delta mush's smoothing
+/// region), declared as their RevisionOut slots. Format 29 lets sparse
+/// target-space blends carry channel keys on chunks and read those weights at
+/// each chunk. Format 30 admits Range DQ skins and independent Range status
+/// summaries.
 ///
 /// Format 31 adds 2D skeletons, joint groups, unclamped animated maps and
 /// scalar primvar chains: Solver.skeleton2d (a RigExecSkeleton2d over nested
-/// RigExecJoint bones with RigExecBone2dAPI: the per-bone setup in solve
-/// order, child-joint tips, space-switch parent spaces, target candidates,
-/// control bones and factors, and its channel and switch selector inputs;
-/// its start frame is the row's start and its outside parent spaces are the
-/// row's controls), Solver.joint_groups with joint_group_members,
+/// RigExecJoint bones with RigExecBone2dAPI: the per-bone setup in solve order,
+/// child-joint tips, space-switch parent spaces, target candidates, control
+/// bones and factors, and its channel and switch selector inputs; its start
+/// frame is the row's start and its outside parent spaces are the row's
+/// controls), Solver.joint_groups with joint_group_members,
 /// joint_group_selectors and joint_group_parents (the RigExecJointGroupAPI
-/// groups of a RigExecFkChain or RigExecSkeleton2d and one active-member
-/// read each), AnimatedMaps.map_unclamped (one byte per map, 1 where
+/// groups of a RigExecFkChain or RigExecSkeleton2d and one active-member read
+/// each), AnimatedMaps.map_unclamped (one byte per map, 1 where
 /// rigExec:clampOutput is false; absent when every map clamps) and
 /// File.scalar_primvar_chains (the property chains published as constant
-/// primvars). Older files hold none of them.
+/// primvars).
 ///
-/// Format 32 adds RevisionBinding.normals_per_corner and
-/// normals_left_handed: a RecomputeNormals target's faceVarying layout and
-/// leftHanded orientation. Older files hold neither.
-inline constexpr uint32_t RigExecFormatVersion = 32;
-
-/// The first format version whose RecomputeNormals binding may carry the
-/// normals layout.
-inline constexpr uint32_t RigExecFormatNormalsLayoutVersion = 32;
-
-/// The first format version that may hold a Range Smooth or DeltaMush.
-inline constexpr uint32_t RigExecFormatRangeSmoothVersion = 28;
+/// Format 32 adds RevisionBinding.normals_per_corner and normals_left_handed: a
+/// RecomputeNormals target's faceVarying layout and leftHanded orientation.
+///
+/// Format 33 adds File.manifest: the stable id of every revision op, property
+/// op, provider op and value type ordinal (rigExecBinary/manifest.h). Open
+/// maps a file's ordinals to this build's through it.
+///
+/// Format 34 adds ConstraintFlags.PreserveJointOrientation: a SingleChainIK
+/// constraint's rigExec:orientationMode "preserve".
+///
+/// Format 35 adds File.op_graph and Manifest.core_ops and core_types, which
+/// name the ops and types its nodes use.
+///
+/// Format 36 runs op_graph's nodes as steps of the common graph (OpNode,
+/// OpChainHead and OpChainRange, on the OpValue and OpGroupValue domains),
+/// feeds node inputs from a point chain's vertex groups or a joint's final
+/// matrix, and gives each range chain its point chain and group bounds
+/// (OpGraph.chains). It retires format 35's one OpGraph step.
+///
+/// Format 37 runs each property revision as an op node (OpNode steps):
+/// node inputs read the rig through OpGraph.lookups, and node values are
+/// stored in property versions through OpGraph.host_outputs. It retires the
+/// PropertyRevision step.
+///
+/// Format 38 places each volume weight by a VolumePlacement op node
+/// (OpNode steps): its frame input reads a pose version through an
+/// OpGraph.lookups source 1 entry, and its placement is stored through
+/// OpGraph.host_outputs targets 1 and 2. It retires the VolumePlacements
+/// step.
+///
+/// Format 39 builds each weight object's packet by a StaticWeights,
+/// DynamicWeights, CombineWeights or VolumeWeights op node (OpNode steps):
+/// its inputs read the weight object through OpGraph.lookups source 2, a
+/// volume's frame through source 1, and its packet is stored through
+/// OpGraph.host_outputs target 3. It retires the WeightPacket step.
+///
+/// Format 40 weighs each weight field by op nodes (OpNode steps), one per
+/// weight object of the field: StaticWeightField, DynamicWeightField,
+/// CombineWeightFields or a Sphere, Plane or Curve weight. Their inputs read
+/// the field's weight objects through OpGraph.lookups source 4, a current
+/// revision's entering points through source 3, and the field's weights are
+/// stored through OpGraph.host_outputs target 5. It retires the WeightField
+/// step.
+///
+/// Format 41 runs each provider's final and base matrix as a ProviderMatrix
+/// op node and each frame record's matrix as a FrameMatrix op node (OpNode
+/// steps). Their inputs read a slot's rest frame through OpGraph.lookups
+/// source 20, a pose commit's record gates through source 21 and pose
+/// versions through source 1; the matrices are stored through
+/// OpGraph.host_outputs targets 20 to 23. It retires the ProviderMatrix and
+/// FrameMatrix steps.
+///
+/// Format 42 runs a Range matrix at full strength as op nodes: a
+/// MoverTransform OpNode and a MatrixDeform range chain storing the
+/// revision's groups through OpGraph.host_outputs target 4. OpChain gains
+/// its members and the groups each writes, which RigExecFormatGroupWriters
+/// reads. Such a revision has no InfluenceFold, RevisionStatic or
+/// RevisionChunk step.
+///
+/// Format 43 writes each pose commit back by a PoseCommit op node (OpNode
+/// steps). Its inputs read the commit's candidates through OpGraph.lookups
+/// source 31 and its version lists through source 30; the frames are stored
+/// in the versions the commit writes, and a solver commit's presence in its
+/// commit table, through OpGraph.host_outputs targets 30 to 34. It retires
+/// the SolverCommit, CommitDelta, PropagateChunk and CommitApply steps, and
+/// Commit.split and staging_base with them.
+///
+/// Format 44 runs every Range matrix as op nodes: MatrixDeform reads its
+/// weight object's packet from the packet's node (OpGraph lookup source 10
+/// read 2 its weightBlend each frame where that is not pinned) and stores
+/// whether its revision is enabled through OpGraph.host_outputs target 6.
+///
+/// Format 45 runs each connected provider refresh as a ProviderRefresh op
+/// node and each provider program operation other than Attribute as a
+/// ProviderArithmetic or AffineFrame op node (OpNode steps). A refresh reads
+/// its re-evaluated frames through OpGraph.lookups source 22, blocking
+/// parents through source 23 and prior commits through source 21 read 3,
+/// and stores its frames through OpGraph.host_outputs targets 24 to 27. A
+/// provider operation reads its typed inputs through source 24 and stores
+/// its value through targets 28, 29, 50 and 51. It retires the
+/// ProviderRefresh step and SpaceExpression steps of any operation but
+/// Attribute.
+///
+/// Format 46 runs every Range smooth as a Smooth op node over its compiled
+/// topology, and an op revision reads the output of the op revision before
+/// it in its point chain node to node where the two share a range chain.
+///
+/// Format 47 solves Position, Rotation, Scale, Parent and Aim constraints
+/// and the MatrixMover as op nodes with the identity of their Constraint
+/// step, and a geometry target's delta as a ConstraintDelta node. They read
+/// their inputs through OpGraph.lookups sources 32 to 37 and 39 and store
+/// their frame, delta and whether it was measured through
+/// OpGraph.host_outputs targets 35 to 37. A Constraint step remains for
+/// IK/FK match, harmonics, single-chain IK and a constraint with no target.
+///
+/// Format 48 runs every Range delta mush as a DeltaMush op node, its
+/// per-frame inputs read through RevisionLeaf lookups (OpRevisionRead 3-13)
+/// and its frame provider selected as a matrix mover's reference.
+///
+/// Format 49 answers every provider value that is not a provider operation
+/// result (Attribute operations and the external, sampled, routed and pose
+/// frame bridges) by a ProviderSelect op node. It reads its candidates
+/// through OpGraph.lookups source 25 and publishes the answer through
+/// OpGraph.host_outputs targets 52 to 54. It retires the SpaceExpression
+/// step: StepKind 24 is reserved and refused.
+///
+/// Format 50 runs every Range lattice as a Lattice op node over the divisions
+/// read at Build, its rest points the chain's base and its cages read through
+/// RevisionLeaf lookups (OpRevisionRead 13-15).
+///
+/// Format 51 solves harmonics, single-chain IK and IK/FK match constraints
+/// as Harmonics, SingleChainIk and IkFkMatch op nodes with the identity of
+/// their Constraint step. They read their inputs through OpGraph.lookups
+/// sources 38, 70 and 71 and store what they made of their frames through
+/// OpGraph.host_outputs target 70, a single-chain IK's solved chain through
+/// 71 and an IK/FK match's values and presented controls through 72 to 74.
+/// A Constraint step remains only for a constraint with no target.
+///
+/// Format 52 runs a provider slot's avar bindings, a space checkpoint and a
+/// pose interpolator as AvarInputs, SpaceCheckpoint and PoseInterpolator op
+/// nodes. They read their inputs through OpGraph.lookups sources 40 to 42
+/// and store the slot's avars, the switch frame and the weights through
+/// OpGraph.host_outputs targets 40 to 42. It retires the AvarInputs,
+/// SpaceCheckpoint and PoseInterpolator steps: StepKinds 26, 27 and 9 are
+/// reserved and refused.
+///
+/// Format 53 retires the Constraint step: StepKind 3 is reserved and
+/// refused. A constraint with no target solves nothing and has no step.
+///
+/// Format 54 runs every sparse Range blend shape as a BlendShape op node over
+/// the sparse layouts and activations read at Build, each channel's weight
+/// read through a RevisionLeaf lookup (OpRevisionRead 16) listed per channel;
+/// a range step reruns only for the groups its chunk keys give a moved
+/// channel.
+///
+/// Format 55 runs every solver kind as op nodes keeping the Solve identity:
+/// they read their inputs through OpGraph.lookups source 60, store their
+/// frames through OpGraph.host_outputs target 60 and a 2D skeleton's planar
+/// flag through 61. It retires the Solve step: StepKind 1 is reserved and
+/// refused. The Solver rest copies and parameters only that step read are
+/// deprecated.
+///
+/// Format 56 composes rests as RestCompose op nodes reading RestInputs
+/// lookups (OpGraph.lookups source 43) and storing host_outputs target 43:
+/// StepKind 20 is reserved and refused. PoseInterpolator rows carry their
+/// solve kind; their RBF, method, network and maps tables are deprecated.
+///
+/// Format 57 runs every Matrix, Smooth, DeltaMush and Lattice revision as
+/// op chain members: a chain holding one is a range chain even when it is
+/// cut into one vertex group (Revision.range_role), and lookup source 11 is
+/// the identity a matrix transform falls back to.
+///
+/// Format 68 runs the remaining step 10 families as op nodes. Ladders
+/// compose as LadderCompose op nodes reading LadderInputs lookups
+/// (OpGraph.lookups source 44) and storing host_outputs target 44:
+/// StepKind 21 is reserved and refused. A pose interpolator's node also
+/// stores its status through target 45.
+inline constexpr uint32_t RigExecFormatVersion = 68;
 
 /// Fields every Solver row carries before its kind-specific inputs, in
 /// registration order: the bake numbers them (serialize.cpp), the runtime
@@ -610,7 +755,7 @@ inline constexpr uint32_t RigExecFormatRangeSmoothVersion = 28;
 inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
-inline constexpr uint32_t RigExecFormatOldestReadable = 20;
+inline constexpr uint32_t RigExecFormatOldestReadable = 68;
 
 /// Whether Open reads format version \p version.
 inline constexpr bool
@@ -619,15 +764,6 @@ RigExecFormatReads(uint32_t version)
     return version >= RigExecFormatOldestReadable &&
            version <= RigExecFormatVersion;
 }
-
-/// The first format version whose Delta Mush, lattice and surface
-/// revisions may carry the extended settings.
-inline constexpr uint32_t RigExecFormatExtendedSettingsVersion = 21;
-
-/// The first format version whose provider program may hold affine frame
-/// expressions (provider op kind AffineFrame, with its affine_kind and
-/// affine_targets).
-inline constexpr uint32_t RigExecFormatAffineFramesVersion = 21;
 
 /// The mover attributes format 21 adds to revision op \p op (DeltaMush,
 /// Lattice or SurfaceProject), in the order the assembly reads them, with
@@ -646,20 +782,34 @@ bool RigExecFormatExtendedInfluencesValid(uint8_t op, size_t influences);
 inline bool
 RigExecFormatIsRangeRevision(const fb::RigExecWireRevision &r)
 {
-    return !r.chunked && r.chunks.size() >= 2;
+    return !r.chunked && (r.rangeRole || r.chunks.size() >= 2);
 }
 
-// Format 29: sparse blend chunks carry their channel indices in key.
+/// Whether \p r runs as op chain members: a Range Matrix, Smooth, DeltaMush,
+/// Lattice or plugin (External) revision, which folds no transform of its
+/// own, or a whole member (Revision.whole_role).
+inline bool
+RigExecFormatRunsAsOps(const fb::RigExecWireRevision &r)
+{
+    return RigExecFormatIsRangeRevision(r) &&
+           (r.op == uint8_t(fb::RevisionOp::Matrix) ||
+            r.op == uint8_t(fb::RevisionOp::Smooth) ||
+            r.op == uint8_t(fb::RevisionOp::DeltaMush) ||
+            r.op == uint8_t(fb::RevisionOp::Lattice) ||
+            r.op == uint8_t(fb::RevisionOp::External) ||
+            (r.wholeRole &&
+             (r.op == uint8_t(fb::RevisionOp::VolumeCorrect) ||
+              r.op == uint8_t(fb::RevisionOp::Wrinkle) ||
+              r.op == uint8_t(fb::RevisionOp::EmitGuidePoints))));
+}
+
+/// A Range blend shape: a BlendShape op node whose chunks carry, in key,
+/// the channels that reach each vertex group (format 68).
 inline bool
 RigExecFormatIsChunkBlend(const fb::RigExecWireRevision &r)
 {
-    if (!RigExecFormatIsRangeRevision(r) ||
-        r.op != uint8_t(fb::RevisionOp::BlendShape))
-        return false;
-    for (const auto &chunk : r.chunks)
-        if (!chunk.key.empty())
-            return true;
-    return false;
+    return RigExecFormatIsRangeRevision(r) &&
+           r.op == uint8_t(fb::RevisionOp::BlendShape);
 }
 
 /// The ops a Range revision may have in format 20: Matrix, Wire, Lattice,
@@ -742,6 +892,13 @@ bool RigExecFormatOpen(const uint8_t *bytes, size_t size,
                        std::unique_ptr<fb::RigExecWireFile> *file,
                        std::string *error);
 
+/// The property chain and part (1 to its revision count) op step \p step
+/// of \p file runs: revision part, and for part 1 also the chain's base.
+/// False for any other step.
+bool RigExecFormatPropertyPart(const RigExecWireFile &file,
+                               const RigExecWireStep &step, size_t *chain,
+                               size_t *part);
+
 /// Validates \p file, refuses any format version but RigExecFormatVersion,
 /// then packs it with the file identifier. The bytes are a pure function of
 /// \p file.
@@ -820,13 +977,13 @@ bool RigExecFormatSparseTopology(const std::vector<int32_t> &indices,
                                  fb::RigExecWireSkinTopology *out,
                                  std::string *error);
 
-/// The canonical form of a skin layout the evaluators resolved: the sparse
-/// form (RigExecFormatSparseTopology) when \p indices and \p weights are
-/// rows of an element size in [0, 65535] (none at element size 0), else
-/// the raw form, which holds the arrays verbatim with \p validated as
-/// given. False with the reason, and \p out untouched, when the sparse form
-/// refuses, or when \p pointCount is not what the evaluators give a raw
-/// layout: its rows when it is rows of an element size of at least 1, else
+/// The canonical form of a skin layout the evaluators resolved: the sparse form
+/// (RigExecFormatSparseTopology) when \p indices and \p weights are rows of an
+/// element size in [0, 65535] (none at element size 0), else the raw form,
+/// which holds the arrays unchanged, with \p validated as given. False with the
+/// reason, and \p out untouched, when the sparse form refuses,
+/// or when \p pointCount is not what the evaluators give a raw layout: its rows
+/// when it is rows of an element size of at least 1, else
 /// 0. RigExecFormatValidate holds validated to the evaluator's layout
 /// rules in either form.
 bool RigExecFormatTopology(const std::vector<int32_t> &indices,
@@ -836,10 +993,10 @@ bool RigExecFormatTopology(const std::vector<int32_t> &indices,
                            fb::RigExecWireSkinTopology *out,
                            std::string *error);
 
-/// The arrays a layout the validator accepts stands for: a raw layout's
-/// own, verbatim; a sparse layout's dense rows, each point's kept entries
-/// in order, then (0, +0.0f) up to element_size. Either way, the arrays
-/// the layout was written from, bit for bit.
+/// The arrays a layout the validator accepts stands for: a raw layout's own; a
+/// sparse layout's dense rows, each point's kept entries in order, then
+/// (0, +0.0f) up to element_size. Either way, the arrays the layout was
+/// written from, bit for bit.
 void RigExecFormatExpandTopology(const fb::RigExecWireSkinTopology &topology,
                                  std::vector<int32_t> *indices,
                                  std::vector<float> *weights);

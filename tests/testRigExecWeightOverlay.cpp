@@ -12,10 +12,10 @@
 #include "rigExecImaging/registry.h"
 #include "rigExecImaging/sceneIndices.h"
 
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/weightPackets.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/weightPackets.h"
 
 #include "pxr/base/gf/range3d.h"
 #include "pxr/base/gf/vec3d.h"
@@ -1501,13 +1501,12 @@ TestRegistrySetWeightOverlay()
 // The cause is delivery ORDER, and it is why this case has to go through
 // the registry's own UsdNotice::ObjectsChanged handler rather than calling
 // SetTime directly. Tf_NoticeRegistry::_Register prepends, so the
-// last-registered listener is delivered first, and OpenExec's
-// ExecUsdSystem::_NoticeListener -- which drops every cached computed
-// value on an authored change -- is constructed inside Compile(). Register
-// after Compile and the re-evaluation runs against exec's pre-edit cache.
-// A direct SetTime() call cannot see that: by then the dispatch has ended
-// and exec is invalidated, which is exactly why the original bug survived
-// a test suite full of SetTime assertions.
+// last-registered listener is delivered first, and each evaluator
+// registers its own listener when it is built. Register after the
+// evaluators and the re-evaluation runs before they have seen the edit.
+// A direct SetTime() call cannot see that: by then the dispatch has ended,
+// which is exactly why the original bug survived a test suite full of
+// SetTime assertions.
 // Both authoring shapes are covered because they are NOT equivalent
 // through USD's change classification: a plain default Set and the spline
 // knot the authoring panel writes arrive as different notices, and only
@@ -1704,11 +1703,10 @@ TestOverlayValueChangeDirtiesDisplayColor()
 // keyed by the volume slots the walk places; the walk keys the same map by
 // the volumes it taps. Both the key set and every matrix must match the walk,
 // bit for bit, at each frame of a start/mid/mid/end/start sequence. Every
-// generation must come from the program. On these fixtures the
-// VolumePlacements cluster is in cones.always, so every run re-places the
-// volumes; publication of a table a skipped step left behind is covered by
-// testRigExecVolumeWeights TestTheOracleReadsTheProgramsPlacements. Returns
-// the walk's last weightFrames.
+// generation must come from the program. Publication of a table a skipped
+// placement node left behind is covered by testRigExecVolumeWeights
+// TestTheOracleReadsTheProgramsPlacements. Returns the walk's last
+// weightFrames.
 static std::map<SdfPath, GfMatrix4d>
 CheckBakedWeightFramesMatchTheWalk(const UsdStageRefPtr &stage,
                                    const std::string &label)

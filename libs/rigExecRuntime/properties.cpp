@@ -1,6 +1,8 @@
 // Bind playback property parts to decoded reads and typed result slots.
 #include "rigExecRuntime/store.h"
-#include "rigExecEvalCore/properties.h"
+#include "rigExecEvalCore/opSteps.h"
+#include "rigExecEvalCore/propertyLookups.h"
+#include "rigExecMath/propertyMathKernel.h"
 
 #include <algorithm>
 #include <cstring>
@@ -134,204 +136,98 @@ _RrPublish(RrProgram *program, const RrPropertyScratch &scratch, size_t entry,
     store.propertyResults[scratch.publishNames[entry]] = value;
 }
 
-struct RrPropertyHost {
-    struct Math {
-        using Matrix = RrMat4d;
-        using Vec3 = RrVec3f;
-        using Key = RrVec2f;
-    };
+template <class T>
+bool
+_RrPutPort(const T &value, const RigExecTypeDesc &type, void *out)
+{
+    if (type.size != sizeof(T) || !type.triviallyCopyable)
+        return false;
+    std::memcpy(out, &value, sizeof(T));
+    return true;
+}
 
-    struct Revision {
-        const RrProgram &program;
-        const RigExecWirePropertyRevision &wire;
-        const RrPropertyScratch::Revision &bound;
+template <class T>
+bool
+_RrBorrowPort(const T *elements, size_t count, const RigExecTypeDesc &type,
+              void *out)
+{
+    if (!type.borrow)
+        return false;
+    type.borrow(out, elements, count);
+    return true;
+}
 
-        bool exists() const
-        {
-            return true;
-        }
-        std::string label() const
-        {
-            return "diag " + bound.mover;
-        }
-        void appendInputDiagnostics(std::vector<std::string> &) const
-        {
-        }
-        bool enabled() const
-        {
-            return RrReadInput(&program, *wire.enabled).bits != 0;
-        }
-        bool hasWeightField() const
-        {
-            return wire.envelope >= 0;
-        }
-        eval::properties::WeightFieldView weightField() const
-        {
-            const auto &field =
-                program.store.weightFieldResults[size_t(wire.weightField)];
-            return {field.ok, field.values.size(), field.values.data(),
-                    field.error};
-        }
-        float defaultWeight() const
-        {
-            return RrWireValueFloat(RrReadInput(&program, *wire.defaultWeight));
-        }
-        bool opValid() const
-        {
-            return bound.opValid;
-        }
-        RigExecPropertyOp op() const
-        {
-            return bound.op;
-        }
-        template <class T> T read(eval::properties::Operand operand) const
-        {
-            using O = eval::properties::Operand;
-            const auto &input = operand == O::Value     ? wire.value
-                                : operand == O::Minimum ? wire.min
-                                                        : wire.max;
-            const auto value = RrReadInput(&program, *input);
-            if constexpr (std::is_same_v<T, float>)
-                return RrWireValueFloat(value);
-            else if constexpr (std::is_same_v<T, RrMat4d>)
-                return _RrMatrix(value.matrix);
-            else
-                return _RrVec3f(value);
-        }
-        eval::properties::ArrayView<RrVec2f> keys() const
-        {
-            return {bound.keys.data(), bound.keys.size()};
-        }
-        eval::properties::ArrayView<RrVec2f> tangents() const
-        {
-            return {bound.tangents.data(), bound.tangents.size()};
-        }
-        bool keysValid(eval::properties::ArrayView<RrVec2f>) const
-        {
-            return bound.keysValid;
-        }
-        eval::properties::ArrayView<RrVec3f> pathPoints() const
-        {
-            const auto *points = bound.pathPoints >= 0
-                                     ? RrInputArray<RrVec3f>(
-                                           &program, uint32_t(bound.pathPoints))
-                                     : nullptr;
-            return points ? eval::properties::ArrayView<RrVec3f>{points->data(),
-                                                                 points->size()}
-                          : eval::properties::ArrayView<RrVec3f>{};
-        }
-        const RigExecPathSettings &pathSettings() const
-        {
-            return bound.path;
-        }
-    };
-
-    struct Inputs {
-        const RrProgram &program;
-        const RigExecWireFile &file;
-        const RrPropertyScratch &scratch;
-
-        size_t chainCount() const
-        {
-            return file.propertyChains.size();
-        }
-        size_t revisionCount(size_t c) const
-        {
-            return file.propertyChains[c].revisions.size();
-        }
-        size_t versionBase(size_t c) const
-        {
-            return file.propertyChains[c].versionBase;
-        }
-        auto valueType(size_t c) const
-        {
-            return file.propertyChains[c].valueType;
-        }
-        std::string baseLabel(size_t c) const
-        {
-            return "property chain " + scratch.chains[c].target;
-        }
-        template <class T>
-        eval::properties::BaseRead readBase(size_t c, T &value) const
-        {
-            using B = eval::properties::BaseRead;
-            RrWireValue base;
-            if (!RrChainBase(&program, c, scratch.chains[c].baseTag, &base))
-                return B::Missing;
-            if constexpr (std::is_same_v<T, float>)
-                value = RrWireValueFloat(base);
-            else if constexpr (std::is_same_v<T, double>)
-                std::memcpy(&value, &base.bits, sizeof(value));
-            else if constexpr (std::is_same_v<T, RrMat4d>)
-                value = _RrMatrix(base.matrix);
-            else
-                value = _RrVec3f(base);
-            return B::Present;
-        }
-        Revision revision(size_t c, size_t r) const
-        {
-            return {program, file.propertyChains[c].revisions[r],
-                    scratch.chains[c].revisions[r]};
-        }
-        template <class Fn> void forEachRecord(size_t c, Fn fn) const
-        {
-            const auto &chain = scratch.chains[c];
-            for (size_t k = chain.phasedBegin; k < chain.phasedEnd; ++k)
-                fn(k, file.phasedConsumers[k]);
-        }
-    };
-
-    struct State {
-        RrStore &store;
-        std::vector<std::string> &lines;
-        void setChainValid(size_t c, bool valid)
-        {
-            store.propertyChainValid[c] = valid;
-        }
-        bool predecessorValid(size_t c, size_t) const
-        {
-            return store.propertyChainValid[c];
-        }
-        template <class T> const T &version(size_t id) const
-        {
-            const auto &value = store.propertyVersions[id];
-            if constexpr (std::is_same_v<T, float>)
-                return value.f32;
-            else if constexpr (std::is_same_v<T, double>)
-                return value.f64;
-            else if constexpr (std::is_same_v<T, RrMat4d>)
-                return value.matrix;
-            else
-                return value.vec;
-        }
-        template <class T>
-        void storeVersion(size_t id, const T *value, bool valid)
-        {
-            if (value)
-                store.propertyVersions[id] = _RrHold(*value);
-            store.propertyVersionValid[id] = valid;
-        }
-        bool recordStoodAside(size_t k) const
-        {
-            return store.propertyRecordStoodAside[k];
-        }
-    };
-
-    Inputs input;
-    State output;
-    const Inputs &inputs() const
-    {
-        return input;
+bool
+_RrBaseFinite(float value)
+{
+    return eval::PropertyFinite(value);
+}
+bool
+_RrBaseFinite(double value)
+{
+    return eval::PropertyFinite(value);
+}
+bool
+_RrBaseFinite(const RrVec3f &value)
+{
+    const float elements[3] = {value[0], value[1], value[2]};
+    return eval::PropertyFinite(elements, 3);
+}
+bool
+_RrBaseFinite(const RrMat4d &value)
+{
+    for (size_t r = 0; r < 4; ++r) {
+        const double row[4] = {value[r][0], value[r][1], value[r][2],
+                               value[r][3]};
+        if (!eval::PropertyFinite(row, 4))
+            return false;
     }
-    State &state()
-    {
-        return output;
-    }
-    const RigExecRangeRunner *ranges() const
-    {
-        return nullptr;
-    }
-};
+    return true;
+}
+
+template <class T>
+bool
+_RrLookUpBase(const RrProgram &program, const RrPropertyScratch &scratch,
+              size_t c, const RigExecTypeDesc &type, void *out,
+              std::string *error)
+{
+    const auto fail = [&](const char *why) {
+        return _RrFail(error,
+                       "property chain " + scratch.chains[c].target + why);
+    };
+    RrWireValue base;
+    if (!RrChainBase(&program, c, scratch.chains[c].baseTag, &base))
+        return fail(": target has no authored value");
+    T value;
+    if constexpr (std::is_same_v<T, float>)
+        value = RrWireValueFloat(base);
+    else if constexpr (std::is_same_v<T, double>)
+        std::memcpy(&value, &base.bits, sizeof(value));
+    else if constexpr (std::is_same_v<T, RrMat4d>)
+        value = _RrMatrix(base.matrix);
+    else
+        value = _RrVec3f(base);
+    if (!_RrBaseFinite(value))
+        return fail(": authored base is not finite");
+    return _RrPutPort(value, type, out) ||
+           fail(": the base does not fit its op input");
+}
+
+bool
+_RrEnabled(const RrProgram &program, const RigExecWirePropertyRevision &wire)
+{
+    return RrReadInput(&program, *wire.enabled).bits != 0;
+}
+
+template <class T>
+void
+_RrStoreVersion(RrStore &store, uint32_t id, const void *value)
+{
+    T next;
+    std::memcpy(&next, value, sizeof(T));
+    store.propertyVersions[id] = _RrHold(next);
+    store.propertyVersionValid[id] = 1;
+}
 
 } // namespace
 
@@ -551,23 +447,193 @@ RrPropertyPublish(RrProgram *program)
 }
 
 bool
-RrRunPropertyPart(RrProgram *program, size_t c, size_t part,
-                  std::vector<std::string> *diagnostics)
+RrLookUpProperty(const RrProgram *program, const eval::OpLookup &lookup,
+                 const RigExecTypeDesc &type, void *out, std::string *error)
 {
     const auto &file = *program->inputState.file;
     const auto *scratch =
         static_cast<const RrPropertyScratch *>(program->properties.get());
-    // The caller's size_t parameters may contain converted wire sentinels.
-    if (!scratch || c >= file.propertyChains.size() ||
-        c > size_t(std::numeric_limits<int32_t>::max()) ||
-        part > size_t(std::numeric_limits<int32_t>::max()))
-        return false;
-    const eval::StepRef step{uint32_t(eval::StepKind::PropertyRevision),
-                             int32_t(c), int32_t(part),
-                             size_t(file.propertyChains[c].versionBase) + part};
-    RrPropertyHost host{{*program, file, *scratch},
-                        {program->store, *diagnostics}};
-    return eval::RunValueStep(host, step).outcome != eval::Outcome::Invalid;
+    if (!scratch || lookup.object >= file.propertyChains.size())
+        return _RrFail(error, "op nodes: no property chain " +
+                                  std::to_string(lookup.object));
+    const size_t c = lookup.object;
+    const RigExecWirePropertyChain &chain = file.propertyChains[c];
+    using eval::PropertyRead;
+    const PropertyRead read = PropertyRead(lookup.read);
+    if (read == PropertyRead::Base) {
+        switch (chain.valueType) {
+        case RigExecWirePropertyValueType::Float:
+            return _RrLookUpBase<float>(*program, *scratch, c, type, out,
+                                        error);
+        case RigExecWirePropertyValueType::Double:
+            return _RrLookUpBase<double>(*program, *scratch, c, type, out,
+                                         error);
+        case RigExecWirePropertyValueType::Matrix4d:
+            return _RrLookUpBase<RrMat4d>(*program, *scratch, c, type, out,
+                                          error);
+        case RigExecWirePropertyValueType::Vec3f:
+            return _RrLookUpBase<RrVec3f>(*program, *scratch, c, type, out,
+                                          error);
+        default:
+            return _RrFail(error, "property chain " +
+                                      scratch->chains[c].target +
+                                      " has an unknown value type");
+        }
+    }
+    if (lookup.part < 0 || size_t(lookup.part) >= chain.revisions.size())
+        return _RrFail(error, "property chain " + scratch->chains[c].target +
+                                  " has no revision " +
+                                  std::to_string(lookup.part));
+    const RigExecWirePropertyRevision &wire =
+        chain.revisions[size_t(lookup.part)];
+    const RrPropertyScratch::Revision &bound =
+        scratch->chains[c].revisions[size_t(lookup.part)];
+    const auto operand = [&](const RigExecWireInput &input) {
+        const RrWireValue value = RrReadInput(program, input);
+        switch (chain.valueType) {
+        case RigExecWirePropertyValueType::Matrix4d:
+            return _RrPutPort(_RrMatrix(value.matrix), type, out);
+        case RigExecWirePropertyValueType::Vec3f:
+            return _RrPutPort(_RrVec3f(value), type, out);
+        default:
+            return _RrPutPort(RrWireValueFloat(value), type, out);
+        }
+    };
+    static_assert(sizeof(RrVec2f) == 2 * sizeof(float) &&
+                      sizeof(RrVec3f) == 3 * sizeof(float),
+                  "keys and points are packed floats");
+    bool put = false;
+    switch (read) {
+    case PropertyRead::Base:
+        break;
+    case PropertyRead::Enabled:
+        put =
+            _RrPutPort(uint8_t(_RrEnabled(*program, wire) ? 1 : 0), type, out);
+        break;
+    case PropertyRead::Weight: {
+        float weight = 1.0f;
+        if (!_RrEnabled(*program, wire)) {
+        } else if (wire.envelope >= 0) {
+            const auto &field =
+                program->store.weightFieldResults[size_t(wire.weightField)];
+            if (!field.ok)
+                return _RrFail(error, field.error);
+            if (field.values.size() != 1)
+                return _RrFail(error, "the weight object holds " +
+                                          std::to_string(field.values.size()) +
+                                          " weights, not one");
+            weight = field.values[0];
+        } else {
+            weight =
+                RrWireValueFloat(RrReadInput(program, *wire.defaultWeight));
+        }
+        put = _RrPutPort(weight, type, out);
+        break;
+    }
+    case PropertyRead::Value:
+        put = operand(*wire.value);
+        break;
+    case PropertyRead::Minimum:
+        put = operand(*wire.min);
+        break;
+    case PropertyRead::Maximum:
+        put = operand(*wire.max);
+        break;
+    case PropertyRead::Keys:
+        put = _RrBorrowPort(bound.keys.data(), bound.keys.size(), type, out);
+        break;
+    case PropertyRead::Tangents:
+        put = _RrBorrowPort(bound.tangents.data(), bound.tangents.size(), type,
+                            out);
+        break;
+    case PropertyRead::PathPoints: {
+        const auto *points =
+            bound.pathPoints >= 0
+                ? RrInputArray<RrVec3f>(program, uint32_t(bound.pathPoints))
+                : nullptr;
+        put = points ? _RrBorrowPort(points->data(), points->size(), type, out)
+                     : _RrBorrowPort<RrVec3f>(nullptr, 0, type, out);
+        break;
+    }
+    }
+    return put || _RrFail(error, "a read does not fit its op input");
+}
+
+std::string
+RrPropertyRevisionLabel(const RrProgram *program, size_t chain, size_t part)
+{
+    const auto *scratch =
+        static_cast<const RrPropertyScratch *>(program->properties.get());
+    return scratch ? "diag " + scratch->chains[chain].revisions[part - 1].mover
+                   : std::string();
+}
+
+bool
+RrPropertyPartOfVersion(const RrProgram *program, uint32_t version,
+                        size_t *chain, size_t *part)
+{
+    const auto &chains = program->file->propertyChains;
+    for (size_t c = 0; c < chains.size(); ++c) {
+        const uint32_t base = chains[c].versionBase;
+        if (version >= base && version <= base + chains[c].revisions.size()) {
+            *chain = c;
+            *part = version - base;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool
+RrStorePropertyVersion(RrProgram *program, uint32_t version, const void *value,
+                       std::string *error)
+{
+    const auto &file = *program->inputState.file;
+    const auto *scratch =
+        static_cast<const RrPropertyScratch *>(program->properties.get());
+    size_t c = 0, part = 0;
+    if (!scratch || version >= program->store.propertyVersions.size() ||
+        !RrPropertyPartOfVersion(program, version, &c, &part))
+        return _RrFail(error, "op nodes: no property version " +
+                                  std::to_string(version));
+    RrStore &store = program->store;
+    switch (file.propertyChains[c].valueType) {
+    case RigExecWirePropertyValueType::Float:
+        _RrStoreVersion<float>(store, version, value);
+        break;
+    case RigExecWirePropertyValueType::Double:
+        _RrStoreVersion<double>(store, version, value);
+        break;
+    case RigExecWirePropertyValueType::Matrix4d:
+        _RrStoreVersion<RrMat4d>(store, version, value);
+        break;
+    case RigExecWirePropertyValueType::Vec3f:
+        _RrStoreVersion<RrVec3f>(store, version, value);
+        break;
+    default:
+        return _RrFail(error, "property chain " + scratch->chains[c].target +
+                                  " has an unknown value type");
+    }
+    if (part == 0)
+        store.propertyChainValid[c] = 1;
+    const RrPropertyValue &stored = store.propertyVersions[version];
+    for (size_t k = scratch->chains[c].phasedBegin;
+         k < scratch->chains[c].phasedEnd; ++k) {
+        const RigExecWirePhasedConsumer &record = file.phasedConsumers[k];
+        if (record.applied != part)
+            continue;
+        RrPropertyValue converted = stored;
+        if (stored.tag == _RrTag::Float &&
+            record.consumerType == RigExecWirePropertyValueType::Double)
+            converted = _RrHold(double(stored.f32));
+        else if (stored.tag == _RrTag::Double &&
+                 record.consumerType == RigExecWirePropertyValueType::Float)
+            converted = _RrHold(float(stored.f64));
+        store.propertyVersions[record.version] = converted;
+        store.propertyVersionValid[record.version] =
+            !store.propertyRecordStoodAside[k];
+    }
+    return true;
 }
 
 } // namespace rigExec

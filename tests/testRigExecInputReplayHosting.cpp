@@ -4,10 +4,10 @@
 // that delegate back at teardown. A delegate that must stay installed is
 // refused instead. A process holds one capture, so the groups run in order on
 // it, refusals in child processes; uncaptured runs of the script are the reference.
-#include "rigExec/inputReplay.h"
-#include "rigExec/inputReplayValues.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/types.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/internal/inputReplayValues.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/api/types.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/diagnosticMgr.h"
 #include "pxr/base/tf/pathUtils.h"
@@ -705,7 +705,6 @@ main(int argc, char **argv)
     }
     PlugRegistry::GetInstance().RegisterPlugins(
         TfAbsPath(RIGEXEC_SCHEMA_RESOURCE_DIR));
-    RigExecLoadComputations();
     if (argc == 3) {
         SetPaths(argv[2]);
         const std::string mode = argv[1];

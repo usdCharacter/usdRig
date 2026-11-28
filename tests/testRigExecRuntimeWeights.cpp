@@ -10,12 +10,24 @@
 // skipped step's kept placement white-box, and drags of one volume's control
 // on tests/fixtures/volume_placements.usda against live baked.
 #include "rigExecBake/bake.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/types.h"
-#include "rigExec/weightPackets.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/api/types.h"
+#include "rigExec/internal/weightPackets.h"
 #include "rigExecBinary/format.h"
+#include "rigExecBinary/manifest.h"
+#include "rigExecBuiltins/builtins.h"
+#include "rigExecEvalCore/opSteps.h"
+#include "rigExec/api/opFields.h"
+#include "rigExec/api/compile.h"
+#include "rigExec/api/evaluator.h"
+#include "rigExec/api/rigDesc.h"
+#include "rigExec/api/registry.h"
+#include "rigExecOps/pose/poseOps.h"
+#include "rigExecOps/weight/weightOps.h"
+#include "rigExecMath/weightFieldKernel.h"
+#include "rigExecMath/dualQuatMath.h"
 #include "rigExecGraph/opValues.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/weightFields.h"
@@ -614,11 +626,255 @@ _SynthCompare(const char *name, const RigExecWeightPacket &expected,
     return ok;
 }
 
+// The manifest index of core op \p name, added on first use.
+static uint32_t
+_SynthOpEntry(fb::RigExecWireFile *file, const char *name)
+{
+    auto &ops = file->manifest->coreOps;
+    for (size_t i = 0; i < ops.size(); ++i)
+        if (ops[i] && ops[i]->nameSpace == "rig" && ops[i]->name == name)
+            return uint32_t(i);
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = name;
+    entry->version = 1;
+    ops.push_back(std::move(entry));
+    return uint32_t(ops.size() - 1);
+}
+
+// A VolumePlacement op node placing slot \p slot, its base placement when
+// \p base, from pose version \p slot (the slot's sampled Xform seed); its
+// node index.
+static uint32_t
+_SynthPlacementNode(fb::RigExecWireFile *file, uint32_t slot, bool base)
+{
+    if (!file->opGraph)
+        file->opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto &graph = *file->opGraph;
+    const uint32_t node = uint32_t(graph.nodes.size());
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = _SynthOpEntry(file, "VolumePlacement");
+    auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+    in->port = 0;
+    in->host = 4;
+    in->object = uint32_t(graph.lookups.size());
+    op->inputs.push_back(std::move(in));
+    graph.nodes.push_back(std::move(op));
+    auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+    lookup->source = 1;
+    lookup->object = slot;
+    lookup->part = base ? 1 : 0;
+    graph.lookups.push_back(std::move(lookup));
+    auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+    output->node = node;
+    output->port = 1;
+    output->target = base ? 2 : 1;
+    output->object = slot;
+    graph.hostOutputs.push_back(std::move(output));
+    return node;
+}
+
+// The AvarInputs op node of slot \p slot, as the bake writes it for a slot
+// that binds no avar. Its node index.
+static uint32_t
+_SynthAvarNode(fb::RigExecWireFile *file, uint32_t slot)
+{
+    if (!file->opGraph)
+        file->opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto &graph = *file->opGraph;
+    const uint32_t node = uint32_t(graph.nodes.size());
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = _SynthOpEntry(file, "AvarInputs");
+    const rigExecOps::AvarInputsPayload payload;
+    CHECK(rigExec::RigExecEncodeOpPayload(
+        *rigExec::RigExecRegistry::Get()
+             .OpAt(rigExecOps::AvarInputs().Index())
+             .desc,
+        &payload, op->payload));
+    auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+    in->port = rigExecOps::AvarInputsValues().Index();
+    in->host = 4;
+    in->object = uint32_t(graph.lookups.size());
+    op->inputs.push_back(std::move(in));
+    graph.nodes.push_back(std::move(op));
+    auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+    lookup->source = 40;
+    lookup->object = slot;
+    lookup->part = -1;
+    graph.lookups.push_back(std::move(lookup));
+    auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+    output->node = node;
+    output->port = rigExecOps::AvarInputsOut().Index();
+    output->target = 40;
+    output->object = slot;
+    graph.hostOutputs.push_back(std::move(output));
+    return node;
+}
+
+// The weight packet op node of weight object \p object, as the bake writes
+// it: its op by the object's type, its inputs WeightArrays lookups (a
+// volume's frame the pose version of its provider slot), its composed
+// packets fed by the nodes \p nodeOf names, its packet stored as the
+// object's. Its node index.
+static uint32_t
+_SynthPacketNode(fb::RigExecWireFile *file, size_t object,
+                 const std::vector<int64_t> &nodeOf)
+{
+    using R = rigExec::eval::OpWeightRead;
+    if (!file->opGraph)
+        file->opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto &graph = *file->opGraph;
+    const fb::RigExecWireWeightObject &w =
+        file->geometry->weightObjects[object];
+    const std::string type = _WireString(*file, w.type);
+    const std::string representation = _WireString(*file, w.representation);
+    const bool clamp = _WireString(*file, w.rangePolicy) == "clamp";
+    const auto rep = representation == "dense"
+                         ? rigExecRig::WeightRepresentation::Dense
+                     : representation == "sparse"
+                         ? rigExecRig::WeightRepresentation::Sparse
+                         : rigExecRig::WeightRepresentation::Constant;
+    const uint32_t node = uint32_t(graph.nodes.size());
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    const auto look = [&](const rigExec::RigExecPortHandle &port, R read) {
+        auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+        in->port = port.Index();
+        in->host = 4;
+        in->object = uint32_t(graph.lookups.size());
+        op->inputs.push_back(std::move(in));
+        auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+        lookup->source = 2;
+        lookup->object = uint32_t(object);
+        lookup->part = -1;
+        lookup->read = uint8_t(read);
+        graph.lookups.push_back(std::move(lookup));
+    };
+    const auto feed = [&](const rigExec::RigExecPortHandle &port, int from,
+                          const rigExec::RigExecPortHandle &out) {
+        auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+        in->port = port.Index();
+        in->node = int32_t(nodeOf[size_t(from)]);
+        in->output = out.Index();
+        op->inputs.push_back(std::move(in));
+    };
+    const auto outOf = [&](int from) -> const rigExec::RigExecPortHandle & {
+        const std::string t = _WireString(
+            *file, file->geometry->weightObjects[size_t(from)].type);
+        return t == "RigExecStaticWeight"    ? rigExecOps::StaticWeightsOut()
+               : t == "RigExecDynamicWeight" ? rigExecOps::DynamicWeightsOut()
+               : t == "RigExecCombineWeight" ? rigExecOps::CombineWeightsOut()
+                                             : rigExecOps::VolumeWeightsOut();
+    };
+    const auto encode = [&](const rigExec::RigExecOpHandle &handle,
+                            const void *payload) {
+        const auto &desc =
+            *rigExec::RigExecRegistry::Get().OpAt(handle.Index()).desc;
+        std::vector<uint8_t> bytes;
+        CHECK(rigExec::RigExecEncodeOpPayload(desc, payload, bytes));
+        op->payload = std::move(bytes);
+    };
+    const rigExec::RigExecPortHandle *out = nullptr;
+    if (type == "RigExecStaticWeight") {
+        op->op = _SynthOpEntry(file, "StaticWeights");
+        const rigExecOps::WeightPacketPayload payload{rep, clamp};
+        encode(rigExecOps::StaticWeights(), &payload);
+        look(rigExecOps::StaticWeightsValues(), R::Values);
+        look(rigExecOps::StaticWeightsIndices(), R::Indices);
+        look(rigExecOps::StaticWeightsDefaultWeight(), R::DefaultWeight);
+        out = &rigExecOps::StaticWeightsOut();
+    } else if (type == "RigExecDynamicWeight") {
+        op->op = _SynthOpEntry(file, "DynamicWeights");
+        const rigExecOps::WeightPacketPayload payload{rep, clamp};
+        encode(rigExecOps::DynamicWeights(), &payload);
+        if (w.base >= 0)
+            feed(rigExecOps::DynamicWeightsBase(), w.base, outOf(w.base));
+        look(rigExecOps::DynamicWeightsDriver(), R::Driver);
+        look(rigExecOps::DynamicWeightsScale(), R::Scale);
+        look(rigExecOps::DynamicWeightsBias(), R::Bias);
+        out = &rigExecOps::DynamicWeightsOut();
+    } else if (type == "RigExecCombineWeight") {
+        op->op = _SynthOpEntry(file, "CombineWeights");
+        const std::string mode = _WireString(*file, w.combineMode);
+        const char *const modes[] = {"multiply", "add",     "subtract", "max",
+                                     "min",      "average", "overlay"};
+        rigExecOps::CombineWeightsPayload payload;
+        for (size_t m = 0; m < 7; ++m)
+            if (mode == modes[m])
+                payload.mode = rigExecOps::WeightCombineMode(m);
+        payload.inputs = rigExecOps::WeightCombineInputs::Packets;
+        payload.clamp = clamp;
+        encode(rigExecOps::CombineWeights(), &payload);
+        for (const int32_t input : w.inputs)
+            feed(rigExecOps::CombineWeightsInputs(), input, outOf(input));
+        look(rigExecOps::CombineWeightsTargetCount(), R::CombineTargetCount);
+        look(rigExecOps::CombineWeightsStrength(), R::Strength);
+        look(rigExecOps::CombineWeightsInvert(), R::Invert);
+        out = &rigExecOps::CombineWeightsOut();
+    } else {
+        op->op = _SynthOpEntry(file, "VolumeWeights");
+        rigExecOps::VolumeWeightsPayload payload;
+        payload.clamp = clamp;
+        payload.shape = type == "RigExecSphereWeight"
+                            ? rigExecOps::VolumeWeightShape::Sphere
+                        : type == "RigExecPlaneWeight"
+                            ? rigExecOps::VolumeWeightShape::Plane
+                            : rigExecOps::VolumeWeightShape::Curve;
+        const std::string axis = _WireString(*file, w.planeAxis);
+        payload.planeAxis = axis == "x"   ? rigExecOps::WeightFieldAxis::X
+                            : axis == "y" ? rigExecOps::WeightFieldAxis::Y
+                                          : rigExecOps::WeightFieldAxis::Z;
+        payload.planeBounded = _WireString(*file, w.planeBounds) == "bounded";
+        encode(rigExecOps::VolumeWeights(), &payload);
+        {
+            auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+            in->port = rigExecOps::VolumeWeightsFrame().Index();
+            in->host = 4;
+            in->object = uint32_t(graph.lookups.size());
+            op->inputs.push_back(std::move(in));
+            auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+            lookup->source = 1;
+            lookup->object = uint32_t(w.providerSlot);
+            lookup->part = 1;
+            graph.lookups.push_back(std::move(lookup));
+        }
+        look(rigExecOps::VolumeWeightsPoints(), R::TargetPoints);
+        if (!w.samplePoints.empty())
+            look(rigExecOps::VolumeWeightsSamples(), R::SamplePoints);
+        if (payload.shape == rigExecOps::VolumeWeightShape::Curve)
+            look(rigExecOps::VolumeWeightsCurve(), R::CurvePoints);
+        look(rigExecOps::VolumeWeightsStrength(), R::Strength);
+        look(rigExecOps::VolumeWeightsInvert(), R::Invert);
+        look(rigExecOps::VolumeWeightsFalloffMin(), R::FalloffMin);
+        look(rigExecOps::VolumeWeightsFalloffMax(), R::FalloffMax);
+        look(rigExecOps::VolumeWeightsFalloffSamples(), R::FalloffSamples);
+        if (payload.shape != rigExecOps::VolumeWeightShape::Plane)
+            look(rigExecOps::VolumeWeightsScale(), R::ScaleAxes);
+        if (payload.shape == rigExecOps::VolumeWeightShape::Sphere) {
+            look(rigExecOps::VolumeWeightsPositiveScale(), R::PositiveScales);
+            look(rigExecOps::VolumeWeightsNegativeScale(), R::NegativeScales);
+        }
+        if (payload.planeBounded) {
+            look(rigExecOps::VolumeWeightsExtentU(), R::ExtentU);
+            look(rigExecOps::VolumeWeightsExtentV(), R::ExtentV);
+        }
+        out = &rigExecOps::VolumeWeightsOut();
+    }
+    graph.nodes.push_back(std::move(op));
+    auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+    output->node = node;
+    output->port = out->Index();
+    output->target = 3;
+    output->object = uint32_t(object);
+    graph.hostOutputs.push_back(std::move(output));
+    return node;
+}
+
 // Compile the fixture's typed operations with the production compiler. The
 // identity volume frames are explicit sampled Xform seeds; every numerical
 // packet and chained points publication has an ordinary producer.
 static bool
-_SynthCompileGraph(fb::RigExecWireFile *file, std::string *error)
+_SynthCompileGraph(fb::RigExecWireFile *file, std::string *error,
+                   const std::vector<char> *noPacket = nullptr)
 {
     using D = fb::SlotDomain;
     using K = fb::StepKind;
@@ -643,10 +899,12 @@ _SynthCompileGraph(fb::RigExecWireFile *file, std::string *error)
     for (size_t slot = 0; slot < file->slotMeta->paths.size(); ++slot) {
         const auto owner =
             RigExecFormatPathText(*file, file->slotMeta->paths[slot]);
-        add(K::AvarInputs, int(slot), -1, owner);
+        add(K::OpNode, int(_SynthAvarNode(file, uint32_t(slot))), -1, owner);
         file->steps.back().writes = {one(D::Avars, uint32_t(slot))};
         for (const int part : {1, 2}) {
-            add(K::VolumePlacements, int(slot), part, owner);
+            add(K::OpNode,
+                int(_SynthPlacementNode(file, uint32_t(slot), part == 2)), -1,
+                owner);
             auto &step = file->steps.back();
             step.reads = {
                 one(part == 2 ? D::PoseBase : D::PoseFin, uint32_t(slot))};
@@ -665,9 +923,15 @@ _SynthCompileGraph(fb::RigExecWireFile *file, std::string *error)
         file->steps.back().reads = {one(D::ChainBase, uint32_t(c))};
         file->steps.back().writes = {one(D::ChainPoints, uint32_t(c))};
     }
+    std::vector<int64_t> packetNode(file->geometry->weightObjects.size(), -1);
+    for (size_t i = 0; i < packetNode.size(); ++i)
+        if (!noPacket || !(*noPacket)[i])
+            packetNode[i] = _SynthPacketNode(file, i, packetNode);
     for (size_t i = 0; i < file->geometry->weightObjects.size(); ++i) {
         const auto &object = file->geometry->weightObjects[i];
-        add(K::WeightPacket, int(i), -1,
+        if (packetNode[i] < 0)
+            continue;
+        add(K::OpNode, int(packetNode[i]), -1,
             RigExecFormatPathText(*file, object.path));
         auto &step = file->steps.back();
         step.writes = {one(D::WeightPacket, uint32_t(i))};
@@ -703,7 +967,7 @@ _SynthCompileGraph(fb::RigExecWireFile *file, std::string *error)
     }
     // This fixture has only input preparation and post-admission weight/geometry bodies.
     for (auto &step : file->steps)
-        if (step.kind != K::AvarInputs)
+        if (step.writes.empty() || step.writes[0].domain() != D::Avars)
             step.reads.push_back(one(D::RequiredStageFramesAdmission, 0));
     RigExecCompiledGraph graph;
     RigExecOpAdapterState values;
@@ -804,8 +1068,8 @@ _SynthCompileGraph(fb::RigExecWireFile *file, std::string *error)
     cones.chainBaseClusters.resize(file->geometry->chains.size());
     for (size_t i = 0; i < graph.ops.size(); ++i) {
         const auto &step = file->steps[i];
-        if (step.kind == K::AvarInputs)
-            cones.avarCluster[size_t(step.object)] = step.cluster;
+        if (!step.writes.empty() && step.writes[0].domain() == D::Avars)
+            cones.avarCluster[step.writes[0].begin()] = step.cluster;
         if (step.kind == K::ChainInputs)
             cones.chainBaseClusters[size_t(step.object)].v.push_back(
                 step.cluster);
@@ -820,6 +1084,7 @@ _TestSyntheticBuilders()
     _Synth synth(&file);
     _Synth *const writer = &synth;
     file.formatVersion = RigExecFormatVersion;
+    file.manifest = RigExecManifestBuild(RigExecManifestCurrent());
     file.bakeTime = 1.0;
     file.slotMeta = std::make_unique<fb::RigExecWireSlotMeta>();
     file.constants = std::make_unique<fb::RigExecWireConstants>();
@@ -1407,7 +1672,12 @@ _TestSyntheticBuilders()
     CHECK(file.inputs.size() == 3 + 7);
     std::vector<uint8_t> bytes;
     std::string error;
-    CHECK(_SynthCompileGraph(&file, &error));
+    // A packet that fails whatever the frame makes no op node: the bake
+    // refuses its rig. The rest run as the bake writes them.
+    std::vector<char> noPacket(expected.size(), 0);
+    for (size_t i = 0; i < expected.size(); ++i)
+        noPacket[i] = !expected[i].valid;
+    CHECK(_SynthCompileGraph(&file, &error, &noPacket));
     CHECK(RigExecFormatWrite(file, &bytes, &error));
     if (bytes.empty()) {
         std::printf("synthetic write diagnostic: %s\n", error.c_str());
@@ -1436,7 +1706,10 @@ _TestSyntheticBuilders()
     for (size_t i = 0; i < expected.size(); ++i) {
         const std::string path =
             _WireString(file, geometry.weightObjects[i].path);
-        if (_SynthCompare(path.c_str(), expected[i], actual[i], file)) {
+        if (noPacket[i]) {
+            CHECK(!actual[i].valid);
+            ++ok;
+        } else if (_SynthCompare(path.c_str(), expected[i], actual[i], file)) {
             ++ok;
         } else {
             ++failures;
@@ -1463,35 +1736,62 @@ _TestSyntheticBuilders()
     std::printf("synthetic: %zu/%zu packets match, %zu weight frame(s)\n", ok,
                 expected.size(), frames.size());
 
-    // The whole-map form (part -1) is retired: Open refuses it by name.
-    if (const std::unique_ptr<fb::RigExecWireFile> wholeMap =
+    // The reserved VolumePlacements step kind: Open refuses it by name.
+    if (const std::unique_ptr<fb::RigExecWireFile> retired =
             RigExecTestUnpack(bytes)) {
         const auto placement = std::find_if(
-            wholeMap->steps.begin(), wholeMap->steps.end(),
-            [](const auto &step) {
-                return step.kind == fb::StepKind::VolumePlacements &&
-                       step.part == 1 && step.object == 1;
-            });
-        CHECK(placement != wholeMap->steps.end());
-        if (placement == wholeMap->steps.end())
+            retired->steps.begin(), retired->steps.end(),
+            [](const auto &step) { return step.kind == fb::StepKind::OpNode; });
+        CHECK(placement != retired->steps.end());
+        if (placement == retired->steps.end())
             return;
-        const size_t place = size_t(placement - wholeMap->steps.begin());
-        wholeMap->steps[place].part = -1;
-        const std::vector<uint8_t> packed = RigExecTestPackUnchecked(*wholeMap);
+        const size_t place = size_t(placement - retired->steps.begin());
+        const std::string label = RigExecFormatStepLabel(*retired, place);
+        retired->steps[place].kind = fb::StepKind::ReservedVolumePlacements;
+        const std::vector<uint8_t> packed = RigExecTestPackUnchecked(*retired);
         std::string why;
         const std::unique_ptr<RigExecRuntimeReader> refused =
             RigExecRuntimeReader::Open(packed.data(), packed.size(), &why);
-        const std::string want =
-            "invalid .rigexec: step " + std::to_string(place) +
-            " (VolumePlacements every volume weight) is the retired "
-            "whole-map placement (part -1)";
+        const std::string want = "invalid .rigexec: step " +
+                                 std::to_string(place) + " (" +
+                                 RigExecFormatStepLabel(*retired, place) +
+                                 "): the retired VolumePlacements step";
+        CHECK(label.rfind("OpNode ", 0) == 0);
         CHECK(!refused && why == want);
         if (refused || why != want) {
-            std::printf("  whole-map open said '%s', expected '%s'\n",
+            std::printf("  retired step open said '%s', expected '%s'\n",
                         refused ? "(opened)" : why.c_str(), want.c_str());
         }
-        std::printf("synthetic, whole-map VolumePlacements refused: %s\n",
+        std::printf("synthetic, retired VolumePlacements refused: %s\n",
                     why.c_str());
+        const auto packet = std::find_if(
+            retired->steps.begin(), retired->steps.end(),
+            [&](const auto &step) {
+                return RigExecFormatStepLabel(
+                           *retired, size_t(&step - retired->steps.data()))
+                           .rfind("OpNode /w/", 0) == 0;
+            });
+        CHECK(packet != retired->steps.end());
+        if (packet == retired->steps.end())
+            return;
+        retired->steps[place].kind = fb::StepKind::OpNode;
+        const size_t at = size_t(packet - retired->steps.begin());
+        const std::string packetLabel = RigExecFormatStepLabel(*retired, at);
+        retired->steps[at].kind = fb::StepKind::ReservedWeightPacket;
+        const std::vector<uint8_t> repacked =
+            RigExecTestPackUnchecked(*retired);
+        const std::unique_ptr<RigExecRuntimeReader> refusedPacket =
+            RigExecRuntimeReader::Open(repacked.data(), repacked.size(), &why);
+        const std::string wantPacket = "invalid .rigexec: step " +
+                                       std::to_string(at) + " (" +
+                                       RigExecFormatStepLabel(*retired, at) +
+                                       "): the retired WeightPacket step";
+        CHECK(!refusedPacket && why == wantPacket);
+        if (refusedPacket || why != wantPacket)
+            std::printf("  retired packet step open said '%s', expected '%s' "
+                        "(was %s)\n",
+                        refusedPacket ? "(opened)" : why.c_str(),
+                        wantPacket.c_str(), packetLabel.c_str());
     }
 
     // Each slot set as an input: the next run builds every packet that
@@ -1539,7 +1839,10 @@ _TestSyntheticBuilders()
     for (size_t i = 0; i < moved.size() && i < set.size(); ++i) {
         const std::string path =
             _WireString(file, geometry.weightObjects[i].path);
-        if (_SynthCompare(path.c_str(), moved[i], set[i], file)) {
+        if (noPacket[i]) {
+            CHECK(!set[i].valid);
+            ++setOk;
+        } else if (_SynthCompare(path.c_str(), moved[i], set[i], file)) {
             ++setOk;
         } else {
             ++failures;
@@ -1684,7 +1987,7 @@ _TestComputedReadsAndOracle()
     objects[5].invert = fixed(0.25f);
     objects[5].strength = fixed(0.75f);
     objects.push_back(object(6, tokStatic, tokConstant, tokStrict));
-    objects[6].oracleStaticError = "unknown rangePolicy on /W6";
+    objects[6].fieldStaticError = "unknown rangePolicy on /W6";
     objects.push_back(object(7, tokCombine, tokDense, tokStrict));
     objects[7].combineMode = tokMax;
     objects[7].inputs = {6};
@@ -1834,112 +2137,12 @@ _TestComputedReadsAndOracle()
     CHECK(f(read(9.0f, ReadMode::Resolved, 0, {1})) == narrowed);
     clearPublication();
 
-    // The oracle.
-    const auto resolve = [&](size_t index, size_t count,
-                             const std::vector<RrVec3f> *current,
-                             std::vector<float> *weights) {
-        error.clear();
-        return RrResolveWeightOracle(&program, index, count, current, weights,
-                                     &error);
-    };
-    std::vector<float> w;
-    CHECK(resolve(0, 1, nullptr, &w) && w == std::vector<float>{0.5f});
-    CHECK(resolve(1, 2, nullptr, &w) && w == (std::vector<float>{0.25f, 1.0f}));
-    CHECK(!resolve(1, 3, nullptr, &w) &&
-          error == "dense weight cardinality mismatch on /W1");
-    CHECK(!resolve(2, 3, nullptr, &w) &&
-          error == "duplicate sparse index on /W2");
-    const std::vector<float> sparse = {0.1f, 0.0f, 0.2f};
-    CHECK(resolve(3, 3, nullptr, &w) && w == sparse);
-    CHECK(!resolve(3, 2, nullptr, &w) &&
-          error == "sparse index out of range on /W3");
-    CHECK(w.empty());
-    CHECK(RrResolveDeclaredWeightField(&program, 0, 3, nullptr));
-    CHECK(program.store.weightFieldResults[0].values == sparse);
-    CHECK(RrResolveDeclaredWeightField(&program, 0, 3, nullptr));
-    CHECK(program.store.weightFieldResults[0].values == sparse);
-    CHECK(!RrResolveDeclaredWeightField(&program, 0, 2, nullptr));
-    CHECK(program.store.weightFieldResults[0].values.empty() &&
-          program.store.weightFieldResults[0].count == 2 &&
-          program.store.weightFieldResults[0].error ==
-              "sparse index out of range on /W3");
-    CHECK(RrResolveDeclaredWeightField(&program, 0, 3, nullptr));
-    CHECK(program.store.weightFieldResults[0].values == sparse);
-    CHECK(RrResolveDeclaredWeightField(&program, 1, 3, nullptr));
-    CHECK(program.store.weightFieldResults[1].values ==
-          (std::vector<float>{.2f, 0.0f, .4f}));
-    CHECK(RrResolveDeclaredWeightField(&program, 1, 3, nullptr));
-    CHECK(program.store.weightFieldResults[1].values ==
-          (std::vector<float>{.2f, 0.0f, .4f}));
-    std::vector<float> dynamic(3);
-    size_t reassociated = 0;
-    for (size_t i = 0; i < 3; ++i) {
-        dynamic[i] = (sparse[i] * narrowed) * 0.85f + 0.0f;
-        const float other = sparse[i] * (narrowed * 0.85f) + 0.0f;
-        reassociated += std::memcmp(&other, &dynamic[i], sizeof(float)) != 0;
-    }
-    CHECK(reassociated == 2);
-    CHECK(resolve(4, 3, nullptr, &w) && w == dynamic);
-    // The driver through a double result published at its hop.
-    publish(1, RrPropertyValue::Tag::Double, 0.5);
-    std::vector<float> driven(3);
-    for (size_t i = 0; i < 3; ++i) {
-        driven[i] = (sparse[i] * 0.5f) * 0.85f + 0.0f;
-    }
-    CHECK(resolve(4, 3, nullptr, &w) && w == driven);
-    clearPublication();
-    std::vector<float> combined(3);
-    for (size_t i = 0; i < 3; ++i) {
-        float acc = (0.0f + sparse[i]) + dynamic[i];
-        combined[i] = (acc + (1.0f - 2.0f * acc) * 0.25f) * 0.75f;
-    }
-    CHECK(resolve(5, 3, nullptr, &w) && w == combined);
-    {
-        std::vector<float> subtract(3), minimum(3), average(3), over(3),
-            product(3);
-        for (size_t i = 0; i < 3; ++i) {
-            subtract[i] = 0.75f - sparse[i];
-            minimum[i] = std::min(std::min(1.0f, 0.75f), sparse[i]);
-            average[i] = ((0.0f + 0.75f) + sparse[i]) * (1.0f / 2.0f);
-            over[i] = sparse[i] < 0.5f
-                          ? 2.0f * sparse[i] * 0.75f
-                          : 1.0f - 2.0f * (1.0f - sparse[i]) * (1.0f - 0.75f);
-            product[i] = (1.0f * 0.75f) * sparse[i];
-        }
-        const std::vector<float> *expected[] = {&subtract, &minimum, &average,
-                                                &over, &product};
-        for (size_t m = 0; m < 5; ++m) {
-            CHECK(resolve(12 + m, 3, nullptr, &w) && w == *expected[m]);
-        }
-    }
-    CHECK(!resolve(6, 1, nullptr, &w) && error == "unknown rangePolicy on /W6");
-    CHECK(!resolve(7, 1, nullptr, &w) && error == "unknown rangePolicy on /W6");
-    CHECK(!resolve(8, 3, nullptr, &w) &&
-          error == "/W8: no resolved placement for this volume weight");
-    program.store.volumePlacement[0] = RrMat4d(1.0);
-    program.store.volumePlaced[0] = 1;
-    CHECK(!resolve(8, 3, nullptr, &w) &&
-          error == "/W8: rigExec:weightTarget reads `preceding` but no "
-                   "in-flight points were supplied");
-    const std::vector<RrVec3f> two(2, RrVec3f(0.0f));
-    CHECK(!resolve(8, 3, &two, &w) &&
-          error == "/W8: sampled point count does not match the target");
-    const std::vector<RrVec3f> three = {RrVec3f(0.0f), RrVec3f(0.5f, 0, 0),
-                                        RrVec3f(3.0f, 0, 0)};
-    CHECK(resolve(8, 3, &three, &w) && w.size() == 3);
-    CHECK(!resolve(9, 1, nullptr, &w) &&
-          error == "strict range violation on /W9");
-    CHECK(!resolve(10, 1, nullptr, &w) &&
-          error == "weight range violation on /W10");
-    CHECK(!resolve(objects.size(), 1, nullptr, &w) &&
-          error == "the file holds no weight object " +
-                       std::to_string(objects.size()));
-    std::printf("computed reads and oracle: checked\n");
+    std::printf("computed reads: checked\n");
 }
 
-// A VolumePlacements step the closure skips keeps its slot's placement and
+// A volume placement that does not run keeps its slot's placement and
 // placed byte bit for bit, the oracle reads that kept placement, and only
-// the slot's own step moves it. White-box over a hand-assembled program:
+// the slot's own placement moves it. White-box over a hand-assembled program:
 // Production scheduling independence is checked on the real bake below.
 static void
 _TestVolumePlacementSkip()
@@ -1960,17 +2163,10 @@ _TestVolumePlacementSkip()
         object.providerSlot = int32_t(slot);
         object.samplesInFlight = true;
         file.geometry->weightObjects.push_back(std::move(object));
-        fb::RigExecWireStep step;
-        step.kind = fb::StepKind::VolumePlacements;
-        step.object = int32_t(slot);
-        step.part = 1;
-        step.reads = {fb::SlotRange(fb::SlotDomain::PoseFin, slot, slot + 1)};
-        step.writes = {
-            fb::SlotRange(fb::SlotDomain::WeightFrames, slot, slot + 1)};
-        file.steps.push_back(std::move(step));
     }
     // Per-consumer envelope descriptors select independent placement tables.
-    // This white-box failure test complements the actual exported S9 rig below.
+    // This white-box failure test complements the exported volume envelope
+    // rig below.
     for (const auto phase : {fb::WeightFieldPlacementPhase::Base,
                              fb::WeightFieldPlacementPhase::Final}) {
         fb::RigExecWireWeightField field;
@@ -2036,24 +2232,47 @@ _TestVolumePlacementSkip()
         }
         return true;
     };
-    const auto run = [&](size_t step) {
+    // What a VolumePlacement node of slot \p slot does: its pose version
+    // looked up, placed, and stored.
+    RigExecTypeDesc frameType;
+    frameType.size = sizeof(RrPointFrame);
+    const auto place = [&](uint32_t slot) {
         error.clear();
-        const bool ok = RrRunWeightStep(&program, step, &error);
+        const eval::OpLookup lookup{uint8_t(eval::OpLookupSource::PoseVersion),
+                                    store.finLast[slot], 0, 0};
+        RrPointFrame frame;
+        RrMat4d placement(1.0);
+        if (!RrLookUpPoseVersion(&program, lookup, frameType, &frame, &error))
+            return false;
+        RigExecVolumePlacement(frame.points,
+                               (frame.flags & RrPointFrameValid) != 0,
+                               (frame.flags & RrPointFrameDegenerate) != 0,
+                               RrDualQuatPointsToMatrix, &placement);
+        const eval::OpHostOutput output{
+            0, 1, uint8_t(eval::OpOutputTarget::VolumePlacement), slot};
+        return RrStoreVolumePlacement(&program, output, &placement, &error);
+    };
+    const auto run = [&](uint32_t slot) {
+        const bool ok = place(slot);
         CHECK(ok);
         if (!ok) {
-            std::printf("  volume step %zu: %s\n", step, error.c_str());
+            std::printf("  volume placement %u: %s\n", slot, error.c_str());
         }
     };
-    const std::vector<RrVec3f> samples = {
-        RrVec3f(0.0f), RrVec3f(0.0f, 0.5f, 0.0f), RrVec3f(0.25f, 0.0f, 0.0f)};
-    const auto resolve = [&](std::vector<float> *weights) {
+    RigExecTypeDesc matrixType;
+    matrixType.size = sizeof(RrMat4d);
+    matrixType.triviallyCopyable = true;
+    const auto resolve = [&](RrMat4d *placement) {
         error.clear();
-        return RrResolveWeightOracle(&program, 1, samples.size(), &samples,
-                                     weights, &error);
+        const eval::OpLookup lookup{
+            uint8_t(eval::OpLookupSource::WeightFieldInputs), 1, 1,
+            uint8_t(eval::OpFieldRead::Placement)};
+        return RrLookUpWeightField(&program, lookup, matrixType, placement,
+                                   &error);
     };
 
     // No step has run: no placement.
-    std::vector<float> weights;
+    RrMat4d weights(1.0);
     CHECK(!resolve(&weights) &&
           error == "/Volume2: no resolved placement for this volume weight");
     run(0);
@@ -2062,33 +2281,24 @@ _TestVolumePlacementSkip()
     CHECK(placedAt(0, first) && placedAt(1, second));
     store.volumePlacementBase = store.volumePlacement;
     store.volumePlacedBase = store.volumePlaced;
-    const std::vector<RrVec3f> singleton{RrVec3f(0.0f)};
     for (size_t field = 0; field < 2; ++field) {
-        CHECK(RrResolveDeclaredWeightField(&program, field, 1, &singleton));
-        const auto standing = store.weightFieldResults[field].values;
         auto &selected =
             field == 0 ? store.volumePlacedBase : store.volumePlaced;
-        auto &matrix =
-            field == 0 ? store.volumePlacementBase : store.volumePlacement;
         selected[1] = 0;
-        CHECK(!RrResolveDeclaredWeightField(&program, field, 1, &singleton));
-        CHECK(store.weightFieldResults[field].values.empty() &&
-              store.weightFieldResults[field].error ==
+        const eval::OpLookup lookup{
+            uint8_t(eval::OpLookupSource::WeightFieldInputs), uint32_t(field),
+            1, uint8_t(eval::OpFieldRead::Placement)};
+        RrMat4d placement(1.0);
+        CHECK(!RrLookUpWeightField(&program, lookup, matrixType, &placement,
+                                   &error) &&
+              error ==
                   "/Volume2: no resolved placement for this volume weight");
-        CHECK(RrResolveDeclaredWeightField(&program, 1 - field, 1, &singleton));
         selected[1] = 1;
-        matrix[1][3][0] = std::numeric_limits<double>::quiet_NaN();
-        CHECK(!RrResolveDeclaredWeightField(&program, field, 1, &singleton));
-        CHECK(store.weightFieldResults[field].values.empty() &&
-              store.weightFieldResults[field].error ==
-                  "/Volume2: degenerate volume placement");
-        matrix[1] = field == 0 ? store.volumePlacement[1]
-                               : store.volumePlacementBase[1];
-        CHECK(RrResolveDeclaredWeightField(&program, field, 1, &singleton));
-        CHECK(store.weightFieldResults[field].values == standing);
+        CHECK(RrLookUpWeightField(&program, lookup, matrixType, &placement,
+                                  &error));
     }
-    std::vector<float> placedWeights;
-    CHECK(resolve(&placedWeights) && placedWeights.size() == samples.size());
+    RrMat4d placedWeights(1.0);
+    CHECK(resolve(&placedWeights));
     const RrMat4d kept = store.volumePlacement[1];
     const RrMat4d other = store.volumePlacement[0];
 
@@ -2100,25 +2310,29 @@ _TestVolumePlacementSkip()
     CHECK(std::memcmp(&store.volumePlacement[1], &kept, sizeof(RrMat4d)) == 0);
     CHECK(store.volumePlaced[0] == 1);
     CHECK(std::memcmp(&store.volumePlacement[0], &other, sizeof(RrMat4d)) == 0);
-    std::vector<float> keptWeights;
-    CHECK(resolve(&keptWeights) && keptWeights == placedWeights);
+    RrMat4d keptWeights(1.0);
+    CHECK(resolve(&keptWeights) &&
+          std::memcmp(&keptWeights, &placedWeights, sizeof(RrMat4d)) == 0);
 
     // Its own step moves it.
     run(1);
     CHECK(placedAt(1, moved) && placedAt(0, first));
     CHECK(std::memcmp(&store.volumePlacement[1], &kept, sizeof(RrMat4d)) != 0);
-    std::vector<float> movedWeights;
-    CHECK(resolve(&movedWeights) && movedWeights != placedWeights);
+    RrMat4d movedWeights(1.0);
+    CHECK(resolve(&movedWeights) &&
+          std::memcmp(&movedWeights, &placedWeights, sizeof(RrMat4d)) != 0);
 
-    // A step naming no volume slot fails by name and changes nothing.
-    const RrMat4d before = store.volumePlacement[1];
-    constants.noScaleAvars[1] = 0;
+    // A store past the placements fails by name and changes nothing.
+    const std::vector<RrMat4d> before = store.volumePlacement;
     error.clear();
-    CHECK(!RrRunWeightStep(&program, 1, &error) &&
-          error == "weight step 1 places no volume slot");
-    constants.noScaleAvars[1] = 1;
-    CHECK(std::memcmp(&store.volumePlacement[1], &before, sizeof(RrMat4d)) ==
-          0);
+    const RrMat4d identity(1.0);
+    CHECK(!RrStoreVolumePlacement(
+              &program,
+              {0, 1, uint8_t(eval::OpOutputTarget::VolumePlacement), 2},
+              &identity, &error) &&
+          error == "slot 2 places no volume");
+    CHECK(std::memcmp(store.volumePlacement.data(), before.data(),
+                      before.size() * sizeof(RrMat4d)) == 0);
     std::printf("volume placement skip: a skipped step kept slot 1's "
                 "placement bit for bit and the oracle read it; its own step "
                 "moved it\n");
@@ -2194,18 +2408,18 @@ _TestVolumePlacementDrags(const std::string &stagePath)
         CHECK(entry);
         undragged[v] = entry ? entry->matrix : RrMat4d(1.0);
     }
-    // Each volume's VolumePlacements step, by its label.
+    // Each volume's VolumePlacement op step, by its label.
     int64_t placer[2] = {-1, -1};
     {
         std::unique_ptr<fb::RigExecWireFile> file;
         CHECK(RigExecFormatOpen(bytes.data(), bytes.size(), &file, &error));
         for (size_t s = 0; file && s < file->steps.size(); ++s) {
-            if (file->steps[s].kind != fb::StepKind::VolumePlacements) {
+            if (file->steps[s].kind != fb::StepKind::OpNode) {
                 continue;
             }
             const std::string label = RigExecFormatStepLabel(*file, s);
             for (size_t v = 0; v < 2; ++v) {
-                if (label == "VolumePlacements " + volumes[v]) {
+                if (label == "OpNode " + volumes[v] && placer[v] < 0) {
                     placer[v] = int64_t(s);
                 }
             }
@@ -2341,13 +2555,17 @@ _TestPaintedEnvelopeSet()
             }
             const fb::RigExecWireWeightObject &object =
                 file->geometry->weightObjects[size_t(c.weightObjectIndex)];
-            const auto packet = std::find_if(
-                file->steps.begin(), file->steps.end(), [&](const auto &step) {
-                    return step.kind == fb::StepKind::WeightPacket &&
-                           step.object == c.weightObjectIndex;
-                });
+            // A weight read only as a field makes no packet node.
+            const bool packet =
+                file->opGraph &&
+                std::any_of(
+                    file->opGraph->hostOutputs.begin(),
+                    file->opGraph->hostOutputs.end(), [&](const auto &output) {
+                        return output->target == 3 &&
+                               output->object == uint32_t(c.weightObjectIndex);
+                    });
             listed =
-                packet != file->steps.end() && c.weightField >= 0 &&
+                !packet && c.weightField >= 0 &&
                 size_t(c.weightField) < file->geometry->weightFields.size() &&
                 file->geometry->weightFields[size_t(c.weightField)].object ==
                     c.weightObjectIndex &&
@@ -2407,8 +2625,8 @@ _TestPaintedEnvelopeSet()
                 name, values.c_str(), same ? "==" : "differs from");
 }
 
-// S9 NoEquivalent: the original walk refused volume envelopes. This case
-// checks the newly supported count-one graph without inventing a baseline.
+// A volume envelope has no scalar-reference baseline: this case checks the
+// count-one graph on its own.
 static void
 _TestS9VolumeEnvelope()
 {
@@ -2524,9 +2742,21 @@ _TestS9VolumeEnvelope()
                                         values[frame].data(),
                                         values[frame].size()},
                     &why));
-            CHECK(reader->Execute(&why));
+            const bool expectRun = frame == 0 || frame == 4;
+            const bool ran = reader->Execute(&why);
             const RigExecRigPose expected =
                 native.Evaluate(UsdTimeCode(double(frame + 1)));
+            CHECK(ran == expectRun && expected.valid == expectRun);
+            if (!ran) {
+                const char *cause = frame == 3
+                                        ? "could not read the points to sample"
+                                        : "sampled point count does not match";
+                CHECK(why.find(cause) != std::string::npos);
+                if (why.find(cause) == std::string::npos)
+                    std::printf("S9 %s frame %zu: %s\n", phase, frame + 1,
+                                why.c_str());
+                continue;
+            }
             std::vector<std::string> diffs;
             const bool same =
                 RigExecCompareRuntimeRun(expected, *reader, &diffs);
@@ -2544,26 +2774,7 @@ _TestS9VolumeEnvelope()
                 continue;
             const RrMat4d standing = found->matrix;
             published.push_back(standing);
-            if (frame == 0 || frame == 4)
-                CHECK(found->matrix[3][0] != (0.0));
-            else
-                CHECK(found->matrix[3][0] == 0.0);
-            if (frame == 1 || frame == 2)
-                CHECK(std::any_of(
-                    reader->GetDiagnostics().begin(),
-                    reader->GetDiagnostics().end(), [](const auto &line) {
-                        return line.find(
-                                   "sampled point count does not match") !=
-                               std::string::npos;
-                    }));
-            if (frame == 3)
-                CHECK(std::any_of(
-                    reader->GetDiagnostics().begin(),
-                    reader->GetDiagnostics().end(), [](const auto &line) {
-                        return line.find(
-                                   "could not read the points to sample") !=
-                               std::string::npos;
-                    }));
+            CHECK(found->matrix[3][0] != (0.0));
             CHECK(reader->Execute(&why));
             CHECK(reader->GetLastRunTraceForTesting().empty());
             const auto held = std::find_if(
@@ -2574,9 +2785,10 @@ _TestS9VolumeEnvelope()
             CHECK(held != reader->GetJointMatrices().end() &&
                   held->matrix == standing);
         }
-        CHECK(published.size() == 5 && published.front() != published.back());
+        CHECK(published.size() == 2 && published.front() != published.back());
         std::printf("S9 NoEquivalent: %s volume envelope count "
-                    "loss/missing/empty/recovery + held exact playback\n",
+                    "loss/missing/empty stop the frame; recovery + held exact "
+                    "playback\n",
                     phase);
     }
 }
@@ -2796,16 +3008,161 @@ _TestFalloffSampleInputs()
                .HasAuthoredValueOpinion());
 }
 
+// The field ops weigh what the field resolution weighed: painted, remapped
+// and combined fields over a point count, range policy last.
+static void
+_TestWeightFieldOps()
+{
+    using rigExec::RigExecPortHandle;
+    using Weights = rigExecStd::RigExecArray<float>;
+    using Indices = rigExecStd::RigExecArray<int32_t>;
+    using Feed = std::pair<const RigExecPortHandle *, const void *>;
+    std::string error;
+    const auto run = [&](const rigExec::RigExecOpHandle &op,
+                         const void *payload, const std::vector<Feed> &feeds,
+                         const RigExecPortHandle &port,
+                         std::vector<float> *out) {
+        error.clear();
+        rigExec::RigExecRigDescBuilder builder;
+        const rigExec::RigExecNodeId node = builder.AddOp(op, payload);
+        std::vector<rigExec::RigExecInputId> ids;
+        for (const Feed &feed : feeds)
+            ids.push_back(builder.BindInput(node, *feed.first));
+        const rigExec::RigExecOutputId id = builder.BindOutput(node, port);
+        const auto desc = builder.Build(&error);
+        const auto program =
+            desc ? rigExec::RigExecCompile(*desc, {}, &error) : nullptr;
+        const auto evaluator =
+            program ? rigExec::RigExecEvaluator::Create(program, {}, &error)
+                    : nullptr;
+        if (!evaluator)
+            return false;
+        for (size_t i = 0; i < feeds.size(); ++i)
+            if (!evaluator->SetInput(ids[i], feeds[i].second, &error))
+                return false;
+        if (!evaluator->Evaluate(&error))
+            return false;
+        const auto *w =
+            static_cast<const Weights *>(evaluator->GetOutput(id, &error));
+        if (!w)
+            return false;
+        out->assign(w->begin(), w->end());
+        return true;
+    };
+    const auto array = [](const std::vector<float> &v) {
+        Weights a;
+        a.Resize(v.size());
+        if (!v.empty())
+            std::memcpy(a.Data(), v.data(), v.size() * sizeof(float));
+        return a;
+    };
+    const auto indices = [](const std::vector<int32_t> &v) {
+        Indices a;
+        a.Resize(v.size());
+        if (!v.empty())
+            std::memcpy(a.Data(), v.data(), v.size() * sizeof(int32_t));
+        return a;
+    };
+    using namespace rigExecOps;
+    const WeightPacketPayload sparsePayload{
+        rigExecRig::WeightRepresentation::Sparse, false};
+    const WeightPacketPayload densePayload{
+        rigExecRig::WeightRepresentation::Dense, false};
+    const auto painted = [&](const WeightPacketPayload &payload,
+                             const Weights &values, const Indices &at,
+                             uint32_t count, std::vector<float> *out) {
+        const float zero = 0.0f;
+        return run(StaticWeightField(), &payload,
+                   {{&StaticWeightFieldValues(), &values},
+                    {&StaticWeightFieldIndices(), &at},
+                    {&StaticWeightFieldDefaultWeight(), &zero},
+                    {&StaticWeightFieldTargetCount(), &count}},
+                   StaticWeightFieldOut(), out);
+    };
+    std::vector<float> w;
+    const Weights values = array({0.1f, 0.2f});
+    const std::vector<float> sparse = {0.1f, 0.0f, 0.2f};
+    CHECK(painted(sparsePayload, values, indices({0, 2}), 3, &w) &&
+          w == sparse);
+    CHECK(!painted(sparsePayload, values, indices({0, 2}), 2, &w) &&
+          error.find("sparse index out of range") != std::string::npos);
+    CHECK(!painted(sparsePayload, values, indices({0, 0}), 3, &w) &&
+          error.find("duplicate sparse index") != std::string::npos);
+    CHECK(painted(densePayload, array({0.25f, 1.0f}), indices({}), 2, &w) &&
+          w == (std::vector<float>{0.25f, 1.0f}));
+    CHECK(!painted(densePayload, array({0.25f, 1.0f}), indices({}), 3, &w) &&
+          error.find("dense weights do not cover") != std::string::npos);
+    const Weights base = array(sparse);
+    const float driver = 0.3f, scale = 0.85f, bias = 0.0f;
+    std::vector<float> dynamic(3);
+    for (size_t i = 0; i < 3; ++i)
+        dynamic[i] = (sparse[i] * driver) * scale + bias;
+    CHECK(run(DynamicWeightField(), &densePayload,
+              {{&DynamicWeightFieldBase(), &base},
+               {&DynamicWeightFieldDriver(), &driver},
+               {&DynamicWeightFieldScale(), &scale},
+               {&DynamicWeightFieldBias(), &bias}},
+              DynamicWeightFieldOut(), &w) &&
+          std::memcmp(w.data(), dynamic.data(), 3 * sizeof(float)) == 0);
+    const float over = 2.0f;
+    CHECK(!run(DynamicWeightField(), &densePayload,
+               {{&DynamicWeightFieldBase(), &base},
+                {&DynamicWeightFieldBias(), &over}},
+               DynamicWeightFieldOut(), &w) &&
+          error.find("DynamicWeightField") != std::string::npos);
+    const WeightPacketPayload clamped{rigExecRig::WeightRepresentation::Dense,
+                                      true};
+    CHECK(run(DynamicWeightField(), &clamped,
+              {{&DynamicWeightFieldBase(), &base},
+               {&DynamicWeightFieldBias(), &over}},
+              DynamicWeightFieldOut(), &w) &&
+          w == std::vector<float>(3, 1.0f));
+    CombineWeightFieldsPayload add;
+    add.mode = WeightCombineMode::Add;
+    add.clamp = true;
+    const Weights second = array(dynamic);
+    const uint32_t three = 3;
+    const float invert = 0.25f, strength = 0.75f;
+    std::vector<float> combined(3);
+    for (size_t i = 0; i < 3; ++i) {
+        float acc = (0.0f + sparse[i]) + dynamic[i];
+        combined[i] = (acc + (1.0f - 2.0f * acc) * invert) * strength;
+    }
+    CHECK(run(CombineWeightFields(), &add,
+              {{&CombineWeightFieldsInputs(), &base},
+               {&CombineWeightFieldsInputs(), &second},
+               {&CombineWeightFieldsTargetCount(), &three},
+               {&CombineWeightFieldsInvert(), &invert},
+               {&CombineWeightFieldsStrength(), &strength}},
+              CombineWeightFieldsOut(), &w) &&
+          std::memcmp(w.data(), combined.data(), 3 * sizeof(float)) == 0);
+    const Weights shorter = array({0.5f});
+    CHECK(!run(CombineWeightFields(), &add,
+               {{&CombineWeightFieldsInputs(), &base},
+                {&CombineWeightFieldsInputs(), &shorter},
+                {&CombineWeightFieldsTargetCount(), &three}},
+               CombineWeightFieldsOut(), &w) &&
+          error.find("element count") != std::string::npos);
+    std::printf("weight field ops: painted, remapped and combined fields "
+                "checked\n");
+}
+
 int
 main(int argc, char **argv)
 {
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
+    std::string registryError;
+    if (!RigExecEnsureBuiltinRegistry(&registryError)) {
+        std::printf("registry: %s\n", registryError.c_str());
+        return 1;
+    }
     _TestS9VolumeEnvelope();
     _TestFalloffSampleInputs();
     _TestSyntheticBuilders();
     _TestComputedReadsAndOracle();
     _TestPaintedEnvelopeSet();
     _TestVolumePlacementSkip();
+    _TestWeightFieldOps();
     _TestVolumePlacementDrags(std::string(RIGEXEC_TEST_FIXTURES_DIR) +
                               "/volume_placements.usda");
 

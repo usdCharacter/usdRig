@@ -39,6 +39,50 @@ establish semantic correctness. The independent numerical expectations live in
 and `testRigExecVolumeWeights`; CPU/SIMD comparisons also run in
 `testRigExecParallelKernels`.
 
+## Exec-row goldens
+
+`execRows/<reference>/<fixture>.golden` hold, per frame, the rows the baked
+program's step bodies store: the row key, a digest of the inputs the step
+body read, and the exact value it stored. The sets were first recorded while
+OpenExec judged every row bit for bit; OpenExec has since left the engine, and
+these goldens stand in for that judge. A frame with more than 512 rows (the
+biped stages) is stored as one line per step kind instead: the kind, its row
+count and one digest over those rows' keys, input digests and values.
+`testRigExecExecGoldens` captures the same rows from the production evaluator
+and compares them. `<reference>` names the platform, architecture and
+compiler that recorded the file (`RigExecExecRowsReference`). That
+configuration compares every bit; any other compares which rows were stored
+and the type and length of each value.
+
+The authoritative reference is the Linux configuration above
+(`linux-x86_64-gcc13`). Two more exact sets have the same rows and keys as the
+Linux set; only the last bits of doubles differ, from the math library:
+
+- `windows-x86_64-msvc1936`, recorded on a Windows development machine: 111
+  of the 2286 row lines differ, at most 5.3e-15 absolute.
+- `macos-arm64-clang17`, recorded by the macOS CI job: 92 of the 2286 row
+  lines differ, at most 1.6e-14 absolute.
+
+Every rig the `example_graph_*` tests run, plus `computed_ik_space` and the
+six `independentConstraints` stages, has a golden: `rigexec_add_exec_rows_test`
+in `CMakeLists.txt` registers `testRigExecExecGoldens_<name>` with the first,
+middle and last of the rig's frames.
+
+A change that alters rows on purpose re-records them from the production
+evaluator on each reference configuration, and the commit carries the
+reviewed diff. From a shell that sourced `bin/_env.sh`:
+
+```sh
+RIGEXEC_RECORD_EXEC_ROWS=1 ctest --test-dir build -R '^testRigExecExecGoldens_<name>$'
+git diff tests/fixtures/execRows
+```
+
+The test writes `tests/fixtures/execRows/<reference>/<name>.golden` for the
+configuration it runs on (omit `<name>` to record every rig). A new rig is
+recorded the same way after adding its `rigexec_add_exec_rows_test` entry.
+Nothing but the change under review judges the new values, so read the diff
+row by row.
+
 ## Rendered-image baselines
 
 `render/twistRibbon_1001.png` and `render/twistRibbon_1024.png` are 128x128
@@ -61,3 +105,13 @@ source bin/_env.sh
 RIGEXEC_RENDER_UPDATE_BASELINES=1 build/testRigExecImagingRender \
   examples tests/fixtures/render
 ```
+
+## Baked programs
+
+`minimal.rigexec` is the smallest valid program at the current format
+version; `testRigExecRuntimeFixture` rebuilds it and compares bytes. After a
+format bump, run that test with `RIGEXEC_UPDATE_FIXTURES=1` to rewrite it.
+Open reads the current format only: an older file is refused and is baked
+again from its stage. `registeredMover.rigexec` is a rig with a registered
+external mover at the current format; `testRigExecExternalMovers` writes the
+same program to the build tree, so after a format bump copy that file over it.

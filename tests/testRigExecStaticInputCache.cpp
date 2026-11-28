@@ -20,7 +20,7 @@
 //     any other thread must bounce off it rather than race on it, which is
 //     what lets the level-parallel chain walk read through the same resolved
 //     inputs.
-#include "rigExec/moverGraph.h"
+#include "rigExec/internal/moverGraph.h"
 
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/usd/attribute.h"
@@ -36,12 +36,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -78,7 +78,7 @@ TestAPlainValueIsHeld()
     CHECK(handled);
     CHECK(value == 0.25f);
     CHECK(cache.GetSize() == 1);
-    CHECK(cache.GetHitCount() == 0);  // the first read FILLED the entry
+    CHECK(cache.GetHitCount() == 0); // the first read FILLED the entry
 
     value = -1.0f;
     CHECK(cache.Read(weight, weight.GetPath(), UsdTimeCode(2.0), &value,
@@ -191,8 +191,8 @@ TestAnEntryAnswersOnlyItsOwnType()
 
     // The same attribute read as what it actually is.
     TfToken value;
-    CHECK(cache.Read(token, token.GetPath(), UsdTimeCode(1.0), &value,
-                     &handled));
+    CHECK(
+        cache.Read(token, token.GetPath(), UsdTimeCode(1.0), &value, &handled));
     CHECK(value == TfToken("dualQuaternion"));
 }
 
@@ -265,7 +265,7 @@ TestAReadFromAnotherThreadBypasses()
     newOwner.join();
 }
 
-}  // namespace
+} // namespace
 
 int
 main()

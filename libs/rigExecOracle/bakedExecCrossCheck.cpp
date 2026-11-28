@@ -1,5 +1,5 @@
-#include "rigExec/bakedExecCrossCheck.h"
-#include "rigExec/goldenPose.h"
+#include "rigExec/internal/bakedExecCrossCheck.h"
+#include "rigExec/api/goldenPose.h"
 #include <algorithm>
 #include <set>
 #include <tuple>
@@ -36,16 +36,17 @@ RigExecBakedExecCrossCheck::Add(RigExecExecCheckDescriptor descriptor,
     if (!_stage || descriptor.key.empty() ||
         (!descriptor.skipOnly && descriptor.address.target.IsEmpty()))
         return fail("invalid exec check descriptor");
-    if (std::any_of(_rows.begin(), _rows.end(), [&](const Row &row) {
-            return row.descriptor.key == descriptor.key;
-        }))
+    if (std::any_of(_rows.begin(), _rows.end(),
+                    [&](const RigExecExecCheckDescriptor &row) {
+                        return row.key == descriptor.key;
+                    }))
         return fail("duplicate exec check key: " + descriptor.key);
     if (descriptor.skipOnly) {
         if (!descriptor.requiredOverrides.empty() || descriptor.project ||
             descriptor.acquireReference)
             return fail("skip-only exec check cannot declare a computation: " +
                         descriptor.key);
-        _rows.push_back({std::move(descriptor), {}});
+        _rows.push_back(std::move(descriptor));
         return true;
     }
     const Key output = AddressKey(descriptor.address);
@@ -59,19 +60,10 @@ RigExecBakedExecCrossCheck::Add(RigExecExecCheckDescriptor descriptor,
             return fail("exec check cannot override its own result: " +
                         descriptor.key);
     }
-    if (descriptor.acquireReference) {
-        if (descriptor.project)
-            return fail(
-                "independent reference cannot project a public result: " +
-                descriptor.key);
-        _rows.push_back({std::move(descriptor), {}});
-        return true;
-    }
-    auto tap = std::make_unique<RigExecTapSet>(_stage);
-    tap->Add(descriptor.address);
-    if (!tap->Prepare())
-        return fail("cannot prepare exec check: " + descriptor.key);
-    _rows.push_back({std::move(descriptor), std::move(tap)});
+    if (descriptor.acquireReference && descriptor.project)
+        return fail("independent reference cannot project a public result: " +
+                    descriptor.key);
+    _rows.push_back(std::move(descriptor));
     return true;
 }
 
@@ -87,12 +79,11 @@ RigExecBakedExecCrossCheck::Evaluate(
         return report;
     }
     for (size_t i = 0; i < _rows.size(); ++i) {
-        auto &row = _rows[i];
+        const auto &row = _rows[i];
         const auto &input = inputs[i];
         if (input.skip == RigExecExecCheckSkip::MissingName) {
             ++report.failed;
-            report.diagnostics.push_back(row.descriptor.key +
-                                         ": interned name missing");
+            report.diagnostics.push_back(row.key + ": interned name missing");
             continue;
         }
         if (input.skip != RigExecExecCheckSkip::None) {
@@ -101,13 +92,17 @@ RigExecBakedExecCrossCheck::Evaluate(
         }
         const auto fail = [&](const std::string &reason) {
             ++report.failed;
-            report.diagnostics.push_back(row.descriptor.key + ": " + reason);
+            report.diagnostics.push_back(row.key + ": " + reason);
         };
-        if (row.descriptor.skipOnly) {
+        if (row.skipOnly) {
             fail("skip-only row requires an explicit reason");
             continue;
         }
-        const Key output = AddressKey(row.descriptor.address);
+        if (!row.acquireReference) {
+            ++report.skipped[RigExecExecCheckSkip::NoEquivalent];
+            continue;
+        }
+        const Key output = AddressKey(row.address);
         std::set<Key> present;
         bool valid = true;
         for (const auto &override : input.overrides) {
@@ -120,7 +115,7 @@ RigExecBakedExecCrossCheck::Evaluate(
         }
         if (!valid)
             continue;
-        for (const auto &address : row.descriptor.requiredOverrides)
+        for (const auto &address : row.requiredOverrides)
             if (!present.count(AddressKey(address))) {
                 fail("missing bound input override: " +
                      address.target.GetString());
@@ -129,49 +124,23 @@ RigExecBakedExecCrossCheck::Evaluate(
             }
         if (!valid)
             continue;
-        VtValue actual;
-        if (row.descriptor.acquireReference) {
-            if (present.size() != row.descriptor.requiredOverrides.size()) {
-                fail("independent reference received an undeclared input "
-                     "override");
-                continue;
-            }
-            RigExecExecCheckDescriptor::Reference reference;
-            std::string referenceError;
-            if (!row.descriptor.acquireReference(_stage, time, input.overrides,
-                                                 &reference, &referenceError) ||
-                !reference) {
-                fail("independent context acquisition failed: " +
-                     referenceError);
-                continue;
-            }
-            if (!reference(&actual, &referenceError)) {
-                fail("independent numerical witness failed: " + referenceError);
-                continue;
-            }
-        } else {
-            size_t dropped = 0;
-            const auto snapshot =
-                row.tap->Evaluate(time, input.overrides, &dropped);
-            report.dropped += dropped;
-            if (dropped) {
-                fail("dropped " + std::to_string(dropped) +
-                     " override addresses");
-                continue;
-            }
-            if (!snapshot.IsComplete()) {
-                fail("exec did not produce a value");
-                continue;
-            }
-            actual = snapshot.Get(0);
+        if (present.size() != row.requiredOverrides.size()) {
+            fail("independent reference received an undeclared input "
+                 "override");
+            continue;
         }
-        if (row.descriptor.project) {
-            VtValue projected;
-            if (!row.descriptor.project(actual, &projected)) {
-                fail("result conversion failed");
-                continue;
-            }
-            actual = std::move(projected);
+        RigExecExecCheckDescriptor::Reference reference;
+        std::string referenceError;
+        VtValue actual;
+        if (!row.acquireReference(_stage, time, input.overrides, &reference,
+                                  &referenceError) ||
+            !reference) {
+            fail("independent context acquisition failed: " + referenceError);
+            continue;
+        }
+        if (!reference(&actual, &referenceError)) {
+            fail("independent numerical witness failed: " + referenceError);
+            continue;
         }
         std::string expectedText, actualText, error;
         if (!RigExecEncodeGoldenValue(input.expected, &expectedText, &error) ||
@@ -180,7 +149,7 @@ RigExecBakedExecCrossCheck::Evaluate(
             continue;
         }
         ++report.checked;
-        ++report.checkedByKind[row.descriptor.kind];
+        ++report.checkedByKind[row.kind];
         if (actualText != expectedText)
             fail("value differs\nexpected: " + expectedText +
                  "\nactual: " + actualText);

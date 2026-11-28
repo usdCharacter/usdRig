@@ -3,13 +3,19 @@
 #include "store.h"
 namespace rigExec {
 bool RrReadCrossDomain(const RrProgram *, int32_t, RrWireValue *);
-const std::vector<RrVec3f> *RrResolveDeclaredPoints(const RrProgram *, const RigExecWirePointsBinding &);
-const std::vector<RrVec3f> *RrReadCrossDomainPoints(const RrProgram *, const fb::RigExecWireCrossDomainRead &);
-bool RrReadCrossDomainPoint(const RrProgram *, const fb::RigExecWireCrossDomainRead &, RrVec3f *);
+const std::vector<RrVec3f> *
+RrResolveDeclaredPoints(const RrProgram *, const RigExecWirePointsBinding &);
+const std::vector<RrVec3f> *
+RrReadCrossDomainPoints(const RrProgram *,
+                        const fb::RigExecWireCrossDomainRead &);
+bool RrReadCrossDomainPoint(const RrProgram *,
+                            const fb::RigExecWireCrossDomainRead &, RrVec3f *);
 bool RrOpenProviderProgram(RrProgram *, std::string *);
-bool RrProviderEffectiveInputMemo(const RrProgram *, const RigExecWireStep &, std::string *, std::vector<uint32_t> *);
+/// The effective-input key of the op node that answers row \p object of
+/// provider value producer \p part (eval::spaces::ProviderProducer), or
+/// that runs provider op \p object (part 0).
+bool RrProviderEffectiveInputMemo(const RrProgram *, int part, int64_t object,
+                                  std::string *, std::vector<uint32_t> *);
 RrWireValue RrReadProviderRefreshBlocker(const RrProgram *, int);
-bool RrRunProviderRefresh(RrProgram *, const RigExecWireStep &, std::string *);
-bool RrRunSpaceExpression(RrProgram *, const RigExecWireStep &, std::string *);
-}
+} // namespace rigExec
 #endif

@@ -4,7 +4,7 @@
 #ifndef RIGEXEC_IMAGING_REGISTRY_INTERNAL_H
 #define RIGEXEC_IMAGING_REGISTRY_INTERNAL_H
 
-#include "rigExec/backgroundScheduler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
 
 #include "registry.h"
 #include "upstreamTable.h"

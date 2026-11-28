@@ -3,8 +3,16 @@
 #include "poseInternal.h"
 #include "poseEvalHost.h"
 #include "spaces.h"
+#include "rigExecRuntime/spaceSwitchMath.h"
+#include "rigExecMath/avarScale.h"
 #include "rigExecMath/poseArithmeticKernel.h"
+#include "rigExecEvalCore/constraintLookups.h"
+#include "rigExecEvalCore/opSteps.h"
+#include "rigExecRigTypes/rigTypes.h"
+#include "rigExecStdTypes/array.h"
 #include <algorithm>
+#include <cstring>
+#include <variant>
 #include <limits>
 #include <utility>
 
@@ -13,47 +21,6 @@ namespace rigExec {
 using namespace runtimePoseDetail;
 
 namespace {
-
-struct RrSpaceSwitchMath {
-    using Matrix = RrMat4d;
-    static Matrix RoundTrip(const Matrix &m)
-    {
-        return RrRoundTrip(m);
-    }
-    static Matrix Filter(const Matrix &m, const RrVec3d &axis, int filter)
-    {
-        return RrFilterSpaceRotation(m, axis, RrRotationFilter(filter));
-    }
-    static Matrix Blend(const Matrix &a, const Matrix &b, double t)
-    {
-        return RrBlendTransforms(a, b, t);
-    }
-    static Matrix Mask(const Matrix &m, const bool *t, const bool *r,
-                       const bool *scale)
-    {
-        return RrMaskTransform(m, t, r, scale);
-    }
-};
-
-struct RrPoseInterpolatorMath {
-    using Quaternion = RrQuatd;
-    using Vector = RrVec3d;
-    static bool FrameRotation(const RrPointFrame &f, Quaternion *q)
-    {
-        return RrFrameRotation(f, q);
-    }
-    static bool FrameTranslation(const RrPointFrame &f,
-                                 const RrPointFrame &rest,
-                                 const RrPointFrame *parent,
-                                 const RrPointFrame *parentRest, Vector *v)
-    {
-        return RrFrameTranslation(f, rest, parent, parentRest, v);
-    }
-    static Vector EulerFromQuaternion(const Quaternion &q)
-    {
-        return _RrRbfEulerFromQuaternion(q);
-    }
-};
 
 struct RrPosePropagateMath {
     static bool Usable(const RrPointFrame &frame)
@@ -75,230 +42,9 @@ enum _RrPropagateOutcome : uint8_t {
     _RrInvalidResult = 5,
 };
 
-// RigExecRotationSignFromMask, verbatim: bit N set negates axis N. The
-// runtime carries its own copy of the math helpers rather than reaching
-// into rigExecMath, which keeps it free of every other project header.
-double
-_RrRotationSign(unsigned mask, int axis)
-{
-    return (mask & (1u << axis)) ? -1.0 : 1.0;
-}
-
-// The split constants of the commit walk (bakedPose.cpp).
-enum : size_t {
-    _RrPropagateChunkSize = 64,
-};
-
-std::string
-_RrKindName(RigExecWireStepKind kind)
-{
-    switch (kind) {
-    case RigExecWireStepKind::ComposeSubtree:
-        return "ComposeSubtree";
-    case RigExecWireStepKind::Solve:
-        return "Solve";
-    case RigExecWireStepKind::SolverCommit:
-        return "SolverCommit";
-    case RigExecWireStepKind::Constraint:
-        return "Constraint";
-    case RigExecWireStepKind::CommitDelta:
-        return "CommitDelta";
-    case RigExecWireStepKind::PropagateChunk:
-        return "PropagateChunk";
-    case RigExecWireStepKind::CommitApply:
-        return "CommitApply";
-    case RigExecWireStepKind::ProviderMatrix:
-        return "ProviderMatrix";
-    case RigExecWireStepKind::SnapshotFinals:
-        return "SnapshotFinals";
-    case RigExecWireStepKind::PoseInterpolator:
-        return "PoseInterpolator";
-    case RigExecWireStepKind::FrameMatrix:
-        return "FrameMatrix";
-    default:
-        return "Unknown";
-    }
-}
-
-// Whether slot \p i's avars and ladder rows are there to compose.
-bool
-_RrComposable(const RrProgram &program, const RrPoseScratch &scratch, size_t i)
-{
-    return i * 11 + 11 <= program.store.avars.size() &&
-           i < scratch.noScaleAvars.size() && i < scratch.rotOrder.size() &&
-           i < scratch.posedD.size() && i < scratch.parentSpaceM.size() &&
-           i < scratch.parentSpaceAuthored.size() &&
-           i < scratch.parentDinv.size() && i < scratch.posedAuthored.size() &&
-           i < scratch.posedAuthoredM.size();
-}
-
-// Slot \p i's avars as one matrix, as the program composes them
-// (_ComposeAvarsOf, bakedPose.cpp).
-RrMat4d
-_RrComposeAvarsOf(const RrProgram &program, const RrPoseScratch &scratch,
-                  size_t i)
-{
-    const double *a = &program.store.avars[i * 11];
-    const double units = a[10];
-    const bool noScale = scratch.noScaleAvars[i] != 0;
-    // avars:rotationSign, applied to the avar where the other two paths
-    // apply it (computations.cpp, bakedPose.cpp).
-    const unsigned sign =
-        i < scratch.rotationSign.size() ? scratch.rotationSign[i] : 0u;
-    const double signX = _RrRotationSign(sign, 0);
-    return _RrComposeAvars(
-        a[0] * units, a[1] * units, a[2] * units, noScale ? 1.0 : a[3],
-        noScale ? 1.0 : a[4], noScale ? 1.0 : a[5], a[6] * signX,
-        a[7] * _RrRotationSign(sign, 1), a[8] * _RrRotationSign(sign, 2),
-        a[9] * signX, program.TextOrEmpty(scratch.rotOrder[i]));
-}
-
-// _SpaceOfFrame: an unusable frame selects the NaN sentinel, so the
-// failure survives into every descendant instead of being scrubbed into a
-// plausible identity.
-RrMat4d
-_RrSpaceOfFrame(const RrPointFrame &frame)
-{
-    RrMat4d space = _RrIdentity();
-    if (!frame.IsValid() || frame.IsDegenerate() ||
-        !RrPointsToMatrix(RrIdentityLandmarks(), frame.points, &space)) {
-        space = _RrIdentity();
-        space[3][0] = std::numeric_limits<double>::quiet_NaN();
-    }
-    return space;
-}
-
-// Whether every slot \p read names is there to read or recompose.
-bool
-_RrVersionReadable(const RrProgram &program, const RrPoseScratch &scratch,
-                   const RigExecWireFrameVersion &read)
-{
-    if (read.context >= 0) {
-        return size_t(read.context) < program.store.switchFrames.size();
-    }
-    if (read.anchor >= 0 &&
-        size_t(read.anchor) >= program.store.posedM.size()) {
-        return false;
-    }
-    return read.recompose.empty();
-}
-
-// Read an explicit checkpoint output or the bound current provider matrix.
-RrMat4d
-_RrReadFrameVersion(const RrProgram &program, const RrPoseScratch &scratch,
-                    const RigExecWireFrameVersion &read)
-{
-    if (read.context >= 0) {
-        return program.store.switchFrames[size_t(read.context)];
-    }
-    RrMat4d posed = read.anchor >= 0 ? program.store.posedM[size_t(read.anchor)]
-                                     : _RrIdentity();
-    return posed;
-}
-
 } // namespace
 
 namespace runtimePoseDetail {
-
-std::string
-_RrStepHead(const RrProgram *program, size_t step)
-{
-    const RigExecWireStep &wire = (*program->steps)[step];
-    return "pose step " + _RrKindName(wire.kind) + " object " +
-           std::to_string(wire.object) + " part " + std::to_string(wire.part);
-}
-
-// An IK/FK match's pole: the frame its space switch composes avars onto,
-// with each source flagged in \p rides carried by \p moved (the IK
-// control's move). The switch's inputs are gathered as the compose step
-// gathers them, with the avars at identity. False when they cannot be read.
-bool
-_RrMatchPoleParent(RrProgram *program, int switchIndex,
-                   const std::vector<uint8_t> &rides, const RrMat4d &moved,
-                   RrMat4d *out)
-{
-    const RrPoseScratch *scratch = _RrScratch(program);
-    const RigExecWireSlotMeta &meta = *program->slotMeta;
-    if (switchIndex < 0 ||
-        size_t(switchIndex) >= program->poses->spaceSwitches.size()) {
-        return false;
-    }
-    const RigExecWireSpaceSwitch &sw =
-        program->poses->spaceSwitches[size_t(switchIndex)];
-    const size_t i = size_t(sw.slot);
-    if (sw.slot < 0 || i >= meta.parent.size() || i >= scratch->posedD.size() ||
-        i >= scratch->parentDinv.size() ||
-        sw.sourceReads.size() != sw.sourceSlots.size() ||
-        !_RrVersionReadable(*program, *scratch, *sw.parentRead) ||
-        !_RrVersionReadable(*program, *scratch, *sw.spaceRead)) {
-        return false;
-    }
-    for (const RigExecWireFrameVersion &read : sw.sourceReads) {
-        if (!_RrVersionReadable(*program, *scratch, read))
-            return false;
-    }
-    const int parent = meta.parent[i];
-    if (parent >= 0 && size_t(parent) >= scratch->defaultRoundTrip.size()) {
-        return false;
-    }
-    RigExecSpaceSwitchRecordT<RrVec3d> record;
-    record.filters.assign(sw.filters.begin(), sw.filters.end());
-    record.twistAxis =
-        RrVec3d(sw.twistAxis[0], sw.twistAxis[1], sw.twistAxis[2]);
-    std::copy(sw.affectTranslation.begin(), sw.affectTranslation.end(),
-              record.affectTranslation.begin());
-    std::copy(sw.affectRotation.begin(), sw.affectRotation.end(),
-              record.affectRotation.begin());
-    std::copy(sw.affectScale.begin(), sw.affectScale.end(),
-              record.affectScale.begin());
-    RigExecSpaceSwitchInputsT<RrMat4d> input;
-    input.avars = _RrIdentity();
-    input.posedDefault = scratch->posedD[i];
-    input.parentDefaultInverse = scratch->parentDinv[i];
-    input.parentPosed = _RrReadFrameVersion(*program, *scratch, *sw.parentRead);
-    input.parentDefault =
-        parent >= 0 ? scratch->defaultRoundTrip[size_t(parent)] : _RrIdentity();
-    const auto selector = program->ReadSpaceSwitch(size_t(switchIndex));
-    input.active = selector.f64;
-    if (sw.tokenIndex) {
-        input.active = 0.0;
-        const auto text = program->TextOrEmpty(selector.token);
-        const auto found = std::find(sw.labels.begin(), sw.labels.end(), text);
-        if (found != sw.labels.end()) {
-            input.active = double(found - sw.labels.begin());
-        }
-    }
-    input.hasCarry = sw.spaceSlot >= 0;
-    if (input.hasCarry) {
-        input.spaceDefault = scratch->defaultRoundTrip[size_t(sw.spaceSlot)];
-        input.spacePosed =
-            _RrReadFrameVersion(*program, *scratch, *sw.spaceRead);
-    }
-    for (size_t source = 0; source < sw.sourceSlots.size(); ++source) {
-        RigExecSpaceSwitchSourceT<RrMat4d> value;
-        const int slot = sw.sourceSlots[source];
-        value.world = slot < 0;
-        if (slot >= 0) {
-            value.defaultSpace = scratch->defaultRoundTrip[size_t(slot)];
-            value.posedSpace =
-                _RrReadFrameVersion(*program, *scratch, sw.sourceReads[source]);
-            if (source < rides.size() && rides[source]) {
-                value.posedSpace = value.posedSpace * moved;
-            }
-        }
-        input.sources.push_back(value);
-    }
-    RrMat4d output;
-    if (!RigExecRunSpaceSwitchArithmetic<RrSpaceSwitchMath>(record, input,
-                                                            &output)) {
-        return false;
-    }
-    // The compose publishes the frame of this matrix; read it back the same
-    // way, so the parent is the one a frame read of the pole would give.
-    const RrPointFrame frame = RrFrameFromMatrix(output);
-    return RrFrameUsable(frame) &&
-           RrPointsToMatrix(RrIdentityLandmarks(), frame.points, out);
-}
 
 RigExecIkFkMatchChannels
 _RrMatchChannelsOf(const RrProgram &program, const RrPoseScratch &scratch,
@@ -324,696 +70,934 @@ _RrMatchChannelsOf(const RrProgram &program, const RrPoseScratch &scratch,
     return channels;
 }
 
-// A switch's space match (spaceMatchKernel.h), with the inputs its compose
-// just ran on: the channels per source index that keep the control on the
-// frame it composed.
-static void
-_RrRunSpaceMatch(RrProgram *program, const RrPoseScratch &scratch,
-                 size_t switchIndex, size_t slot,
-                 const RigExecSpaceSwitchRecordT<RrVec3d> &record,
-                 const RigExecSpaceSwitchInputsT<RrMat4d> &input,
-                 const RrPointFrame &posed)
-{
-    RrStore &store = program->store;
-    if (switchIndex >= store.spaceMatchValid.size())
-        return;
-    store.spaceMatchValid[switchIndex] = 0;
-    const size_t spaces = input.sources.size();
-    RrMat4d target;
-    if (!spaces ||
-        !RrPointsToMatrix(RrIdentityLandmarks(), posed.points, &target)) {
-        return;
-    }
-    RigExecSpaceSwitchInputsT<RrMat4d> trial = input;
-    const auto run = [&](const double *avars, double active, double *out) {
-        std::copy(avars, avars + 16, &trial.avars._mtx[0][0]);
-        trial.active = active;
-        RrMat4d composed, matrix;
-        if (!RigExecRunSpaceSwitchArithmetic<RrSpaceSwitchMath>(record, trial,
-                                                                &composed)) {
-            return false;
-        }
-        const RrPointFrame frame = RrFrameFromMatrix(composed);
-        if (!RrFrameUsable(frame) ||
-            !RrPointsToMatrix(RrIdentityLandmarks(), frame.points, &matrix)) {
-            return false;
-        }
-        std::copy(&matrix._mtx[0][0], &matrix._mtx[0][0] + 16, out);
-        return true;
-    };
-    std::vector<double> &values = store.spaceMatchValues[switchIndex];
-    values.resize(spaces * RigExecSpaceMatchStride);
-    store.spaceMatchValid[switchIndex] =
-        RigExecSpaceMatchSolveAll(&target._mtx[0][0],
-                                  _RrMatchChannelsOf(*program, scratch, slot),
-                                  spaces, run, values.data())
-            ? 1
-            : 0;
-}
-
 } // namespace runtimePoseDetail
 
 bool
-RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
+RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
+              const RigExecTypeDesc &type, void *out, std::string *error)
 {
-    RrStore &store = program->store;
-    RrPoseScratch *scratch = _RrScratch(program);
-    if (step >= program->steps->size() || step >= store.stepOutputs.size()) {
-        if (error) {
-            *error = "pose step " + std::to_string(step) + " names no step";
-        }
+    const auto fail = [error](std::string why) {
+        if (error)
+            *error = std::move(why);
         return false;
-    }
-    const RigExecWireStep &wire = (*program->steps)[step];
-    RrStepOutput &output = store.stepOutputs[step];
-    (void)output;
-
-    switch (wire.kind) {
-    case RigExecWireStepKind::ComposeSubtree: {
-        if (wire.object < 0 ||
-            size_t(wire.object) >= program->poses->composeGroups.size()) {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no compose group";
-            }
-            return false;
-        }
-        const RigExecWireComposeGroup &group =
-            program->poses->composeGroups[size_t(wire.object)];
-        const RigExecWireSlotMeta &meta = *program->slotMeta;
-        const auto noSlot = [&]() {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no slot";
-            }
-            return false;
-        };
-        RrPoseHost host(program);
-        for (int i = group.begin; i < group.end; ++i) {
-            if (i < 0 || !host.inputs().composeSlotBounds(size_t(i))) {
-                return noSlot();
-            }
-            if (!host.inputs().isPoseSlot(size_t(i))) {
-                continue;
-            }
-            if (!host.inputs().providerActive(size_t(i))) {
-                eval::PublishComposedSlotUnavailable(host, size_t(i));
-                continue;
-            }
-            // One int per slot, and only on a rig that has a switch
-            // at all: the ordinary compose falls straight through.
-            const int switchIndex = program->spaceSwitchBySlot.empty()
-                                        ? -1
-                                        : program->spaceSwitchBySlot[size_t(i)];
-            if (scratch->posedAuthored[size_t(i)]) {
-                store.base[size_t(i)] =
-                    RrFrameFromMatrix(scratch->posedAuthoredM[size_t(i)]);
-            } else if (switchIndex < 0) {
-                if (size_t(i) >= meta.parent.size()) {
-                    return noSlot();
-                }
-                const int parent = host.inputs().parent(size_t(i));
-                RrMat4d parentPosed;
-                if (parent < 0) {
-                    parentPosed = _RrIdentity();
-                } else if (!host.inputs().posedMatrix(size_t(parent),
-                                                      &parentPosed)) {
-                    return noSlot();
-                }
-                std::array<RrVec3d, 4> points;
-                unsigned flags = 0;
-                if (!eval::ComposeSlotFrame(host, size_t(i), parentPosed,
-                                            &points, &flags)) {
-                    return noSlot();
-                }
-                host.state().writeBase(size_t(i), points, flags);
-            } else {
-                if (!_RrComposable(*program, *scratch, size_t(i)) ||
-                    size_t(i) >= scratch->defaultRoundTrip.size() ||
-                    size_t(i) >= meta.parent.size()) {
-                    return noSlot();
-                }
-                const RrMat4d avars =
-                    _RrComposeAvarsOf(*program, *scratch, size_t(i));
-                const int parent = meta.parent[size_t(i)];
-                // A switched slot composes against the SELECTED
-                // source's pair of spaces instead of its namespace
-                // parent's. Both halves come from one source, so at
-                // rest they cancel and no space moves the rig
-                // standing still. Every provider frame it reads is
-                // read at the version the program bound at Build,
-                // never as whatever the slot holds now: the step
-                // order does not place the namespace parent's
-                // posedM before this step.
-                const RigExecWireSpaceSwitch &sw =
-                    program->poses->spaceSwitches[size_t(switchIndex)];
-                bool readable =
-                    sw.sourceReads.size() == sw.sourceSlots.size() &&
-                    _RrVersionReadable(*program, *scratch, *sw.parentRead) &&
-                    _RrVersionReadable(*program, *scratch, *sw.spaceRead);
-                for (const RigExecWireFrameVersion &read : sw.sourceReads) {
-                    readable = readable &&
-                               _RrVersionReadable(*program, *scratch, read);
-                }
-                if (!readable ||
-                    (parent >= 0 &&
-                     size_t(parent) >= scratch->defaultRoundTrip.size())) {
-                    return noSlot();
-                }
-                // `local` is avars * default:space reached the long
-                // way round -- compose the UNSWITCHED world, then
-                // divide the namespace parent back out -- rather than
-                // as `avars * selfD`, which is the same quantity in
-                // exact arithmetic and NOT the same in doubles. The
-                // program can only reach it this way, the two answers
-                // are compared bit for bit, and 4e-15 of disagreement
-                // here propagates to every descendant. The parent is
-                // read before its own switch when that resolves in
-                // this switch's round or later.
-                const RrMat4d parentPosed =
-                    _RrReadFrameVersion(*program, *scratch, *sw.parentRead);
-                const RrMat4d parentDefault =
-                    parent >= 0 ? scratch->defaultRoundTrip[size_t(parent)]
-                                : _RrIdentity();
-                RigExecSpaceSwitchRecordT<RrVec3d> record;
-                record.filters.assign(sw.filters.begin(), sw.filters.end());
-                record.twistAxis =
-                    RrVec3d(sw.twistAxis[0], sw.twistAxis[1], sw.twistAxis[2]);
-                std::copy(sw.affectTranslation.begin(),
-                          sw.affectTranslation.end(),
-                          record.affectTranslation.begin());
-                std::copy(sw.affectRotation.begin(), sw.affectRotation.end(),
-                          record.affectRotation.begin());
-                std::copy(sw.affectScale.begin(), sw.affectScale.end(),
-                          record.affectScale.begin());
-                RigExecSpaceSwitchInputsT<RrMat4d> input;
-                input.avars = avars;
-                input.posedDefault = scratch->posedD[size_t(i)];
-                input.parentDefaultInverse = scratch->parentDinv[size_t(i)];
-                input.parentPosed = parentPosed;
-                input.parentDefault = parentDefault;
-                const auto selector =
-                    program->ReadSpaceSwitch(size_t(switchIndex));
-                input.active = selector.f64;
-                if (sw.tokenIndex) {
-                    input.active = 0.0;
-                    const auto text = program->TextOrEmpty(selector.token);
-                    const auto found =
-                        std::find(sw.labels.begin(), sw.labels.end(), text);
-                    if (found != sw.labels.end())
-                        input.active = double(found - sw.labels.begin());
-                }
-                input.hasCarry = sw.spaceSlot >= 0;
-                if (input.hasCarry) {
-                    input.spaceDefault =
-                        scratch->defaultRoundTrip[size_t(sw.spaceSlot)];
-                    input.spacePosed =
-                        _RrReadFrameVersion(*program, *scratch, *sw.spaceRead);
-                }
-                for (size_t source = 0; source < sw.sourceSlots.size();
-                     ++source) {
-                    RigExecSpaceSwitchSourceT<RrMat4d> value;
-                    const int slot = sw.sourceSlots[source];
-                    value.world = slot < 0;
-                    if (slot >= 0) {
-                        value.defaultSpace =
-                            scratch->defaultRoundTrip[size_t(slot)];
-                        value.posedSpace = _RrReadFrameVersion(
-                            *program, *scratch, sw.sourceReads[source]);
-                    }
-                    input.sources.push_back(value);
-                }
-                RrMat4d output;
-                if (!RigExecRunSpaceSwitchArithmetic<RrSpaceSwitchMath>(
-                        record, input, &output)) {
-                    if (error)
-                        *error = _RrStepHead(program, step) + " names no space";
-                    return false;
-                }
-                store.base[size_t(i)] = RrFrameFromMatrix(output);
-                _RrRunSpaceMatch(program, *scratch, size_t(switchIndex),
-                                 size_t(i), record, input,
-                                 store.base[size_t(i)]);
-            }
-            for (size_t acIndex = 0;
-                 acIndex < program->poses->autoClavicles.size(); ++acIndex) {
-                const auto &ac = program->poses->autoClavicles[acIndex];
-                if (ac.slot != i)
-                    continue;
-                std::array<RrMat4d, 13> matrices;
-                matrices[0] = _RrSpaceOfFrame(store.base[size_t(i)]);
-                bool usable =
-                    (store.base[size_t(i)].flags & RrPointFrameValid) &&
-                    !(store.base[size_t(i)].flags & RrPointFrameDegenerate);
-                for (size_t k = 1; k < 13; ++k) {
-                    const auto &read = ac.frames[k];
-                    if (read.slot < 0)
-                        continue;
-                    if (read.computation == 1)
-                        matrices[k] =
-                            scratch->defaultRoundTrip[size_t(read.slot)];
-                    else if (read.computation == 2)
-                        matrices[k] = _RrSpaceOfFrame(
-                            scratch->restFrames[size_t(read.slot)]);
-                    else if (!read.recompose.empty() || read.slot == i) {
-                        matrices[k] = matrices[0];
-                        for (int child : read.recompose) {
-                            if (scratch->posedAuthored[size_t(child)])
-                                matrices[k] =
-                                    scratch->posedAuthoredM[size_t(child)];
-                            else
-                                matrices[k] = RrRoundTrip(
-                                    _RrComposeAvarsOf(*program, *scratch,
-                                                      size_t(child)) *
-                                    scratch->posedD[size_t(child)] *
-                                    scratch->parentDinv[size_t(child)] *
-                                    (scratch->parentSpaceAuthored[size_t(child)]
-                                         ? scratch->parentSpaceM[size_t(child)]
-                                         : matrices[k]));
-                        }
-                    } else
-                        matrices[k] =
-                            _RrSpaceOfFrame(store.fin[size_t(read.slot)]);
-                    for (int row = 0; row < 4; ++row)
-                        for (int col = 0; col < 4; ++col)
-                            usable =
-                                usable && std::isfinite(matrices[k][row][col]);
-                }
-                if (!usable)
-                    continue;
-                RigExecAutoClavicleConstants constants;
-                std::copy(ac.basis.begin(), ac.basis.end(), constants.basis);
-                constants.ikValue = ac.ikValue;
-                constants.gain = ac.gain;
-                constants.kernel = ac.kernel;
-                constants.normalize = ac.normalize;
-                constants.swings = ac.swings;
-                constants.widths = ac.widths;
-                constants.gains = ac.gains;
-                constants.weights = ac.weights;
-                const auto scalar = [&](size_t k, double fallback) {
-                    const int index = ac.scalarIndices[k];
-                    if (index < 0)
-                        return fallback;
-                    const auto value = program->ReadRegistered(
-                        program->autoClavicleRead[acIndex][size_t(index)]);
-                    return value.tag == RrInputTag::Float ? double(value.f32)
-                                                          : value.f64;
-                };
-                RigExecAutoClavicleFrames frames;
-                frames.targetPosed = &matrices[0]._mtx[0][0];
-                frames.pivotPosed = &matrices[1]._mtx[0][0];
-                frames.anchorPosed = &matrices[2]._mtx[0][0];
-                frames.anchorDefault = &matrices[3]._mtx[0][0];
-                frames.fkPosed = &matrices[4]._mtx[0][0];
-                for (size_t k = 0; k < 3; ++k)
-                    frames.fkDefault[k] = &matrices[5 + k]._mtx[0][0];
-                if (ac.frames[8].slot >= 0)
-                    frames.ikTargetPosed = &matrices[8]._mtx[0][0];
-                if (ac.frames[9].slot >= 0)
-                    frames.polePosed = &matrices[9]._mtx[0][0];
-                frames.ikBlend = scalar(0, 1 - constants.ikValue);
-                frames.amount = scalar(1, 1);
-                frames.hasLimb = ac.hasLimb;
-                if (frames.hasLimb) {
-                    frames.limb.stretch = scalar(2, 1);
-                    frames.limb.pin = scalar(3, 0);
-                    frames.limb.upperScale = scalar(4, 1);
-                    frames.limb.lowerScale = scalar(5, 1);
-                    frames.limb.softDistance = scalar(6, 0);
-                    frames.limb.scaleCalibration = scalar(7, 0);
-                    frames.twistRadians = scalar(8, 0) * _RrPi / 180.0;
-                    frames.limbRestUpper = (matrices[11].ExtractTranslation() -
-                                            matrices[10].ExtractTranslation())
-                                               .GetLength() +
-                                           scalar(9, 0);
-                    frames.limbRestLower = (matrices[12].ExtractTranslation() -
-                                            matrices[11].ExtractTranslation())
-                                               .GetLength() +
-                                           scalar(10, 0);
-                }
-                double delta[3];
-                RigExecAutoClavicleShift(constants, frames, delta);
-                if (delta[0] != 0 || delta[1] != 0 || delta[2] != 0) {
-                    auto shifted = matrices[0];
-                    shifted.SetTranslateOnly(
-                        shifted.ExtractTranslation() +
-                        RrVec3d(delta[0], delta[1], delta[2]));
-                    store.base[size_t(i)] = RrFrameFromMatrix(shifted);
-                }
-            }
-            eval::PublishFinPosedM(host, size_t(i));
-        }
+    };
+    if (lookup.source == uint8_t(eval::OpLookupSource::ProviderInputs))
+        return RrFillProviderInputs(program, lookup, type, out, error);
+    if (lookup.source == uint8_t(eval::OpLookupSource::ProviderCandidates))
+        return RrProviderCandidates(program, lookup, type, out, error);
+    const auto *scratch =
+        static_cast<const RrPoseScratch *>(program->pose.get());
+    if (lookup.source == uint8_t(eval::OpLookupSource::RestFrame)) {
+        if (!scratch || type.size != sizeof(rigExecRig::PointFrame) ||
+            lookup.object >= scratch->restFrames.size())
+            return fail("slot " + std::to_string(lookup.object) +
+                        " has no rest frame");
+        const RrPointFrame &frame = scratch->restFrames[lookup.object];
+        auto &value = *static_cast<rigExecRig::PointFrame *>(out);
+        for (size_t i = 0; i < frame.points.size(); ++i)
+            value.points[i] = rigExecStd::Vec3d(
+                frame.points[i][0], frame.points[i][1], frame.points[i][2]);
+        value.flags = frame.flags;
         return true;
     }
-
-    case RigExecWireStepKind::Solve: {
-        return runtimePoseDetail::_RrRunSolveStep(program, step, error);
-    }
-
-    case RigExecWireStepKind::SolverCommit: {
-        return runtimePoseDetail::_RrRunSolverCommitStep(program, step, error);
-    }
-
-    case RigExecWireStepKind::Constraint: {
-        return runtimePoseDetail::_RrRunConstraintStep(program, step, error);
-    }
-
-    case RigExecWireStepKind::CommitDelta:
-    case RigExecWireStepKind::PropagateChunk:
-    case RigExecWireStepKind::CommitApply: {
-        RrPoseHost host(program, step);
-        eval::StepRef ref;
-        ref.kind = uint32_t(wire.kind);
-        ref.object = wire.object;
-        ref.part = wire.part;
-        ref.slot = step;
-        const eval::StepResult result = eval::RunValueStep(host, ref);
-        if (result.outcome == eval::Outcome::Applied) {
-            return true;
-        }
-        if (error) {
-            const char *what = " names no commit";
-            if (result.detail == eval::pose_detail::kPoseDetailNoChunk) {
-                what = " names no chunk";
-            } else if (result.detail == eval::pose_detail::kPoseDetailNoSlot) {
-                what = " names no slot";
-            } else if (result.detail ==
-                       eval::pose_detail::kPoseDetailNoVersion) {
-                what = " names no version";
-            }
-            *error = _RrStepHead(program, step) + what;
-        }
-        return false;
-    }
-
-    case RigExecWireStepKind::ProviderMatrix: {
-        if (wire.object < 0 ||
-            size_t(wire.object) >= store.finalMatrix.size() ||
-            size_t(wire.object) >= store.baseMatrix.size() ||
-            size_t(wire.object) >= store.finLast.size() ||
-            size_t(wire.object) >= store.baseLast.size() ||
-            size_t(wire.object) >= scratch->restFrames.size()) {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no slot";
-            }
-            return false;
-        }
-        const size_t slot = size_t(wire.object);
-        RrMat4d matrix = _RrIdentity();
-        if (wire.part) {
-            if (size_t(store.finLast[slot]) >= store.fin.size() ||
-                size_t(store.baseLast[slot]) >= store.base.size() ||
-                slot >= scratch->restPts.size()) {
-                if (error) {
-                    *error =
-                        _RrStepHead(program, step) + " names no fin version";
-                }
-                return false;
-            }
-            const RrPointFrame &frame = store.fin[size_t(store.finLast[slot])];
-            const bool converted =
-                RrFrameUsable(scratch->restFrames[slot]) &&
-                RrFrameUsable(frame) &&
-                RrPointsToMatrix(scratch->restPts[slot], frame.points, &matrix);
-            // Mirror the native provider admission: an unavailable final
-            // frame retains identity rather than entering the base fallback.
-            if (!converted && RrFrameUsable(frame)) {
-                const RrPointFrame &base =
-                    store.base[size_t(store.baseLast[slot])];
-                RrMat4d execM = _RrIdentity();
-                if (scratch->restFrames[slot].IsValid() && base.IsValid())
-                    RrPointsToMatrix(scratch->restPts[slot], base.points,
-                                     &execM);
-                matrix = execM;
-                const auto &jointSlots = program->slotMeta->jointSlots;
-                if (std::find(jointSlots.begin(), jointSlots.end(),
-                              int32_t(slot)) != jointSlots.end()) {
-                    RrMat4d delta = _RrIdentity();
-                    if (RrPointsToMatrix(base.points, frame.points, &delta))
-                        matrix = execM * delta;
-                }
-            }
-            store.finalMatrix[slot] = matrix;
-        } else {
-            if (size_t(store.baseLast[slot]) >= store.base.size() ||
-                slot >= scratch->restPts.size()) {
-                if (error) {
-                    *error =
-                        _RrStepHead(program, step) + " names no base version";
-                }
-                return false;
-            }
-            const RrPointFrame &frame =
-                store.base[size_t(store.baseLast[slot])];
-            if (RrFrameUsable(scratch->restFrames[slot]) &&
-                RrFrameUsable(frame)) {
-                RrPointsToMatrix(scratch->restPts[slot], frame.points, &matrix);
-            }
-            store.baseMatrix[slot] = matrix;
-        }
+    const RrStore &store = program->store;
+    if (lookup.source == uint8_t(eval::OpLookupSource::ProviderFrame)) {
+        const auto &refreshes = program->poses->providerRefreshes;
+        const uint64_t id =
+            lookup.object >= refreshes.size() ? UINT64_MAX
+            : lookup.read ? uint64_t(refreshes[lookup.object].currentValue)
+                          : uint64_t(refreshes[lookup.object].baseValue);
+        const auto *value = id < store.providerValues.size() &&
+                                    store.providerValues[id].initialized &&
+                                    !store.providerValues[id].blocked
+                                ? std::get_if<RigExecProviderPlainFrame>(
+                                      &store.providerValues[id].value)
+                                : nullptr;
+        if (!value || type.size != sizeof(RrPointFrame))
+            return fail(lookup.read ? "connected final pose input incomplete"
+                                    : "connected base pose input incomplete");
+        auto &frame = *static_cast<RrPointFrame *>(out);
+        for (size_t p = 0; p < 4; ++p)
+            for (size_t a = 0; a < 3; ++a)
+                frame.points[p][a] = value->points[p][a];
+        frame.flags = value->flags;
         return true;
     }
-
-    case RigExecWireStepKind::FrameMatrix: {
-        RrPoseHost host(program, step);
-        eval::StepRef ref;
-        ref.kind = uint32_t(wire.kind);
-        ref.object = wire.object;
-        ref.part = wire.part;
-        ref.slot = step;
-        const eval::StepResult result = eval::RunValueStep(host, ref);
-        if (result.outcome == eval::Outcome::Applied) {
-            return true;
-        }
-        if (error) {
-            const char *what = " names no frame record";
-            if (result.detail == eval::pose_detail::kPoseDetailNoCommit) {
-                what = " names no commit";
-            } else if (result.detail == eval::pose_detail::kPoseDetailNoSlot) {
-                what = " names no slot";
-            } else if (result.detail ==
-                       eval::pose_detail::kPoseDetailNoVersion) {
-                what = " names no fin version";
-            }
-            *error = _RrStepHead(program, step) + what;
-        }
-        return false;
-    }
-
-    case RigExecWireStepKind::SpaceCheckpoint: {
-        RrPoseHost host(program);
-        eval::StepRef ref;
-        ref.kind = uint32_t(wire.kind);
-        ref.object = wire.object;
-        ref.part = wire.part;
-        ref.slot = step;
-        return eval::RunValueStep(host, ref).outcome == eval::Outcome::Applied;
-    }
-    case RigExecWireStepKind::AvarInputs: {
-        RrPoseHost host(program);
-        eval::StepRef ref;
-        ref.kind = uint32_t(wire.kind);
-        ref.object = wire.object;
-        ref.part = wire.part;
-        ref.slot = step;
-        return eval::RunValueStep(host, ref).outcome == eval::Outcome::Applied;
-    }
-
-    case RigExecWireStepKind::ProviderRefresh:
-        return RrRunProviderRefresh(program, wire, error);
-
-    case RigExecWireStepKind::SpaceExpression:
-        return RrRunSpaceExpression(program, wire, error);
-
-    case RigExecWireStepKind::PoseInterpolator: {
-        if (wire.object < 0 ||
-            size_t(wire.object) >= program->poses->poseInterpolators.size() ||
-            size_t(wire.object) >= scratch->interpEnabled.size() ||
-            size_t(wire.object) >= scratch->interpSolvers.size() ||
-            size_t(wire.object) >= scratch->interpScratch.size()) {
-            if (error) {
-                *error =
-                    _RrStepHead(program, step) + " names no pose interpolator";
-            }
-            return false;
-        }
-        const RigExecWirePoseInterpolator &interp =
-            program->poses->poseInterpolators[size_t(wire.object)];
-        // Resolve current producer outputs in the consuming graph body.
-        const size_t object = size_t(wire.object);
-        scratch->interpEnabled[object] =
-            program->ReadInterp(object).boolean ? 1 : 0;
-        for (size_t v = 0; v < interp.valueInputs.size(); ++v) {
-            const RrInputValue value = program->ReadInterpValue(object, v);
-            scratch->interpValues[object][v] =
-                value.tag == RrInputTag::Float ? double(value.f32) : value.f64;
-        }
-        if (interp.network) {
-            scratch->interpMasks[object] =
-                double(program->ReadInterpMask(object).f32);
-        }
-        for (int slot = interp.weightBegin; slot < interp.weightEnd; ++slot) {
-            if (slot < 0 || size_t(slot) >= store.poseWeights.size()) {
-                if (error) {
-                    *error =
-                        _RrStepHead(program, step) + " names no pose weight";
-                }
-                return false;
-            }
-            store.poseWeights[size_t(slot)] = 0.0f;
-        }
-        if (!scratch->interpEnabled[size_t(wire.object)] ||
-            interp.poseSlots.empty()) {
-            return true;
-        }
-        // A NUMERIC driver reads dials, not a frame: it names no driver
-        // prim and takes no slot, and its rotation channel is the
-        // identity, so every frame lookup below is skipped. An ML mover
-        // may read both.
-        const bool numeric =
-            !interp.valueInputs.empty() && interp.driverSlot < 0;
-        if (!numeric &&
-            (interp.driverSlot < 0 ||
-             size_t(interp.driverSlot) >= store.finLast.size() ||
-             size_t(interp.driverSlot) >= scratch->restFrames.size() ||
-             size_t(interp.driverSlot) >= program->slotMeta->paths.size() ||
-             (interp.parentSlot >= 0 &&
-              (size_t(interp.parentSlot) >= store.finLast.size() ||
-               size_t(interp.parentSlot) >= scratch->restFrames.size())))) {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no driver slot";
-            }
-            return false;
-        }
-        const size_t d = size_t(numeric ? 0 : interp.driverSlot);
-        if (!numeric && size_t(store.finLast[d]) >= store.fin.size()) {
-            if (error) {
-                *error = _RrStepHead(program, step) + " names no fin version";
-            }
-            return false;
-        }
-        RigExecPoseInterpolatorInputsT<RrPointFrame> input;
-        input.enabled = true;
-        input.numeric = scratch->interpValues[object];
-        input.mask = scratch->interpMasks[object];
-        if (!numeric) {
-            input.driverFinal = &store.fin[size_t(store.finLast[d])];
-            input.driverRest = &scratch->restFrames[d];
-            if (interp.parentSlot >= 0) {
-                const size_t p = size_t(interp.parentSlot);
-                if (size_t(store.finLast[p]) >= store.fin.size()) {
-                    if (error)
-                        *error = _RrStepHead(program, step) +
-                                 " names no fin version";
-                    return false;
-                }
-                input.parentFinal = &store.fin[size_t(store.finLast[p])];
-                input.parentRest = &scratch->restFrames[p];
-            }
-            const size_t extras = interp.extraDriverSlots.size();
-            if (extras != interp.extraParentSlots.size() ||
-                (extras && !interp.method)) {
-                if (error)
-                    *error =
-                        _RrStepHead(program, step) + " names no driver slot";
-                return false;
-            }
-            input.extraDrivers.resize(extras);
-            for (size_t e = 0; e < extras; ++e) {
-                const int slots[2] = {interp.extraDriverSlots[e],
-                                      interp.extraParentSlots[e]};
-                const RrPointFrame *finals[2] = {nullptr, nullptr},
-                                   *rests[2] = {nullptr, nullptr};
-                for (int k = 0; k < 2; ++k) {
-                    if (slots[k] < 0 && k == 1)
-                        continue;
-                    if (slots[k] < 0 ||
-                        size_t(slots[k]) >= store.finLast.size() ||
-                        size_t(slots[k]) >= scratch->restFrames.size() ||
-                        size_t(store.finLast[size_t(slots[k])]) >=
-                            store.fin.size()) {
-                        if (error)
-                            *error = _RrStepHead(program, step) +
-                                     " names no driver slot";
-                        return false;
-                    }
-                    finals[k] =
-                        &store.fin[size_t(store.finLast[size_t(slots[k])])];
-                    rests[k] = &scratch->restFrames[size_t(slots[k])];
-                }
-                input.extraDrivers[e] = {finals[0], rests[0], finals[1],
-                                         rests[1]};
-            }
-        }
-        auto &solver = scratch->interpSolvers[object];
-        RigExecPoseInterpolatorRecordT<
-            decltype(solver), const RigExecRbfMethodTable &,
-            const RigExecMlNetwork *, const RigExecAnimatedMapsTable *>
-            record{solver,
-                   interp.enableTranslation,
-                   interp.allowNegativeWeights,
-                   interp.poseSlots.size(),
-                   bool(interp.method),
-                   scratch->interpMethods[object],
-                   bool(interp.network),
-                   &scratch->interpNetworks[object],
-                   bool(interp.maps),
-                   &scratch->interpMaps[object]};
-        std::vector<double> &interpScratch = scratch->interpScratch[object];
-        const auto status =
-            RigExecRunPoseInterpolatorArithmetic<RrPoseInterpolatorMath>(
-                record, input, &interpScratch);
-        if (status == RigExecPoseInterpolatorStatus::UnusableRotation) {
-            output.diagnostics.push_back(
-                "pose interpolator " + program->TextOrEmpty(interp.path) +
-                " has no usable frame for its driver " +
-                program->TextOrEmpty(program->slotMeta->paths[d]) +
-                " after the pose walk; its weights are zero this generation");
-            return true;
-        }
-        if (status == RigExecPoseInterpolatorStatus::UnusableTranslation) {
-            output.diagnostics.push_back(
-                "pose interpolator " + program->TextOrEmpty(interp.path) +
-                " could not measure its driver's translation; its weights are "
-                "zero this generation");
-            return true;
-        }
-        if (interpScratch.size() != interp.poseSlots.size()) {
-            output.diagnostics.push_back(
-                "pose interpolator " + program->TextOrEmpty(interp.path) +
-                " solved " + std::to_string(interpScratch.size()) +
-                " weights for " + std::to_string(interp.poseSlots.size()) +
-                " poses");
-            return true;
-        }
-        for (size_t i = 0; i < interp.poseSlots.size(); ++i) {
-            if (interp.poseSlots[i] < 0 ||
-                size_t(interp.poseSlots[i]) >= store.poseWeights.size()) {
-                if (error) {
-                    *error =
-                        _RrStepHead(program, step) + " names no pose weight";
-                }
-                return false;
-            }
-            store.poseWeights[size_t(interp.poseSlots[i])] =
-                static_cast<float>(interpScratch[i]);
-        }
-        // Open validated these against the weight range and the poses.
-        for (size_t j = 0; j < interp.primvarSlots.size(); ++j) {
-            store.poseWeights[size_t(interp.primvarSlots[j])] =
-                store.poseWeights[size_t(
-                    interp.poseSlots[size_t(interp.primvarSources[j])])];
-        }
+    if (lookup.source == uint8_t(eval::OpLookupSource::ProviderParentRaw)) {
+        if (type.size != sizeof(RrMat4d) ||
+            lookup.object >= program->ladderRead.size())
+            return fail("slot " + std::to_string(lookup.object) +
+                        " has no parent space");
+        const RrWireValue raw =
+            RrReadProviderRefreshBlocker(program, int(lookup.object));
+        std::memcpy(out, raw.matrix.data(), sizeof(RrMat4d));
         return true;
     }
-
-    default:
-        break;
+    if (!scratch ||
+        lookup.source != uint8_t(eval::OpLookupSource::CommitRecordGate) ||
+        lookup.object >= store.commits.size() ||
+        lookup.object >= scratch->recordAfter.size() ||
+        lookup.object >= scratch->recordEveryTarget.size() || lookup.read > 3)
+        return fail("commit " + std::to_string(lookup.object) +
+                    " holds no such record gate");
+    if (lookup.read == 3) {
+        const auto &commit = store.commits[lookup.object];
+        if (type.size != sizeof(uint8_t) || lookup.part < 0 ||
+            size_t(lookup.part) >= commit.present.size())
+            return fail("commit " + std::to_string(lookup.object) +
+                        " has no output " + std::to_string(lookup.part));
+        *static_cast<uint8_t *>(out) =
+            !commit.abandoned && commit.present[size_t(lookup.part)] ? 1 : 0;
+        return true;
     }
+    if (lookup.read == 0) {
+        if (!type.borrow)
+            return fail("a commit's presence is an array");
+        const std::vector<char> &present = store.commits[lookup.object].present;
+        type.borrow(out, present.data(), present.size());
+        return true;
+    }
+    if (type.size != sizeof(uint8_t))
+        return fail("a commit's record gate is a Bool");
+    const std::vector<char> &gates =
+        lookup.read == 1 ? scratch->recordAfter : scratch->recordEveryTarget;
+    *static_cast<uint8_t *>(out) = gates[lookup.object] != 0 ? 1 : 0;
+    return true;
+}
 
-    if (error) {
-        *error = _RrStepHead(program, step) + " not implemented yet";
+namespace {
+
+template <class T, class At>
+bool
+_RrFillList(const RigExecTypeDesc &type, void *value, size_t count, At &&at)
+{
+    if (!type.resize || !type.data)
+        return false;
+    type.resize(value, count);
+    T *out = static_cast<T *>(type.data(value));
+    for (size_t k = 0; k < count; ++k)
+        out[k] = at(k);
+    return true;
+}
+
+bool
+_RrFillMatrices(const RigExecTypeDesc &type, void *value,
+                const std::vector<int32_t> &slots,
+                const std::vector<RrMat4d> &table)
+{
+    if (!type.resize || !type.data)
+        return false;
+    type.resize(value, slots.size());
+    auto *out = static_cast<double *>(type.data(value));
+    for (size_t k = 0; k < slots.size(); ++k)
+        std::memcpy(out + 16 * k, table[size_t(slots[k])]._mtx,
+                    16 * sizeof(double));
+    return true;
+}
+
+// Input \p read of space checkpoint \p object's SpaceCheckpoint node, from
+// the slots it recomposes (RigExecBakedLookUpCompose's twin).
+bool
+_RrLookUpCheckpoint(const RrProgram *program, uint32_t object,
+                    eval::OpCheckpointRead read, const RigExecTypeDesc &type,
+                    void *value)
+{
+    using R = eval::OpCheckpointRead;
+    const auto &context = program->poses->spaceCheckpoints[object];
+    const std::vector<int32_t> &slots = context.recompose;
+    const RrStore &store = program->store;
+    const RrPoseScratch &scratch =
+        *_RrScratch(const_cast<RrProgram *>(program));
+    const auto flags = [&](const std::vector<char> &table) {
+        return _RrFillList<uint8_t>(type, value, slots.size(), [&](size_t k) {
+            return uint8_t(table[size_t(slots[k])] != 0);
+        });
+    };
+    switch (read) {
+    case R::Avars:
+        return _RrFillList<double>(
+            type, value, slots.size() * kRigExecSlotAvars, [&](size_t k) {
+                return store.avars[size_t(slots[k / kRigExecSlotAvars]) *
+                                       kRigExecSlotAvars +
+                                   k % kRigExecSlotAvars];
+            });
+    case R::RotOrders:
+        return _RrFillList<uint32_t>(type, value, slots.size(), [&](size_t k) {
+            const std::string order =
+                program->TextOrEmpty(scratch.rotOrder[size_t(slots[k])]);
+            return RigExecRotOrderCode(order.data(), order.size());
+        });
+    case R::RotationSigns:
+        return _RrFillList<uint32_t>(type, value, slots.size(), [&](size_t k) {
+            const size_t s = size_t(slots[k]);
+            return s < scratch.rotationSign.size()
+                       ? uint32_t(scratch.rotationSign[s])
+                       : 0u;
+        });
+    case R::PosedDefault:
+        return _RrFillMatrices(type, value, slots, scratch.posedD);
+    case R::ParentDefaultInverse:
+        return _RrFillMatrices(type, value, slots, scratch.parentDinv);
+    case R::ParentExpression:
+        return _RrFillMatrices(type, value, slots, scratch.parentSpaceM);
+    case R::ParentExpressionAuthored:
+        return flags(scratch.parentSpaceAuthored);
+    case R::PosedAuthored:
+        return flags(scratch.posedAuthored);
+    case R::PosedAuthoredMatrix:
+        return _RrFillMatrices(type, value, slots, scratch.posedAuthoredM);
+    case R::Anchor:
+        if (context.anchor < 0 || type.size != 16 * sizeof(double))
+            return false;
+        std::memcpy(value, store.posedM[size_t(context.anchor)]._mtx,
+                    16 * sizeof(double));
+        return true;
     }
     return false;
+}
+
+// Input \p read of pose interpolator \p object's PoseInterpolator node
+// (RigExecBakedLookUpCompose's twin).
+bool
+_RrLookUpInterpolator(const RrProgram *program, uint32_t object,
+                      eval::OpInterpolatorRead read,
+                      const RigExecTypeDesc &type, void *value)
+{
+    using R = eval::OpInterpolatorRead;
+    using Frame = rigExecRig::PointFrame;
+    static_assert(sizeof(Frame) == sizeof(RrPointFrame),
+                  "op and runtime frames share a layout");
+    const auto &interp = program->poses->poseInterpolators[object];
+    const RrStore &store = program->store;
+    const RrPoseScratch &scratch =
+        *_RrScratch(const_cast<RrProgram *>(program));
+    const auto put = [&](int slot, bool final, Frame *out) {
+        if (slot < 0 || size_t(slot) >= store.finLast.size() ||
+            size_t(store.finLast[size_t(slot)]) >= store.fin.size() ||
+            size_t(slot) >= scratch.restFrames.size())
+            return false;
+        std::memcpy(out,
+                    final ? &store.fin[size_t(store.finLast[size_t(slot)])]
+                          : &scratch.restFrames[size_t(slot)],
+                    sizeof(Frame));
+        return true;
+    };
+    const auto frame = [&](int slot, bool final) {
+        return type.size == sizeof(Frame) &&
+               put(slot, final, static_cast<Frame *>(value));
+    };
+    const auto frames = [&](bool parents, bool final) {
+        if (!type.resize || !type.data)
+            return false;
+        size_t count = 0;
+        for (size_t e = 0; e < interp.extraDriverSlots.size(); ++e)
+            count += !parents || interp.extraParentSlots[e] >= 0;
+        type.resize(value, count);
+        Frame *out = static_cast<Frame *>(type.data(value));
+        for (size_t e = 0, k = 0; e < interp.extraDriverSlots.size(); ++e) {
+            const int slot = parents ? interp.extraParentSlots[e]
+                                     : interp.extraDriverSlots[e];
+            if (slot >= 0 && !put(slot, final, &out[k++]))
+                return false;
+        }
+        return true;
+    };
+    switch (read) {
+    case R::Enabled:
+        if (type.size != sizeof(uint8_t))
+            return false;
+        *static_cast<uint8_t *>(value) =
+            program->ReadInterp(object).boolean ? 1 : 0;
+        return true;
+    case R::Numeric:
+        return _RrFillList<double>(
+            type, value, interp.valueInputs.size(), [&](size_t v) {
+                const RrInputValue read = program->ReadInterpValue(object, v);
+                return read.tag == RrInputTag::Float ? double(read.f32)
+                                                     : read.f64;
+            });
+    case R::Mask:
+        if (type.size != sizeof(double))
+            return false;
+        *static_cast<double *>(value) =
+            double(program->ReadInterpMask(object).f32);
+        return true;
+    case R::DriverFinal:
+        return frame(interp.driverSlot, true);
+    case R::DriverRest:
+        return frame(interp.driverSlot, false);
+    case R::ParentFinal:
+        return frame(interp.parentSlot, true);
+    case R::ParentRest:
+        return frame(interp.parentSlot, false);
+    case R::ExtraFinals:
+        return frames(false, true);
+    case R::ExtraRests:
+        return frames(false, false);
+    case R::ExtraParentFinals:
+        return frames(true, true);
+    case R::ExtraParentRests:
+        return frames(true, false);
+    }
+    return false;
+}
+
+bool
+_RrPutMatrix(const RigExecTypeDesc &type, void *value, const RrMat4d &matrix)
+{
+    if (type.size != 16 * sizeof(double))
+        return false;
+    std::memcpy(value, matrix._mtx, 16 * sizeof(double));
+    return true;
+}
+
+// Input \p read of auto clavicle \p object's node: a frame outside its
+// subtree or a scalar (LookUpClavicle's twin, bakedComposeOps.cpp).
+bool
+_RrLookUpClavicle(const RrProgram *program, uint32_t object, uint8_t read,
+                  const RigExecTypeDesc &type, void *value)
+{
+    using R = eval::OpClavicleRead;
+    const auto &ac = program->poses->autoClavicles[object];
+    if (read >= uint8_t(R::ScalarBegin)) {
+        const size_t k = size_t(read - uint8_t(R::ScalarBegin));
+        if (k >= ac.scalarIndices.size() || type.size != sizeof(double))
+            return false;
+        const int j = ac.scalarIndices[k];
+        double scalar = k == 0 ? 1.0 - ac.ikValue : 1.0;
+        if (j >= 0) {
+            if (object >= program->autoClavicleRead.size() ||
+                size_t(j) >= program->autoClavicleRead[object].size())
+                return false;
+            const RrInputValue v = program->ReadRegistered(
+                program->autoClavicleRead[object][size_t(j)]);
+            scalar = v.tag == RrInputTag::Float ? double(v.f32) : v.f64;
+        } else if (k > 1) {
+            return false;
+        }
+        *static_cast<double *>(value) = scalar;
+        return true;
+    }
+    const RrStore &store = program->store;
+    const RrPoseScratch &scratch =
+        *_RrScratch(const_cast<RrProgram *>(program));
+    const auto matrix = [&](size_t k, double *out) {
+        if (k >= ac.frames.size() || ac.frames[k].slot < 0)
+            return false;
+        const auto &frame = ac.frames[k];
+        const size_t slot = size_t(frame.slot);
+        RrMat4d m;
+        if (frame.computation == 1) {
+            if (slot >= scratch.defaultRoundTrip.size())
+                return false;
+            m = scratch.defaultRoundTrip[slot];
+        } else {
+            const std::vector<RrPointFrame> &table =
+                frame.computation == 2 ? scratch.restFrames : store.fin;
+            if (slot >= table.size())
+                return false;
+            m = eval::pose_ops::SpaceOfFrame<RrPoseMath>(table[slot].points,
+                                                         table[slot].flags);
+        }
+        std::memcpy(out, &m[0][0], 16 * sizeof(double));
+        return true;
+    };
+    if (read == uint8_t(R::FkDefaults) || read == uint8_t(R::LimbRests)) {
+        if (!type.resize || !type.data)
+            return false;
+        type.resize(value, 3);
+        auto *out = static_cast<double *>(type.data(value));
+        for (size_t e = 0; e < 3; ++e)
+            if (!matrix(size_t(read) + e, out + 16 * e))
+                return false;
+        return true;
+    }
+    return type.size == 16 * sizeof(double) &&
+           matrix(size_t(read), static_cast<double *>(value));
+}
+
+// A compose group node's output into its slot's first pose and posed
+// matrix, or its switch's match values and status (StoreComposeGroup's
+// twin, bakedComposeOps.cpp).
+bool
+_RrStoreComposeGroup(RrProgram *program, size_t step,
+                     const eval::OpHostOutput &output, const void *value,
+                     std::string *error)
+{
+    using T = eval::OpOutputTarget;
+    RrStore &store = program->store;
+    const T target = T(output.target);
+    const auto fail = [&](const std::string &why) {
+        if (error)
+            *error = "op nodes: " + why;
+        return false;
+    };
+    if (target == T::SpaceMatchValues || target == T::SpaceMatchStatus) {
+        const size_t sw = output.object;
+        if (sw >= store.spaceMatchValid.size() ||
+            sw >= store.spaceMatchValues.size() ||
+            sw >= program->poses->spaceSwitches.size())
+            return fail("no space switch " + std::to_string(sw));
+        if (target == T::SpaceMatchValues) {
+            const auto &values =
+                *static_cast<const rigExecStd::RigExecArray<double> *>(value);
+            store.spaceMatchValues[sw].assign(values.Data(),
+                                              values.Data() + values.Size());
+            return true;
+        }
+        const int slot = program->poses->spaceSwitches[sw].slot;
+        const RrPoseScratch &scratch = *_RrScratch(program);
+        const bool authored = slot >= 0 &&
+                              size_t(slot) < scratch.posedAuthored.size() &&
+                              scratch.posedAuthored[size_t(slot)];
+        const uint32_t status = *static_cast<const uint32_t *>(value);
+        store.spaceMatchValid[sw] =
+            status == uint32_t(RigExecSpaceMatchStatus::Matched) && !authored
+                ? 1
+                : 0;
+        if (status == uint32_t(RigExecSpaceMatchStatus::NotFinite)) {
+            if (step >= store.stepOutputs.size() || slot < 0 ||
+                size_t(slot) >= program->slotMeta->paths.size())
+                return fail("no step to report space switch " +
+                            std::to_string(sw));
+            store.stepOutputs[step].diagnostics.push_back(
+                program->TextOrEmpty(program->slotMeta->paths[size_t(slot)]) +
+                kRigExecSpaceMatchNotFinite);
+        }
+        return true;
+    }
+    const size_t slot = output.object;
+    if (slot >= store.base.size() || slot >= store.fin.size() ||
+        slot >= store.posedM.size())
+        return fail("no slot " + std::to_string(slot) + " to compose");
+    if (target == T::ComposePosed) {
+        std::memcpy(&store.posedM[slot][0][0], value, 16 * sizeof(double));
+        return true;
+    }
+    static_assert(sizeof(rigExecRig::PointFrame) == sizeof(RrPointFrame),
+                  "a rig frame is a runtime frame");
+    std::memcpy(&store.base[slot], value, sizeof(RrPointFrame));
+    store.fin[slot] = store.base[slot];
+    return true;
+}
+
+// Input \p read of compose group \p object's RestCompose node
+// (RigExecBakedLookUpCompose's twin).
+bool
+_RrLookUpRest(const RrProgram *program, uint32_t object, eval::OpRestRead read,
+              const RigExecTypeDesc &type, void *value)
+{
+    using R = eval::OpRestRead;
+    const RrPoseInputs inputs(program);
+    const size_t slot = size_t(program->poses->composeGroups[object].begin);
+    switch (read) {
+    case R::RestAvars:
+        return _RrFillList<double>(
+            type, value, 6, [&](size_t k) { return inputs.restAvar(slot, k); });
+    case R::RestSpace:
+        return _RrPutMatrix(
+            type, value, inputs.ladderSpace(slot, eval::kPoseLadderRestSpace));
+    case R::Intervening:
+        return _RrPutMatrix(type, value, inputs.interveningSpace(slot));
+    case R::ParentRest: {
+        const int parent = inputs.parent(slot);
+        RrMat4d rest;
+        return parent >= 0 && inputs.restRoundTrip(size_t(parent), &rest) &&
+               _RrPutMatrix(type, value, rest);
+    }
+    }
+    return false;
+}
+
+// Output \p port of compose group \p object's RestCompose node into its
+// slot's rest tables (RigExecBakedStoreCompose's twin).
+bool
+_RrStoreRest(RrProgram *program, uint32_t object, uint32_t port,
+             const void *value)
+{
+    using P = eval::OpRestOutput;
+    RrPoseScratch &scratch = *_RrScratch(program);
+    const size_t slot = size_t(program->poses->composeGroups[object].begin);
+    switch (P(port)) {
+    case P::RestMatrix: {
+        RrMat4d &restM = scratch.restM[slot];
+        std::memcpy(restM._mtx, value, 16 * sizeof(double));
+        if (std::memcmp(restM._mtx, scratch.lastRestM[slot]._mtx,
+                        16 * sizeof(double)) != 0) {
+            scratch.lastRestM[slot] = restM;
+            program->store.restChanged[slot] = 1;
+        }
+        return true;
+    }
+    case P::Rest: {
+        const auto &frame = *static_cast<const rigExecRig::PointFrame *>(value);
+        scratch.restPts[slot] = frame.points;
+        scratch.restFrames[slot] =
+            RrPoseMath::MakeFrame(frame.points, frame.flags);
+        return true;
+    }
+    case P::RoundTrip:
+        std::memcpy(scratch.restRoundTrip[slot]._mtx, value,
+                    16 * sizeof(double));
+        return true;
+    }
+    return false;
+}
+
+// Input \p read of compose group \p object's LadderCompose node
+// (RigExecBakedLookUpCompose's twin).
+bool
+_RrLookUpLadder(const RrProgram *program, uint32_t object,
+                eval::OpLadderRead read, const RigExecTypeDesc &type,
+                void *value)
+{
+    using R = eval::OpLadderRead;
+    const RrPoseInputs inputs(program);
+    const size_t slot = size_t(program->poses->composeGroups[object].begin);
+    const int parent = inputs.parent(slot);
+    RrMat4d matrix;
+    switch (read) {
+    case R::Spaces: {
+        if (!type.resize || !type.data)
+            return false;
+        type.resize(value, 6);
+        auto *out = static_cast<double *>(type.data(value));
+        for (int c = 0; c < 6; ++c)
+            std::memcpy(out + 16 * c, inputs.ladderSpace(slot, c + 1)._mtx,
+                        16 * sizeof(double));
+        return true;
+    }
+    case R::Authored:
+        return _RrFillList<uint8_t>(type, value, 6, [&](size_t k) {
+            const int channel = int(k) + 1;
+            const bool defaultChannel =
+                channel == eval::kPoseLadderDefaultSpace ||
+                channel == eval::kPoseLadderParentDefaultSpace ||
+                channel == eval::kPoseLadderAvarDefaultSpace ||
+                channel == eval::kPoseLadderPosedDefaultSpace;
+            return uint8_t(
+                (defaultChannel && inputs.ladderChannelReady(slot, channel)) ||
+                inputs.ladderAuthoritative(slot, channel));
+        });
+    case R::ParentSpaceLeaf:
+        return _RrPutMatrix(type, value, inputs.ladderParentSpaceLeaf(slot));
+    case R::RotationSign: {
+        if (type.size != 3 * sizeof(double))
+            return false;
+        const RrVec3d sign = inputs.ladderRotationSign(slot);
+        const double v[3] = {sign[0], sign[1], sign[2]};
+        std::memcpy(value, v, sizeof(v));
+        return true;
+    }
+    case R::DefaultAvars:
+        return _RrFillList<double>(type, value, 6, [&](size_t k) {
+            return inputs.defaultAvar(slot, k);
+        });
+    case R::OwnRest:
+        return inputs.restRoundTrip(slot, &matrix) &&
+               _RrPutMatrix(type, value, matrix);
+    case R::ParentRest:
+        return parent >= 0 && inputs.restRoundTrip(size_t(parent), &matrix) &&
+               _RrPutMatrix(type, value, matrix);
+    case R::ParentDefault:
+        return parent >= 0 &&
+               inputs.defaultRoundTrip(size_t(parent), &matrix) &&
+               _RrPutMatrix(type, value, matrix);
+    }
+    return false;
+}
+
+// Output \p port of compose group \p object's LadderCompose node into its
+// slot's ladder tables (RigExecBakedStoreCompose's twin). The last port
+// takes the rotation order, publishes the live ladder echo and marks a
+// moved ladder.
+bool
+_RrStoreLadder(RrProgram *program, uint32_t object, uint32_t port,
+               const void *value)
+{
+    using P = eval::OpLadderOutput;
+    RrPoseScratch &s = *_RrScratch(program);
+    const size_t slot = size_t(program->poses->composeGroups[object].begin);
+    const auto matrix = [&](std::vector<RrMat4d> &table) {
+        std::memcpy(table[slot]._mtx, value, 16 * sizeof(double));
+        return true;
+    };
+    const auto flag = [&](std::vector<char> &table) {
+        table[slot] = *static_cast<const uint8_t *>(value) ? 1 : 0;
+        return true;
+    };
+    switch (P(port)) {
+    case P::SelfDefault:
+        return matrix(s.selfD);
+    case P::ParentDefaultInverse:
+        return matrix(s.parentDinv);
+    case P::DefaultRoundTrip:
+        return matrix(s.defaultRoundTrip);
+    case P::PosedDefault:
+        return matrix(s.posedD);
+    case P::ParentSpace:
+        return matrix(s.parentSpaceM);
+    case P::PosedAuthoredMatrix:
+        return matrix(s.posedAuthoredM);
+    case P::PosedAuthored:
+        return flag(s.posedAuthored);
+    case P::ParentSpaceAuthored:
+        return flag(s.parentSpaceAuthored);
+    case P::RotationSign:
+        break;
+    default:
+        return false;
+    }
+    s.rotationSign[slot] =
+        static_cast<unsigned char>(*static_cast<const uint32_t *>(value));
+    const RigExecWireSlotMeta &meta = *program->slotMeta;
+    if (!meta.providerActive.empty() && !meta.providerActive[slot]) {
+        s.rotOrder[slot] = 0;
+        return true;
+    }
+    s.rotOrder[slot] = program->ReadLadder(slot, RrLadderRotationOrder).token;
+    RrStore &store = program->store;
+    if (slot < store.ladders.size()) {
+        RrLadderLive &live = store.ladders[slot];
+        live.restSpace = program->ReadLadder(slot, RrLadderRestSpace).matrix;
+        live.defaultSpace =
+            program->ReadLadder(slot, RrLadderDefaultSpace).matrix;
+        live.posedSpace = program->ReadLadder(slot, RrLadderPosedSpace).matrix;
+        for (int k = 0; k < 6; ++k) {
+            live.restAvars[size_t(k)] =
+                program->ReadLadder(slot, RrLadderRestAvar0 + k).f64;
+            live.defaultAvars[size_t(k)] =
+                program->ReadLadder(slot, RrLadderDefaultAvar0 + k).f64;
+        }
+        live.rotationOrder = s.rotOrder[slot];
+    }
+    const auto same = [](const RrMat4d &a, const RrMat4d &b) {
+        return std::memcmp(a._mtx, b._mtx, 16 * sizeof(double)) == 0;
+    };
+    if (same(s.selfD[slot], s.lastSelfD[slot]) &&
+        same(s.parentDinv[slot], s.lastParentDinv[slot]) &&
+        s.posedAuthored[slot] == s.lastPosedAuthored[slot] &&
+        same(s.posedAuthoredM[slot], s.lastPosedAuthoredM[slot]) &&
+        s.rotOrder[slot] == s.lastRotOrder[slot] &&
+        same(s.posedD[slot], s.lastPosedD[slot]) &&
+        same(s.parentSpaceM[slot], s.lastParentSpaceM[slot]) &&
+        s.parentSpaceAuthored[slot] == s.lastParentSpaceAuthored[slot] &&
+        s.rotationSign[slot] == s.lastRotationSign[slot])
+        return true;
+    s.lastSelfD[slot] = s.selfD[slot];
+    s.lastParentDinv[slot] = s.parentDinv[slot];
+    s.lastPosedAuthored[slot] = s.posedAuthored[slot];
+    s.lastPosedAuthoredM[slot] = s.posedAuthoredM[slot];
+    s.lastRotOrder[slot] = s.rotOrder[slot];
+    s.lastPosedD[slot] = s.posedD[slot];
+    s.lastParentSpaceM[slot] = s.parentSpaceM[slot];
+    s.lastParentSpaceAuthored[slot] = s.parentSpaceAuthored[slot];
+    s.lastRotationSign[slot] = s.rotationSign[slot];
+    store.ladderChanged[slot] = 1;
+    return true;
+}
+
+} // namespace
+
+bool
+RrLookUpCompose(const RrProgram *program, const eval::OpLookup &lookup,
+                const RigExecTypeDesc &type, void *value, std::string *error)
+{
+    using L = eval::OpLookupSource;
+    const auto missing = [&](const char *what) {
+        if (error)
+            *error = "op nodes: " + std::string(what) + " " +
+                     std::to_string(lookup.object) + " has no input " +
+                     std::to_string(lookup.read);
+        return false;
+    };
+    if (lookup.source == uint8_t(L::ComposeInputs))
+        return eval::compose_lookups::LookUpComposeInput<RrPoseMath>(
+                   RrPoseInputs(program), lookup.object, lookup.read, type,
+                   value) ||
+               missing("slot");
+    if (lookup.source == uint8_t(L::SwitchInputs))
+        return (lookup.object < program->poses->spaceSwitches.size() &&
+                eval::compose_lookups::LookUpSwitchInput<RrPoseMath>(
+                    RrPoseInputs(program), lookup.object, lookup.read, type,
+                    value)) ||
+               missing("space switch");
+    if (lookup.source == uint8_t(L::ClavicleInputs))
+        return (lookup.object < program->poses->autoClavicles.size() &&
+                _RrLookUpClavicle(program, lookup.object, lookup.read, type,
+                                  value)) ||
+               missing("auto clavicle");
+    const RrInputState &state = program->inputState;
+    if (lookup.source == uint8_t(eval::OpLookupSource::LadderInputs)) {
+        if (lookup.object < program->poses->composeGroups.size() &&
+            _RrLookUpLadder(program, lookup.object,
+                            eval::OpLadderRead(lookup.read), type, value))
+            return true;
+        if (error)
+            *error = "op nodes: compose group " +
+                     std::to_string(lookup.object) + " has no ladder input " +
+                     std::to_string(lookup.read);
+        return false;
+    }
+    if (lookup.source == uint8_t(eval::OpLookupSource::RestInputs)) {
+        if (lookup.object < program->poses->composeGroups.size() &&
+            _RrLookUpRest(program, lookup.object, eval::OpRestRead(lookup.read),
+                          type, value))
+            return true;
+        if (error)
+            *error = "op nodes: compose group " +
+                     std::to_string(lookup.object) + " has no rest input " +
+                     std::to_string(lookup.read);
+        return false;
+    }
+    if (lookup.source == uint8_t(eval::OpLookupSource::InterpolatorInputs)) {
+        if (lookup.object < program->poses->poseInterpolators.size() &&
+            _RrLookUpInterpolator(program, lookup.object,
+                                  eval::OpInterpolatorRead(lookup.read), type,
+                                  value))
+            return true;
+        if (error)
+            *error = "op nodes: pose interpolator " +
+                     std::to_string(lookup.object) + " has no input " +
+                     std::to_string(lookup.read);
+        return false;
+    }
+    if (lookup.source == uint8_t(eval::OpLookupSource::CheckpointInputs)) {
+        if (lookup.object < program->poses->spaceCheckpoints.size() &&
+            _RrLookUpCheckpoint(program, lookup.object,
+                                eval::OpCheckpointRead(lookup.read), type,
+                                value))
+            return true;
+        if (error)
+            *error = "op nodes: space checkpoint " +
+                     std::to_string(lookup.object) + " has no input " +
+                     std::to_string(lookup.read);
+        return false;
+    }
+    if (lookup.source != uint8_t(eval::OpLookupSource::AvarBindings) ||
+        !type.resize || !type.data) {
+        if (error)
+            *error = "op nodes: no avar bindings of slot " +
+                     std::to_string(lookup.object);
+        return false;
+    }
+    const auto range = RrAvarReadRange(state, int64_t(lookup.object));
+    type.resize(value, size_t(range.second - range.first));
+    auto *out = static_cast<double *>(type.data(value));
+    for (uint32_t i = range.first; i < range.second; ++i)
+        out[i - range.first] =
+            program->ReadRegistered(int32_t(state.avarReads[i])).f64;
+    return true;
+}
+
+bool
+RrStoreCompose(RrProgram *program, size_t step,
+               const eval::OpHostOutput &output, const void *value,
+               std::string *error)
+{
+    if (output.target >= uint8_t(eval::OpOutputTarget::ComposeBase) &&
+        output.target <= uint8_t(eval::OpOutputTarget::SpaceMatchStatus))
+        return _RrStoreComposeGroup(program, step, output, value, error);
+    if (output.target == uint8_t(eval::OpOutputTarget::InterpolatorStatus)) {
+        const auto &interps = program->poses->poseInterpolators;
+        if (output.object >= interps.size() ||
+            step >= program->store.stepOutputs.size()) {
+            if (error)
+                *error = "op nodes: no pose interpolator " +
+                         std::to_string(output.object) + " status to store";
+            return false;
+        }
+        const auto &interp = interps[output.object];
+        const std::string line = RigExecPoseInterpolatorStatusLine(
+            RigExecPoseInterpolatorStatus(
+                *static_cast<const uint32_t *>(value)),
+            program->TextOrEmpty(interp.path), [&] {
+                return interp.driverSlot >= 0
+                           ? program->TextOrEmpty(
+                                 program->slotMeta
+                                     ->paths[size_t(interp.driverSlot)])
+                           : std::string();
+            });
+        if (!line.empty())
+            program->store.stepOutputs[step].diagnostics.push_back(line);
+        return true;
+    }
+    if (output.target == uint8_t(eval::OpOutputTarget::Ladder)) {
+        if (output.object < program->poses->composeGroups.size() &&
+            _RrStoreLadder(program, output.object, output.port, value))
+            return true;
+        if (error)
+            *error = "op nodes: compose group " +
+                     std::to_string(output.object) + " stores no ladder port " +
+                     std::to_string(output.port);
+        return false;
+    }
+    if (output.target == uint8_t(eval::OpOutputTarget::Rest)) {
+        if (output.object < program->poses->composeGroups.size() &&
+            _RrStoreRest(program, output.object, output.port, value))
+            return true;
+        if (error)
+            *error = "op nodes: compose group " +
+                     std::to_string(output.object) + " stores no rest port " +
+                     std::to_string(output.port);
+        return false;
+    }
+    if (output.target == uint8_t(eval::OpOutputTarget::PoseWeights)) {
+        const auto &weights =
+            *static_cast<const rigExecStd::RigExecArray<float> *>(value);
+        const auto &interps = program->poses->poseInterpolators;
+        std::vector<float> &poseWeights = program->store.poseWeights;
+        if (output.object >= interps.size() ||
+            weights.Size() != interps[output.object].poseSlots.size()) {
+            if (error)
+                *error = "op nodes: pose interpolator " +
+                         std::to_string(output.object) + " stores no " +
+                         std::to_string(weights.Size()) + " weights";
+            return false;
+        }
+        const auto &interp = interps[output.object];
+        // Open validated the pose and primvar slots against the range.
+        for (int slot = interp.weightBegin; slot < interp.weightEnd; ++slot)
+            poseWeights[size_t(slot)] = 0.0f;
+        for (size_t i = 0; i < interp.poseSlots.size(); ++i)
+            poseWeights[size_t(interp.poseSlots[i])] = weights[i];
+        for (size_t j = 0; j < interp.primvarSlots.size(); ++j)
+            poseWeights[size_t(interp.primvarSlots[j])] = poseWeights[size_t(
+                interp.poseSlots[size_t(interp.primvarSources[j])])];
+        return true;
+    }
+    if (output.target == uint8_t(eval::OpOutputTarget::SwitchFrame)) {
+        if (output.object >= program->store.switchFrames.size()) {
+            if (error)
+                *error = "op nodes: no space checkpoint " +
+                         std::to_string(output.object);
+            return false;
+        }
+        std::memcpy(program->store.switchFrames[output.object]._mtx, value,
+                    16 * sizeof(double));
+        return true;
+    }
+    const RrInputState &state = program->inputState;
+    const auto &values =
+        *static_cast<const rigExecStd::RigExecArray<double> *>(value);
+    const auto range = RrAvarReadRange(state, int64_t(output.object));
+    const unsigned channels = RigExecBoundAvarChannels(
+        size_t(range.second - range.first), [&](size_t k) {
+            return program->registeredReads[state.avarReads[range.first + k]]
+                .avar;
+        });
+    std::vector<double> &avars = program->store.avars;
+    const size_t first = size_t(output.object) * kRigExecSlotAvars;
+    if (output.target != uint8_t(eval::OpOutputTarget::Avars) ||
+        first + kRigExecSlotAvars > avars.size() ||
+        values.Size() != RigExecAvarElement(channels, kRigExecSlotAvars)) {
+        if (error)
+            *error = "op nodes: slot " + std::to_string(output.object) +
+                     " stores no " + std::to_string(values.Size()) + " avars";
+        return false;
+    }
+    size_t element = 0;
+    for (size_t c = 0; c < kRigExecSlotAvars; ++c)
+        if ((channels >> c) & 1u)
+            avars[first + c] = values[element++];
+    return true;
+}
+
+int64_t
+RrProviderOpOf(const RrProgram *program, const RigExecWireStep &step)
+{
+    return step.kind == RigExecWireStepKind::OpNode && step.object >= 0 &&
+                   size_t(step.object) < program->providerOpOfNode.size()
+               ? program->providerOpOfNode[size_t(step.object)]
+               : -1;
+}
+
+int64_t
+RrProviderAnswerOf(const RrProgram *program, const RigExecWireStep &step)
+{
+    return step.kind == RigExecWireStepKind::OpNode && step.object >= 0 &&
+                   size_t(step.object) < program->providerAnswerOfNode.size()
+               ? program->providerAnswerOfNode[size_t(step.object)]
+               : -1;
+}
+
+int64_t
+RrRefreshOf(const RrProgram *program, const RigExecWireStep &step)
+{
+    return step.kind == RigExecWireStepKind::OpNode && step.object >= 0 &&
+                   size_t(step.object) < program->refreshOfNode.size()
+               ? program->refreshOfNode[size_t(step.object)]
+               : -1;
+}
+
+bool
+RrStoreSpace(RrProgram *program, size_t step, const eval::OpHostOutput &output,
+             const void *value, std::string *error)
+{
+    using T = eval::OpOutputTarget;
+    RrStore &store = program->store;
+    const T target = T(output.target);
+    if (target >= T::ProviderAnswer && target <= T::ProviderAnswerBlocked)
+        return RrStoreProviderAnswer(program, step, output, value, error);
+    if (target == T::ProviderValueMatrix || target == T::ProviderValueFrame ||
+        target == T::ProviderValueAuthority ||
+        target == T::ProviderValueUnavailable)
+        return RrStoreProviderValue(program, output, value, error);
+    if (target >= T::RefreshBase) {
+        if (output.object >= program->poses->providerRefreshes.size()) {
+            if (error)
+                *error = "no provider refresh " + std::to_string(output.object);
+            return false;
+        }
+        const auto &refresh = program->poses->providerRefreshes[output.object];
+        if (target == T::RefreshBase || target == T::RefreshFinal) {
+            (target == T::RefreshBase ? store.base[refresh.baseWrite]
+                                      : store.fin[refresh.finWrite]) =
+                *static_cast<const RrPointFrame *>(value);
+            return true;
+        }
+        const auto &frames = *static_cast<
+            const rigExecStd::RigExecArray<rigExecRig::PointFrame> *>(value);
+        if (frames.Size() != refresh.carries.size()) {
+            if (error)
+                *error = "provider refresh " + std::to_string(output.object) +
+                         " carries " + std::to_string(refresh.carries.size()) +
+                         " descendants";
+            return false;
+        }
+        static_assert(sizeof(rigExecRig::PointFrame) == sizeof(RrPointFrame),
+                      "a rig frame is a runtime frame");
+        for (size_t k = 0; k < frames.Size(); ++k) {
+            const auto &carry = refresh.carries[k];
+            std::memcpy(target == T::RefreshCarryBase
+                            ? &store.base[carry.baseWrite]
+                            : &store.fin[carry.finWrite],
+                        &frames[k], sizeof(RrPointFrame));
+        }
+        return true;
+    }
+    if (target == T::FrameMatrixValid) {
+        if (output.object >= store.frameMatrixValid.size()) {
+            if (error)
+                *error = "frame record " + std::to_string(output.object) +
+                         " has no slot";
+            return false;
+        }
+        store.frameMatrixValid[output.object] =
+            *static_cast<const uint8_t *>(value) != 0;
+        return true;
+    }
+    std::vector<RrMat4d> &matrices =
+        target == T::ProviderFinalMatrix  ? store.finalMatrix
+        : target == T::ProviderBaseMatrix ? store.baseMatrix
+                                          : store.frameMatrix;
+    if (output.object >= matrices.size()) {
+        if (error)
+            *error = "no matrix " + std::to_string(output.object) + " to store";
+        return false;
+    }
+    matrices[output.object] = *static_cast<const RrMat4d *>(value);
+    return true;
 }
 
 } // namespace rigExec

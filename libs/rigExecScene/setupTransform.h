@@ -4,7 +4,7 @@
 #ifndef RIGEXEC_SCENE_SETUP_TRANSFORM_H
 #define RIGEXEC_SCENE_SETUP_TRANSFORM_H
 
-#include "rigExec/pathText.h"
+#include "rigExec/internal/pathText.h"
 #include "rigExecScene/providerProgram.h"
 
 #include "pxr/base/gf/matrix4d.h"
@@ -30,15 +30,18 @@ struct RigExecStageXformReader {
         return bool(stage->GetAttributeAtPath(attribute));
     }
     /// The existing property token of \p prim spelled \p name, or empty.
-    PXR_NS::TfToken Name(const PXR_NS::SdfPath &prim, std::string_view name) const
+    PXR_NS::TfToken Name(const PXR_NS::SdfPath &prim,
+                         std::string_view name) const
     {
         const PXR_NS::UsdPrim p = stage->GetPrimAtPath(prim);
         if (p)
             for (const PXR_NS::TfToken &candidate : p.GetPropertyNames())
-                if (candidate.GetString() == name) return candidate;
+                if (candidate.GetString() == name)
+                    return candidate;
         return PXR_NS::TfToken();
     }
-    bool Value(const PXR_NS::SdfPath &attribute, PXR_NS::VtValue *value, std::string *) const
+    bool Value(const PXR_NS::SdfPath &attribute, PXR_NS::VtValue *value,
+               std::string *) const
     {
         if (const PXR_NS::UsdAttribute a = stage->GetAttributeAtPath(attribute))
             a.Get(value, PXR_NS::UsdTimeCode::Default());
@@ -49,8 +52,7 @@ struct RigExecStageXformReader {
 namespace setup_transform_detail {
 
 // Finds the operations xformOpOrder names by the order's own tokens.
-template <class Reader>
-struct OpSource {
+template <class Reader> struct OpSource {
     const Reader &reader;
     const PXR_NS::SdfPath &prim;
     const PXR_NS::VtTokenArray &order;
@@ -71,13 +73,17 @@ struct OpSource {
         }
         // An operation the order names only inverted has no token there: take
         // the prim's existing property token, so no token is built from text.
-        if (token.IsEmpty()) token = self.reader.Name(self.prim, name);
-        if (token.IsEmpty()) return false;
+        if (token.IsEmpty())
+            token = self.reader.Name(self.prim, name);
+        if (token.IsEmpty())
+            return false;
         const PXR_NS::SdfPath path = self.prim.AppendProperty(token);
-        if (!self.reader.Exists(path)) return false;
+        if (!self.reader.Exists(path))
+            return false;
         self.structure->push_back(path);
         self.slot = PXR_NS::VtValue();
-        if (!self.reader.Value(path, &self.slot, self.error)) self.failed = true;
+        if (!self.reader.Value(path, &self.slot, self.error))
+            self.failed = true;
         *type = -1;
         *value = self.slot.IsEmpty() ? nullptr : &self.slot;
         return true;
@@ -88,25 +94,29 @@ struct OpSource {
 // Records every attribute the result depends on into \p structure: the
 // xformOpOrder (whether or not it exists yet) and the operations it names.
 template <class Reader>
-bool LocalTransform(const Reader &reader, const PXR_NS::SdfPath &prim,
-                    PXR_NS::GfMatrix4d *local, bool *resets,
-                    PXR_NS::SdfPathVector *structure, std::string *why)
+bool
+LocalTransform(const Reader &reader, const PXR_NS::SdfPath &prim,
+               PXR_NS::GfMatrix4d *local, bool *resets,
+               PXR_NS::SdfPathVector *structure, std::string *why)
 {
     const PXR_NS::SdfPath orderPath =
         prim.AppendProperty(PXR_NS::UsdGeomTokens->xformOpOrder);
     structure->push_back(orderPath);
     PXR_NS::VtTokenArray order;
     PXR_NS::VtValue value;
-    if (!reader.Value(orderPath, &value, why)) return false;
+    if (!reader.Value(orderPath, &value, why))
+        return false;
     if (value.IsHolding<PXR_NS::VtTokenArray>())
         order = value.UncheckedGet<PXR_NS::VtTokenArray>();
     std::string reason;
-    OpSource<Reader> ops{reader, prim, order, structure, why, PXR_NS::VtValue()};
+    OpSource<Reader> ops{reader,    prim, order,
+                         structure, why,  PXR_NS::VtValue()};
     PXR_NS::TfToken failedOp;
-    if (!RigExecComposeLocalXform(order, {&ops, &OpSource<Reader>::Find}, true, local,
-                                  resets, &reason, &failedOp)) {
+    if (!RigExecComposeLocalXform(order, {&ops, &OpSource<Reader>::Find}, true,
+                                  local, resets, &reason, &failedOp)) {
         std::string text;
-        if (!RigExecSpellPathText(prim, &text)) text = prim.GetAsString();
+        if (!RigExecSpellPathText(prim, &text))
+            text = prim.GetAsString();
         *why = reason + ": " + text + " " + failedOp.GetString();
         return false;
     }
@@ -114,25 +124,29 @@ bool LocalTransform(const Reader &reader, const PXR_NS::SdfPath &prim,
 }
 
 // The chain from \p prim up to, not including, the absolute root.
-inline PXR_NS::SdfPathVector Chain(PXR_NS::SdfPath prim)
+inline PXR_NS::SdfPathVector
+Chain(PXR_NS::SdfPath prim)
 {
     PXR_NS::SdfPathVector chain;
-    for (; !prim.IsEmpty() && !prim.IsAbsoluteRootPath(); prim = prim.GetParentPath())
+    for (; !prim.IsEmpty() && !prim.IsAbsoluteRootPath();
+         prim = prim.GetParentPath())
         chain.push_back(prim);
     return chain;
 }
 
 // The product of the chain's locals, leaf first; stops where one resets the stack.
 template <class Reader>
-bool ComposeChain(const Reader &reader, const PXR_NS::SdfPathVector &chain,
-                  PXR_NS::GfMatrix4d *result, bool *anyReset,
-                  PXR_NS::SdfPathVector *structure, std::string *why)
+bool
+ComposeChain(const Reader &reader, const PXR_NS::SdfPathVector &chain,
+             PXR_NS::GfMatrix4d *result, bool *anyReset,
+             PXR_NS::SdfPathVector *structure, std::string *why)
 {
     *result = PXR_NS::GfMatrix4d(1.0);
     for (const PXR_NS::SdfPath &prim : chain) {
         PXR_NS::GfMatrix4d local(1.0);
         bool resets = false;
-        if (!LocalTransform(reader, prim, &local, &resets, structure, why)) return false;
+        if (!LocalTransform(reader, prim, &local, &resets, structure, why))
+            return false;
         *result = *result * local;
         if (resets) {
             *anyReset = true;
@@ -142,7 +156,7 @@ bool ComposeChain(const Reader &reader, const PXR_NS::SdfPathVector &chain,
     return true;
 }
 
-}  // namespace setup_transform_detail
+} // namespace setup_transform_detail
 
 /// \p toAsset = the target's Default local-to-asset map T (p_asset = p * T),
 /// \p fromAsset = T^-1, both resolved once in double precision. Only the
@@ -152,16 +166,20 @@ bool ComposeChain(const Reader &reader, const PXR_NS::SdfPathVector &chain,
 /// attribute the result depends on. False with \p why for a facts failure
 /// or a singular or non-finite T.
 template <class Reader>
-bool RigExecSetupTransform(const Reader &reader, const PXR_NS::SdfPath &target,
-                           const PXR_NS::SdfPath &assetRoot, PXR_NS::GfMatrix4d *toAsset,
-                           PXR_NS::GfMatrix4d *fromAsset, PXR_NS::SdfPathVector *structure,
-                           std::string *why)
+bool
+RigExecSetupTransform(const Reader &reader, const PXR_NS::SdfPath &target,
+                      const PXR_NS::SdfPath &assetRoot,
+                      PXR_NS::GfMatrix4d *toAsset,
+                      PXR_NS::GfMatrix4d *fromAsset,
+                      PXR_NS::SdfPathVector *structure, std::string *why)
 {
     using namespace setup_transform_detail;
     using PXR_NS::GfMatrix4d;
-    const PXR_NS::SdfPathVector targetChain = Chain(target), assetChain = Chain(assetRoot);
+    const PXR_NS::SdfPathVector targetChain = Chain(target),
+                                assetChain = Chain(assetRoot);
     PXR_NS::SdfPathVector targetOnly = targetChain, assetOnly = assetChain;
-    while (!targetOnly.empty() && !assetOnly.empty() && targetOnly.back() == assetOnly.back()) {
+    while (!targetOnly.empty() && !assetOnly.empty() &&
+           targetOnly.back() == assetOnly.back()) {
         targetOnly.pop_back();
         assetOnly.pop_back();
     }
@@ -176,28 +194,36 @@ bool RigExecSetupTransform(const Reader &reader, const PXR_NS::SdfPath &target,
     if (anyReset) {
         paths.clear();
         anyReset = false;
-        if (!ComposeChain(reader, targetChain, &local, &anyReset, &paths, why) ||
+        if (!ComposeChain(reader, targetChain, &local, &anyReset, &paths,
+                          why) ||
             !ComposeChain(reader, assetChain, &asset, &anyReset, &paths, why)) {
             structure->insert(structure->end(), paths.begin(), paths.end());
             return false;
         }
     }
     structure->insert(structure->end(), paths.begin(), paths.end());
-    const char *degenerate = "the target's setup (Default) transform to the rig's asset "
-                             "space is degenerate";
+    const char *degenerate =
+        "the target's setup (Default) transform to the rig's asset "
+        "space is degenerate";
     GfMatrix4d assetInverse(1.0);
     if (asset != GfMatrix4d(1.0)) {
         double det = 0.0;
         assetInverse = asset.GetInverse(&det);
-        if (!std::isfinite(det) || det == 0.0) { *why = degenerate; return false; }
+        if (!std::isfinite(det) || det == 0.0) {
+            *why = degenerate;
+            return false;
+        }
     }
     const GfMatrix4d t = local * assetInverse;
     double det = 0.0;
-    const GfMatrix4d inverse = t == GfMatrix4d(1.0) ? GfMatrix4d(1.0) : t.GetInverse(&det);
+    const GfMatrix4d inverse =
+        t == GfMatrix4d(1.0) ? GfMatrix4d(1.0) : t.GetInverse(&det);
     bool finite = true;
     for (int i = 0; i < 16; ++i)
-        finite = finite && std::isfinite(t.data()[i]) && std::isfinite(inverse.data()[i]);
-    if (!finite || (t != GfMatrix4d(1.0) && (!std::isfinite(det) || det == 0.0))) {
+        finite = finite && std::isfinite(t.data()[i]) &&
+                 std::isfinite(inverse.data()[i]);
+    if (!finite ||
+        (t != GfMatrix4d(1.0) && (!std::isfinite(det) || det == 0.0))) {
         *why = degenerate;
         return false;
     }
@@ -206,6 +232,6 @@ bool RigExecSetupTransform(const Reader &reader, const PXR_NS::SdfPath &target,
     return true;
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_SCENE_SETUP_TRANSFORM_H
+#endif // RIGEXEC_SCENE_SETUP_TRANSFORM_H

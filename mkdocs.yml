@@ -150,12 +150,11 @@ nav:
       - Overview: specs/spec.md
       - Format and plugin API compatibility: compat-matrix.md
       - Presentation: specs/rigexec-presentation.md
-      - Standalone runtime: specs/standalone-runtime.md
-      - Standalone pack: specs/standalone-pack.md
       - Upstream rig inputs: specs/upstream-inputs.md
       - Cross-domain inputs: specs/cross-domain-inputs.md
       - Source input replay: specs/input-replay.md
       - Execute publication buffers: specs/runtime-execute-buffers.md
+      - GPU device: specs/gpu-device.md
       - Bake and inverse APIs: specs/python-bake-inverse.md
       - Composition arcs: specs/composition-arcs.md
       - Editor extensions: specs/editor-extensions.md
@@ -164,8 +163,6 @@ nav:
       - Volume weights: specs/volume-weights.md
       - Default spaces: specs/xformable-default-spaces.md
       - The biped rig: specs/biped-rig.md
-      - OpenExec notes: specs/exec-api-notes.md
-      - ExecUsd notes: specs/execusd-api-notes.md
       - Hydra notes: specs/hydra-integration-notes.md
       - Evaluation core parity: specs/eval-core-parity.md
   - References: references.md

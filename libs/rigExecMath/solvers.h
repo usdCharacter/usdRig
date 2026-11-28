@@ -5,6 +5,7 @@
 #define RIGEXEC_MATH_SOLVERS_H
 
 #include "dualQuat.h"
+#include "jointGroupKernel.h"
 #include "limbStretchKernel.h"
 #include "pointFrame.h"
 
@@ -47,6 +48,18 @@ RigExecSolveFkChain(const std::vector<RigExecFkChainElement> &elements);
 /// stretches the joint above it, not only moves the one below.
 void RigExecScaleFkSegments(const std::vector<RigExecFkChainElement> &elements,
                             std::vector<RigExecPointFrame> *frames);
+
+/// An FK chain's joint groups over its \p frames
+/// (RigExecApplyFkJointGroupsKernel): joint k's parent among the joints is
+/// \p parents[k] and its basis the output rest of \p elements[k + base].
+void RigExecApplyFkJointGroups(
+    const std::vector<RigExecFkChainElement> &elements, size_t base,
+    const std::vector<int32_t> &parents,
+    const std::vector<RigExecJointGroup> &groups,
+    const std::vector<int32_t> &members, const std::vector<double> &selectors,
+    const std::array<GfVec3d, 4> *startRest,
+    const std::array<GfVec3d, 4> *startPose, std::vector<int32_t> *slots,
+    std::vector<uint8_t> *active, std::vector<RigExecPointFrame> *frames);
 
 /// Two-bone IK parameters (RigExecTwoBoneIk).
 struct RigExecTwoBoneIkParams {

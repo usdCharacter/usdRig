@@ -26,7 +26,7 @@
 #ifndef RIGEXEC_IMAGING_UPSTREAM_TABLE_H
 #define RIGEXEC_IMAGING_UPSTREAM_TABLE_H
 
-#include "rigExec/frozenContext.h"
+#include "rigExec/api/frozenContext.h"
 
 #include "pxr/base/vt/value.h"
 #include "pxr/usd/sdf/path.h"
@@ -109,10 +109,10 @@ bool RigExecFillUniformUpstreamEntry(const VtValue &value,
 /// values or fold hashes over \p table's window. A frame that reconstructs
 /// to a sample's own value reuses that sample's hash. Runs with no lock
 /// held. False when no sample holds a value.
-bool RigExecFillVaryingUpstreamEntry(
-    const RigExecUpstreamTable &table,
-    std::vector<RigExecUpstreamTableSample> samples,
-    RigExecUpstreamTableEntry *entry);
+bool
+RigExecFillVaryingUpstreamEntry(const RigExecUpstreamTable &table,
+                                std::vector<RigExecUpstreamTableSample> samples,
+                                RigExecUpstreamTableEntry *entry);
 
 /// Moves \p table to a new T0 inside its window with its sources unchanged:
 /// every varying entry's value at \p t0 is re-derived from its samples and
@@ -130,6 +130,6 @@ bool RigExecSameUpstreamSources(const RigExecUpstreamTable &a,
 /// uniform values), counting a shared buffer once. For tests.
 size_t RigExecUpstreamTableBufferCount(const RigExecUpstreamTable &table);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_IMAGING_UPSTREAM_TABLE_H
+#endif // RIGEXEC_IMAGING_UPSTREAM_TABLE_H

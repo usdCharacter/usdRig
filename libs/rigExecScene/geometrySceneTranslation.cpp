@@ -1,9 +1,9 @@
 #include "rigExecSchema/schemaNames.h"
 #include "geometrySceneTranslation.h"
 #include "providerProgram.h"
-#include "rigExec/movers/moverRegistry.h"
-#include "rigExec/moverGraph.h"
-#include "rigExec/pathText.h"
+#include "rigExec/api/moverRegistry.h"
+#include "rigExec/internal/moverGraph.h"
+#include "rigExec/internal/pathText.h"
 #include "pxr/usd/usdGeom/xformOp.h"
 #include "pxr/base/tf/staticTokens.h"
 #include <algorithm>
@@ -20,13 +20,13 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     (final)
     (knots)
     (normals)
-    (offsets)
+    ((offsets, BlendShapeText::offsets))
     (orientation)
     (interpolation)
     ((primvarsNormals, "primvars:normals"))
     ((primvarsNormalsIndices, "primvars:normals:indices"))
     (order)
-    (pointIndices)
+    ((pointIndices, BlendShapeText::pointIndices))
     (points)
     (preceding)
     (widths)
@@ -470,64 +470,6 @@ RigExecTranslateSceneGeometry(const RigExecSceneDescriptors &scene,
     return true;
 }
 bool
-RigExecTranslateSceneBlendChannel(const RigExecSceneDescriptors &scene,
-                                  const SdfPath &channel,
-                                  RigExecSceneGeometryDescriptor *out,
-                                  std::string *error)
-{
-    RigExecSceneCompileInputs source(scene);
-    const auto *node = source.Node(channel);
-    if (!node || node->fact.type != SchemaTypeName::RigExecBlendInput)
-        return Fail(error, "missing blend channel: " + channel.GetString());
-    RigExecGeometryRecord record;
-    record.op = RigExecRevisionOp::BlendShape;
-    record.binding.moverPath = channel;
-    record.binding.blendInputs = {channel};
-    std::vector<size_t> groups;
-    for (const auto &sample :
-         source.Targets(channel.AppendProperty(_tokens->rigExecSamples))) {
-        const auto points =
-            source.Targets(sample.AppendProperty(_tokens->rigExecTargetPoints));
-        RigExecReadPhase phase;
-        const auto *relationship = source.Relationship(
-            sample.AppendProperty(_tokens->rigExecTargetPoints));
-        if (relationship &&
-            !RigExecParseReadPhase(relationship->readPhase.GetString(), &phase,
-                                   error))
-            return false;
-        groups.push_back(std::max(size_t(1), points.size()));
-        if (points.empty())
-            record.binding.blendSamples[channel].push_back(
-                {sample, {}, phase, {}});
-        else
-            for (auto path : points) {
-                if (path.IsPrimPath())
-                    path = path.AppendProperty(_tokens->points);
-                record.binding.blendSamples[channel].push_back(
-                    {sample, path, phase, {}});
-            }
-    }
-    if (!RigExecTranslateSceneGeometry(
-            scene, channel,
-            channel.AppendProperty(_tokens->computeBlendChannel), out, error,
-            &record))
-        return false;
-    if (out->blendChannels.size() != 1)
-        return Fail(error, "invalid public channel descriptor");
-    auto &samples = out->blendChannels.front().samples;
-    std::vector<RigExecSceneGeometryBlendSample> grouped;
-    size_t first = 0;
-    for (size_t count : groups) {
-        auto sample = std::move(samples[first]);
-        for (size_t n = 1; n < count; ++n)
-            sample.additionalPoints.push_back(samples[first + n].points);
-        grouped.push_back(std::move(sample));
-        first += count;
-    }
-    samples = std::move(grouped);
-    return true;
-}
-bool
 RigExecGatherSceneGeometryBlendChannels(
     const RigExecSceneGeometryDescriptor &descriptor,
     const std::vector<VtValue> &values, size_t baseCount,
@@ -663,129 +605,159 @@ RigExecResolveSceneGeometryLeaves(
     return true;
 }
 namespace {
+// Whether \p owner authors a transform operation that might vary over time.
 bool
-StaticMeshWorld(const RigExecSceneDescriptors &scene, const SdfPath &mesh,
-                GfMatrix4d *world, std::string *error)
+AnimatedXform(const RigExecSceneCompileInputs &source,
+              const RigExecSceneNodeDescriptor &node, std::string *error)
+{
+    for (const auto &path : node.attributes)
+        if (path.GetName().rfind("xformOp:", 0) == 0 ||
+            path.GetName() == "xformOpOrder")
+            if (const auto *attribute = source.Attribute(path))
+                if (attribute->fact.mightBeTimeVarying)
+                    return !Fail(error, "projector requires static surface "
+                                        "transform: " +
+                                            path.GetString());
+    return false;
+}
+// The local transform of \p owner at Default, as UsdGeomXformCache composes
+// it. Below the asset root an animated operation refuses; at and above it an
+// operation with no Default value is identity, as the stage reads it.
+bool
+DefaultLocalXform(const RigExecSceneCompileInputs &source, const SdfPath &owner,
+                  bool belowAsset, GfMatrix4d *local, bool *reset,
+                  std::string *error)
+{
+    const auto *node = source.Node(owner);
+    if (!node)
+        return Fail(error, "uncaptured projector surface ancestry: " +
+                               owner.GetString());
+    if (belowAsset && AnimatedXform(source, *node, error))
+        return false;
+    const auto read = [&](const SdfPath &path, VtValue *value) {
+        if (!source.Attribute(path))
+            return true;
+        RigExecSceneBoundInput input;
+        return source.Bind(path, RigExecSceneReadRoute::Raw, &input, error) &&
+               source.Read(input, UsdTimeCode::Default(), value, nullptr,
+                           error);
+    };
+    VtValue order;
+    if (!read(owner.AppendProperty(_tokens->xformOpOrder), &order))
+        return false;
+    struct Operation {
+        TfToken name;
+        int type;
+        VtValue value;
+    };
+    std::vector<Operation> operations;
+    VtTokenArray tokens;
+    if (order.IsHolding<VtTokenArray>())
+        tokens = order.UncheckedGet<VtTokenArray>();
+    for (const auto &token : tokens) {
+        std::string name = token.GetString();
+        if (name == "!resetXformStack!")
+            continue;
+        if (name.rfind("!invert!", 0) == 0)
+            name.erase(0, 8);
+        if (std::find_if(operations.begin(), operations.end(),
+                         [&](const auto &x) {
+                             return x.name.GetString() == name;
+                         }) != operations.end())
+            continue;
+        if (name.rfind("xformOp:", 0) != 0)
+            return Fail(error, "invalid projector xform operation: " + name);
+        const auto end = name.find(':', 8);
+        const auto type =
+            XformOpType(name, 8, end == std::string::npos ? end : end - 8);
+        if (type == UsdGeomXformOp::TypeInvalid)
+            return Fail(error, "unknown projector xform operation: " + name);
+        TfToken opName = token;
+        if (name.size() != token.size()) {
+            opName = TfToken();
+            for (const auto &path : node->attributes)
+                if (path.GetName() == name) {
+                    opName = path.GetNameToken();
+                    break;
+                }
+            // An operation with no captured attribute has no value: the
+            // composition reports it as an uncaptured operation.
+            if (opName.IsEmpty())
+                continue;
+        }
+        VtValue value;
+        if (!read(owner.AppendProperty(opName), &value))
+            return false;
+        operations.push_back({opName, int(type), std::move(value)});
+    }
+    const auto find = [](void *context, std::string_view name, int *type,
+                         const VtValue **value) {
+        const auto &all = *static_cast<const std::vector<Operation> *>(context);
+        for (const auto &operation : all)
+            if (operation.name.GetString() == name) {
+                *type = operation.type;
+                *value = &operation.value;
+                return true;
+            }
+        return false;
+    };
+    std::string reason;
+    TfToken failedOp;
+    if (!RigExecComposeLocalXform(tokens, {&operations, find}, !belowAsset,
+                                  local, reset, &reason, &failedOp))
+        return Fail(error, reason + ": " + owner.GetString() + ":" +
+                               failedOp.GetString());
+    return true;
+}
+// The transform from the asset root's space to \p mesh's, formed as native
+// compile forms it: world(asset root) * world(mesh)^-1, each world composed
+// as UsdGeomXformCache composes it at Default. Only the transforms between
+// the mesh and the asset root must be static; the asset root and its
+// ancestors cancel.
+bool
+StaticAssetToMesh(const RigExecSceneDescriptors &scene, const SdfPath &mesh,
+                  GfMatrix4d *assetToMesh, std::string *error)
 {
     RigExecSceneCompileInputs source(scene);
-    std::vector<GfMatrix4d> locals;
-    for (SdfPath owner = mesh;
-         owner != SdfPath::AbsoluteRootPath() && !owner.IsEmpty();
-         owner = owner.GetParentPath()) {
-        const auto *node = source.Node(owner);
-        if (!node)
-            return Fail(error, "uncaptured projector surface ancestry: " +
-                                   owner.GetString());
-        RigExecProviderProgram program;
-        RigExecTypedValueStore values(1);
-        program.valueKeys.push_back(PathText(owner) + "|localXform");
-        RigExecProviderOp op;
-        op.kind = RigExecProviderOpKind::LocalXform;
-        op.owner = owner;
-        op.output = 0;
-        auto raw = [&](const SdfPath &path, RigExecValueId *id) {
-            *id = RigExecNoProviderValue;
-            const auto *attribute = source.Attribute(path);
-            if (!attribute)
-                return true;
-            if (attribute->fact.mightBeTimeVarying)
-                return Fail(error,
-                            "projector requires static surface transform: " +
-                                path.GetString());
-            RigExecSceneBoundInput input;
-            VtValue value;
-            if (!source.Bind(path, RigExecSceneReadRoute::Raw, &input, error) ||
-                !source.Read(input, UsdTimeCode::Default(), &value, nullptr,
-                             error))
-                return false;
-            *id = values.values.size();
-            program.valueKeys.push_back(RigExecProviderRawKey(path));
-            values.values.emplace_back();
-            values.PublishSource(*id, value);
-            return true;
-        };
-        RigExecValueId order;
-        if (!raw(owner.AppendProperty(_tokens->xformOpOrder), &order))
-            return false;
-        op.inputs.push_back(order);
-        bool reset = false;
-        VtValue orderValue;
-        if (order != RigExecNoProviderValue)
-            orderValue = values.values[size_t(order)].raw;
-        if (orderValue.IsHolding<VtTokenArray>())
-            for (const auto &token : orderValue.UncheckedGet<VtTokenArray>()) {
-                std::string name = token.GetString();
-                if (name == "!resetXformStack!") {
-                    reset = true;
-                    continue;
-                }
-                if (name.rfind("!invert!", 0) == 0)
-                    name.erase(0, 8);
-                if (std::find_if(op.xforms.begin(), op.xforms.end(),
-                                 [&](const auto &x) {
-                                     return x.name.GetString() == name;
-                                 }) != op.xforms.end())
-                    continue;
-                if (name.rfind("xformOp:", 0) != 0)
-                    return Fail(error,
-                                "invalid projector xform operation: " + name);
-                const auto end = name.find(':', 8);
-                const auto type = XformOpType(
-                    name, 8, end == std::string::npos ? end : end - 8);
-                if (type == UsdGeomXformOp::TypeInvalid)
-                    return Fail(error,
-                                "unknown projector xform operation: " + name);
-                TfToken opName = token;
-                if (name.size() != token.size()) {
-                    opName = TfToken();
-                    for (const auto &path : node->attributes)
-                        if (path.GetName() == name) {
-                            opName = path.GetNameToken();
-                            break;
-                        }
-                    // An operation with no captured attribute has no value: the
-                    // local xform reports it as an uncaptured operation.
-                    if (opName.IsEmpty())
-                        continue;
-                }
-                RigExecValueId id;
-                if (!raw(owner.AppendProperty(opName), &id))
-                    return false;
-                op.xforms.push_back({opName, id, int(type)});
-            }
-        program.ops.push_back(std::move(op));
-        RigExecSpellProviderOwners(&program);
-        if (!RigExecRunProviderOp(program, 0, &values, error))
-            return false;
-        const auto *local = values.Read<GfMatrix4d>(0);
-        if (!local)
-            return Fail(error, "projector local transform unavailable");
-        locals.push_back(*local);
-        // Admission checks all ancestors, even when reset stops composition.
-        if (reset) {
-            for (SdfPath parent = owner.GetParentPath();
-                 !parent.IsEmpty() && parent != SdfPath::AbsoluteRootPath();
-                 parent = parent.GetParentPath()) {
-                const auto *parentNode = source.Node(parent);
-                if (!parentNode)
+    const SdfPath assetRoot = scene.rigRoot.GetParentPath();
+    const auto world = [&](const SdfPath &prim, GfMatrix4d *result) {
+        std::vector<GfMatrix4d> locals;
+        bool composing = true;
+        for (SdfPath owner = prim;
+             owner != SdfPath::AbsoluteRootPath() && !owner.IsEmpty();
+             owner = owner.GetParentPath()) {
+            const bool belowAsset =
+                owner != assetRoot && owner.HasPrefix(assetRoot);
+            if (!composing) {
+                if (!belowAsset)
+                    break;
+                const auto *node = source.Node(owner);
+                if (!node)
                     return Fail(error,
                                 "uncaptured projector surface ancestry: " +
-                                    parent.GetString());
-                for (const auto &path : parentNode->attributes)
-                    if (path.GetName().rfind("xformOp:", 0) == 0 ||
-                        path.GetName() == "xformOpOrder")
-                        if (const auto *attribute = source.Attribute(path))
-                            if (attribute->fact.mightBeTimeVarying)
-                                return Fail(error, "projector requires static "
-                                                   "surface transform: " +
-                                                       path.GetString());
+                                    owner.GetString());
+                if (AnimatedXform(source, *node, error))
+                    return false;
+                continue;
             }
-            break;
+            GfMatrix4d local(1.0);
+            bool reset = false;
+            if (!DefaultLocalXform(source, owner, belowAsset, &local, &reset,
+                                   error))
+                return false;
+            locals.push_back(local);
+            composing = !reset;
         }
-    }
-    *world = GfMatrix4d(1);
-    for (auto i = locals.rbegin(); i != locals.rend(); ++i)
-        *world = *i * *world;
+        *result = GfMatrix4d(1);
+        for (auto i = locals.rbegin(); i != locals.rend(); ++i)
+            *result = *i * *result;
+        return true;
+    };
+    GfMatrix4d assetWorld(1.0), meshWorld(1.0);
+    if (!world(mesh, &meshWorld) || (assetRoot != SdfPath::AbsoluteRootPath() &&
+                                     !world(assetRoot, &assetWorld)))
+        return false;
+    *assetToMesh = assetWorld * meshWorld.GetInverse();
     return true;
 }
 } // namespace
@@ -821,10 +793,9 @@ RigExecTranslateSceneGeometryVariants(
         mesh.AppendProperty(_tokens->faceVertexCounts);
     record.binding.topologyIndices =
         mesh.AppendProperty(_tokens->faceVertexIndices);
-    GfMatrix4d world;
-    if (!StaticMeshWorld(scene, mesh, &world, error))
+    if (!StaticAssetToMesh(scene, mesh, &record.binding.meshWorldInverse,
+                           error))
         return false;
-    record.binding.meshWorldInverse = world.GetInverse();
     auto provider = [&](const TfToken &name, SdfPath *value) {
         const auto paths = source.Targets(mover.AppendProperty(name));
         if (paths.size() > 1)

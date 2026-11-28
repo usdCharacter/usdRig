@@ -625,11 +625,13 @@ RigExecRuntimeReader::_Reach(size_t index,
             // A derived mesh publishes points or a matrix by what it ran.
             points.insert(target);
             matrices.insert(target);
-        } else if (step.kind == RigExecWireStepKind::Constraint && p.poses &&
-                   object < p.poses->walkSteps.size()) {
+        } else if (step.kind == RigExecWireStepKind::OpNode && p.opNodes &&
+                   p.poses && object < p.opNodes->constraint.size() &&
+                   p.opNodes->constraint[object] < p.poses->walkSteps.size()) {
             // An IK/FK match presents its five controls, and every control
             // riding them, elsewhere than their final frames.
-            const int walk = p.poses->walkSteps[object].index;
+            const int walk =
+                p.poses->walkSteps[p.opNodes->constraint[object]].index;
             if (walk < 0 || size_t(walk) >= p.poses->constraints.size())
                 continue;
             const RigExecWireConstraint &c = p.poses->constraints[size_t(walk)];
@@ -732,6 +734,8 @@ std::vector<RigExecRuntimePropertyValue>
 RigExecRuntimeReader::GetPropertyValues() const
 {
     std::vector<RigExecRuntimePropertyValue> out;
+    if (_failed)
+        return out;
     out.reserve(_program->store.propertyResults.size());
     for (const auto &entry : _program->store.propertyResults) {
         out.push_back({_program->TextOrEmpty(entry.first), entry.second});
@@ -745,7 +749,7 @@ RigExecRuntimeReader::GetScalarPrimvars() const
 {
     std::vector<RigExecRuntimeScalarPrimvar> out;
     const RigExecWireFile *file = _program->inputState.file;
-    if (!file) {
+    if (!file || _failed) {
         return out;
     }
     out.reserve(file->scalarPrimvarChains.size());
@@ -777,7 +781,8 @@ RigExecRuntimeReader::GetIkFkMatches() const
     std::vector<RigExecRuntimeIkFkMatch> out;
     const auto &constraints = _program->poses->constraints;
     const RrStore &store = _program->store;
-    for (size_t i = 0; i < constraints.size() && i < store.matchValid.size();
+    for (size_t i = 0;
+         !_failed && i < constraints.size() && i < store.matchValid.size();
          ++i) {
         if (!constraints[i].ikFkMatch || !store.matchValid[i])
             continue;
@@ -797,7 +802,8 @@ RigExecRuntimeReader::GetSpaceMatches() const
     const auto &switches = _program->poses->spaceSwitches;
     const RrStore &store = _program->store;
     const RigExecWireSlotMeta &meta = *_program->slotMeta;
-    for (size_t i = 0; i < switches.size() && i < store.spaceMatchValid.size();
+    for (size_t i = 0;
+         !_failed && i < switches.size() && i < store.spaceMatchValid.size();
          ++i) {
         const int slot = switches[i].slot;
         if (!store.spaceMatchValid[i] || slot < 0 ||
@@ -955,10 +961,62 @@ RigExecRuntimeReader::_RunHistoryTick(std::string *error)
     return true;
 }
 
+// A plugin mover with no kernel installed refuses the run.
+bool
+RigExecRuntimeReader::_RequireExternalKernels(std::string *error) const
+{
+    const RrProgram &program = *_program;
+    for (const auto &[slot, index] : program.externalIndex) {
+        const RrProgram::ExternalRevision &state = program.externals[index];
+        if (state.state)
+            continue;
+        const RigExecWireRevision &wire =
+            program.geometry->chains[slot.first].revisions[slot.second];
+        if (error)
+            *error = program.TextOrEmpty(wire.moverPath) + " is a " +
+                     state.type + ", which this runtime has no kernel for";
+        return false;
+    }
+    return true;
+}
+
 bool
 RigExecRuntimeReader::Execute(std::string *error)
 {
+    std::string failure;
+    std::string *why = error ? error : &failure;
+    _program->store.failureLines.clear();
+    _failed = false;
+    const bool ran = _Execute(why);
+    if (!ran && !_failed)
+        _Invalidate(*why);
+    _failed = !ran;
+    return ran;
+}
+
+void
+RigExecRuntimeReader::_Invalidate(const std::string &error)
+{
+    RrStore &store = _program->store;
+    _jointMatrices.clear();
+    _points.clear();
+    _matrixPrimvars.clear();
+    _weightFrames.clear();
+    _weightFields.clear();
+    _providerXforms.clear();
+    _diagnostics.clear();
+    _diagnostics.swap(store.failureLines);
+    if (_diagnostics.empty() && !error.empty())
+        _diagnostics.push_back(error);
+    _counters = RigExecRuntimeCounters();
+}
+
+bool
+RigExecRuntimeReader::_Execute(std::string *error)
+{
     RrProgram &program = *_program;
+    if (!_RequireExternalKernels(error))
+        return false;
     RrStore &store = program.store;
     store.runTrace.clear();
     // The inputs set since the last run. Only an Animated input set, or
@@ -979,15 +1037,13 @@ RigExecRuntimeReader::Execute(std::string *error)
     if (!program.requiredStageFramesAdmission.admitted) {
         std::vector<size_t> propertySteps;
         for (size_t i = 0; i < program.steps->size(); ++i)
-            if ((*program.steps)[i].kind ==
-                RigExecWireStepKind::PropertyRevision)
+            if (RrPropertyPartOf(&program, (*program.steps)[i], nullptr,
+                                 nullptr))
                 propertySteps.push_back(i);
         std::sort(propertySteps.begin(), propertySteps.end(),
                   [&](size_t a, size_t b) {
-                      const auto &left = (*program.steps)[a];
-                      const auto &right = (*program.steps)[b];
-                      return std::make_pair(left.object, left.part) <
-                             std::make_pair(right.object, right.part);
+                      return (*program.steps)[a].object <
+                             (*program.steps)[b].object;
                   });
         for (size_t i : propertySteps) {
             poseDiagnostics.insert(poseDiagnostics.end(),
@@ -1011,6 +1067,7 @@ RigExecRuntimeReader::Execute(std::string *error)
         _diagnostics = std::move(poseDiagnostics);
         _counters = RigExecRuntimeCounters();
         _counters.executedOpCount = store.opExecution.executed;
+        _failed = true;
         if (error)
             *error = refusal;
         return false;
@@ -1046,27 +1103,10 @@ RigExecRuntimeReader::Execute(std::string *error)
     RigExecRuntimeCounters counters;
     counters.executedOpCount = store.opExecution.executed;
 
-    // A plugin mover this runtime has no kernel for is a no-op, said on
-    // every frame it is one, beside the lines of the step it sat in.
-    for (const auto &[slot, index] : program.externalIndex) {
-        const RrProgram::ExternalRevision &state = program.externals[index];
-        if (state.state) {
-            continue;
-        }
-        const RigExecWireRevision &wire =
-            program.geometry->chains[slot.first].revisions[slot.second];
-        poseDiagnostics.push_back(
-            "warning: " + program.TextOrEmpty(wire.moverPath) + " is a " +
-            state.type +
-            ", which this runtime has no kernel for; its "
-            "points pass through");
-    }
-
     // The compile notices a fresh evaluator seeds its first generation
     // with (inert movers, purpose warnings): file order, ahead of
     // every program line, exactly once. Drained here, on the success
-    // path only, so a failed Execute keeps both the seed and the
-    // previous frame.
+    // path only, so the first good Execute publishes them.
     if (!program.compileDiagnostics.empty()) {
         poseDiagnostics.insert(poseDiagnostics.begin(),
                                program.compileDiagnostics.begin(),
@@ -1074,10 +1114,9 @@ RigExecRuntimeReader::Execute(std::string *error)
         program.compileDiagnostics.clear();
     }
 
-    // Assemble the outputs only here, at the one exit that published:
-    // a failure anywhere above keeps the previous frame. Every output stages
-    // its rows before any is committed, so a throw while staging publishes
-    // none of this frame.
+    // Assemble the outputs only here, at the one exit that published. Every
+    // output stages its rows before any is committed, so a throw while
+    // staging publishes none of this frame.
     const auto entries = [](const auto &map) {
         return [&map](auto visit) {
             for (const auto &entry : map)

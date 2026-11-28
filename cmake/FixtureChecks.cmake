@@ -13,7 +13,7 @@ function(rigexec_add_fixture_checks name directory fixture rig)
     set(_source "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/${directory}/${fixture}.usda")
     set(_program "${CMAKE_CURRENT_BINARY_DIR}/${directory}_${fixture}.rigexec")
     set(_bake "${name}Bake_${fixture}")
-    add_test(NAME ${_bake} COMMAND rigExecBakeTool
+    rigexec_add_test(NAME ${_bake} COMMAND rigExecBakeTool
         "${_source}" --rig "${rig}" --time 1 -o "${_program}")
     set_tests_properties(${_bake} PROPERTIES FIXTURES_SETUP ${_bake}
         ENVIRONMENT "RIGEXEC_ENABLE_SIMD=0")
@@ -21,14 +21,14 @@ function(rigexec_add_fixture_checks name directory fixture rig)
     foreach(_simd 0 1)
         set(_capture "${name}Reference_${fixture}_simd${_simd}")
         set(_reference "${CMAKE_CURRENT_BINARY_DIR}/${directory}_${fixture}_simd${_simd}.reference")
-        add_test(NAME ${_capture} COMMAND rigExecPose "${_source}"
+        rigexec_add_test(NAME ${_capture} COMMAND rigExecPose "${_source}"
             --rig "${rig}" --frames 0,1,2,3,4 --cpu-reference
             --golden-out "${_reference}")
         set_tests_properties(${_capture} PROPERTIES FIXTURES_SETUP ${_capture}
             LABELS "fixture-parity" ENVIRONMENT "RIGEXEC_ENABLE_SIMD=${_simd}")
         foreach(_backend native frozen runtime)
             set(_test "${name}Parity_${fixture}_${_backend}_simd${_simd}")
-            add_test(NAME ${_test} COMMAND rigExecPose "${_source}"
+            rigexec_add_test(NAME ${_test} COMMAND rigExecPose "${_source}"
                 --rig "${rig}" --frames 0,1,2,3,4 --golden-backend ${_backend}
                 --golden-program "${_program}" --golden-check "${_reference}")
             set_tests_properties(${_test} PROPERTIES
@@ -40,7 +40,7 @@ function(rigexec_add_fixture_checks name directory fixture rig)
     if(_rigexec_platform_goldens)
         foreach(_backend native frozen runtime)
             set(_test "${name}Golden_${fixture}_${_backend}")
-            add_test(NAME ${_test} COMMAND rigExecPose "${_source}"
+            rigexec_add_test(NAME ${_test} COMMAND rigExecPose "${_source}"
                 --rig "${rig}" --frames 0,1,2,3,4 --golden-backend ${_backend}
                 --golden-program "${_program}"
                 --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/${directory}/${fixture}.golden")

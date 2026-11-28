@@ -27,6 +27,30 @@ jobs:
       - name: Scan parallel-lane sources
         run: python3 tools/check_hidden_locks.py
 
+  internal-includes:
+    name: no new rigExec internal includes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout usdRig
+        uses: actions/checkout@v4
+
+      - name: Scan includes of rigExec/internal
+        run: python3 tools/check_internal_includes.py
+
+  test-links:
+    name: tests link what they include
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout usdRig
+        uses: actions/checkout@v4
+
+      - name: Check FlatBuffers include paths and rigExecMathGf links
+        run: |
+          python3 tools/check_test_links.py --self-test
+          python3 tools/check_test_links.py
+
   allocations:
     name: no new bare new
     runs-on: ubuntu-24.04
@@ -37,6 +61,19 @@ jobs:
 
       - name: Scan owned sources for bare allocation
         run: python3 tools/check_allocations.py
+
+  pxr-libraries:
+    name: no dropped OpenUSD libraries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout usdRig
+        uses: actions/checkout@v4
+
+      - name: Scan links, includes and imports
+        run: |
+          python3 tools/check_pxr_libraries.py --self-test
+          python3 tools/check_pxr_libraries.py
 
   # --------------------------------------------------------------------------
   # Offline audit of the checkout's legal layer: the manifest must partition
@@ -63,7 +100,7 @@ jobs:
     name: runtime compiles without OpenUSD
     runs-on: ubuntu-24.04
     needs: build-release
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - name: Checkout usdRig
         uses: actions/checkout@v4
@@ -96,7 +133,7 @@ jobs:
           mkdir -p build-c runtime-probe-c/headers
           cp build/runtimeSources.txt build/runtimeIncludes.txt \
              build/evalCoreSources.txt build/evalCoreIncludes.txt \
-             build/exactFpFlags.txt build-c/
+             build/opCoreSources.txt build/exactFpFlags.txt build-c/
           printf '%s\n' '#ifndef RIGEXEC_MANIFEST_C_PROBE_H' \
             '#define RIGEXEC_MANIFEST_C_PROBE_H 4271' '#endif' \
             > runtime-probe-c/headers/rigExecManifestCProbe.h
@@ -130,7 +167,7 @@ jobs:
           mkdir -p runtime-build-alt
           mv build/runtimeSources.txt build/runtimeIncludes.txt \
              build/evalCoreSources.txt build/evalCoreIncludes.txt \
-             build/exactFpFlags.txt runtime-build-alt/
+             build/opCoreSources.txt build/exactFpFlags.txt runtime-build-alt/
           bin/check_runtime_usd_free.sh runtime-build-alt
 
   # --------------------------------------------------------------------------
@@ -140,6 +177,50 @@ jobs:
   # invocation changes so two prefixes from the same commit with different
   # options never alias.
   # --------------------------------------------------------------------------
+  engine-no-usd:
+    name: engine builds without OpenUSD
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout usdRig
+        uses: actions/checkout@v4
+
+      - name: Install a compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends g++ ninja-build
+
+      # No OpenUSD prefix and no OpenGL: configure must succeed without them.
+      - name: Configure with RIGEXEC_WITH_USD=OFF
+        run: |
+          cmake -S . -B build-engine -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DRIGEXEC_WITH_USD=OFF -DUSD_INSTALL_DIR="${RUNNER_TEMP}/no-usd"
+
+      - name: Build
+        run: cmake --build build-engine
+
+      - name: Every registered C++ test is usd-free
+        run: |
+          ctest --test-dir build-engine -N -L usd-free | tail -1 > usd-free.txt
+          ctest --test-dir build-engine -N -L 'rigExec' | tail -1 > labelled.txt
+          cat usd-free.txt labelled.txt
+          cmp usd-free.txt labelled.txt
+
+      - name: Run the usd-free tests
+        run: ctest --test-dir build-engine -L usd-free --output-on-failure -j 4
+
+      - name: Install and consume the engine-only package
+        run: |
+          cmake --install build-engine --prefix "${RUNNER_TEMP}/engine-install"
+          if grep -l 'pxr' "${RUNNER_TEMP}/engine-install/lib/cmake/rigExec/rigExecTargets"*.cmake; then
+            echo "the engine-only export names an OpenUSD target"; exit 1
+          fi
+          cmake -S tests/installedEngine -B build-consumer -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${RUNNER_TEMP}/engine-install"
+          cmake --build build-consumer
+          ctest --test-dir build-consumer --output-on-failure
+
   openusd:
     name: OpenUSD v26.08
     runs-on: ubuntu-24.04
@@ -214,7 +295,7 @@ jobs:
           for lib in \
             libusd_usd.so libusd_tf.so libusd_sdf.so libusd_gf.so \
             libusd_arch.so libusd_vt.so libusd_plug.so libusd_work.so \
-            libusd_usdGeom.so libusd_usdSkel.so libusd_usdUtils.so \
+            libusd_usdGeom.so libusd_usdUtils.so \
             libusd_usdImaging.so libusd_hd.so \
             libusd_exec.so libusd_execUsd.so libusd_ef.so \
             libusd_vdf.so libusd_esf.so libusd_esfUsd.so
@@ -448,13 +529,20 @@ jobs:
 
   # --------------------------------------------------------------------------
   # Full configured CTest suite, including cone verification and example
-  # parity. Name and label filters are reserved for local focused runs.
+  # parity, in three shards: shard k runs tests k, k+3, k+6, ... in
+  # registration order (ctest -I), so together they run every test once, plus
+  # the FIXTURES_SETUP tests a shard's tests require. Name and label filters
+  # are reserved for local focused runs.
   # --------------------------------------------------------------------------
-  ctest-cpp:
-    name: ctest (full suite)
+  ctest-cpp-shard:
+    name: ctest (full suite, shard ${{ matrix.shard }}/3)
     runs-on: ubuntu-24.04
     needs: build-release
-    timeout-minutes: 45
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - name: Checkout usdRig
         uses: actions/checkout@v4
@@ -484,23 +572,84 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libgl1-mesa-dev xorg-dev
 
-      - name: Run full CTest suite
+      - name: Run CTest shard
         run: |
           export USD="${GITHUB_WORKSPACE}/usd-install"
           source bin/_env.sh
           export PXR_PLUGINPATH_NAME="$PWD/build/usd/rigExecSchema/resources:$PWD/build/usd/rigExecImaging/resources:$PWD/build/usd/rigExecMoverPlugins"
           ctest --test-dir build \
+            -I ${{ matrix.shard }},,3 \
             -j"$(nproc)" \
             --output-on-failure --no-tests=error
+
+      # Re-records this shard's exec-row goldens from the production evaluator
+      # into build/execRows, the set a deliberate row change checks in for
+      # this configuration (tests/fixtures/README.md).
+      - name: Record exec-row goldens
+        if: ${{ !cancelled() }}
+        run: |
+          export USD="${GITHUB_WORKSPACE}/usd-install"
+          source bin/_env.sh
+          export PXR_PLUGINPATH_NAME="$PWD/build/usd/rigExecSchema/resources:$PWD/build/usd/rigExecImaging/resources:$PWD/build/usd/rigExecMoverPlugins"
+          touch build/execRows.stamp
+          RIGEXEC_RECORD_EXEC_ROWS=1 ctest --test-dir build \
+            -I ${{ matrix.shard }},,3 -R '^testRigExecExecGoldens_' \
+            -j"$(nproc)" --output-on-failure
+          mkdir -p build/execRows
+          find tests/fixtures/execRows -name '*.golden' \
+            -newer build/execRows.stamp -exec cp {} build/execRows/ \;
+
+      - name: Upload exec cross-check rows
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: exec-rows-linux-shard${{ matrix.shard }}
+          path: build/execRows/
+          retention-days: 5
 
       - name: Upload CTest logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ctest-linux
+          name: ctest-linux-shard${{ matrix.shard }}
           path: |
             build/Testing/Temporary/
             build/verify-binary/*.log
+
+  # The shards' verdict under the suite's single check name, and their exec
+  # cross-check rows merged into the one exec-rows-linux artifact.
+  ctest-cpp:
+    name: ctest (full suite)
+    runs-on: ubuntu-24.04
+    needs: [build-release, ctest-cpp-shard]
+    if: ${{ !cancelled() && needs.build-release.result == 'success' }}
+    timeout-minutes: 10
+    steps:
+      - name: Download exec cross-check rows
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: exec-rows-linux-shard*
+          path: execRows
+          merge-multiple: true
+
+      - name: Exec cross-check rows configuration
+        run: |
+          mkdir -p execRows
+          find execRows -name '*.golden' | wc -l
+          cat /dev/null execRows/*.golden 2>/dev/null |
+            grep -o 'reference=[^ ]*' | sort -u || true
+
+      - name: Upload exec cross-check rows
+        uses: actions/upload-artifact@v4
+        with:
+          name: exec-rows-linux
+          path: execRows/
+          if-no-files-found: warn
+
+      - name: CTest shards passed
+        if: always()
+        run: test "${{ needs.ctest-cpp-shard.result }}" = success
 
   # --------------------------------------------------------------------------
   # The usdNoodles scenario suite (plugin/usdNoodles/testenv) plus the four
@@ -808,11 +957,11 @@ jobs:
           P="${GITHUB_WORKSPACE}/usdrig-install"
           for f in \
             "$P/lib/librigExec.so" \
+            "$P/lib/librigExecOpCore.so" \
             "$P/lib/librigExecScene.so" \
             "$P/lib/librigExecOracle.so" \
             "$P/lib/librigExecImaging.so" \
             "$P/lib/python/usdRigViewMenu.py" \
-            "$P/lib/librigExecStandalone.so" \
             "$P/lib/librigExecAuthoring.so" \
             "$P/lib/usd/rigExecSchema/resources/plugInfo.json" \
             "$P/lib/usd/rigExecSchema/resources/generatedSchema.usda" \
@@ -824,12 +973,13 @@ jobs:
             "$P/share/rigExec/runtimeIncludes.txt" \
             "$P/share/rigExec/evalCoreSources.txt" \
             "$P/share/rigExec/evalCoreIncludes.txt" \
-            "$P/include/rigExec/rigEvaluator.h"
+            "$P/share/rigExec/opCoreSources.txt" \
+            "$P/include/rigExec/api/rigEvaluator.h"
           do
             test -e "$f" || { echo "missing: $f"; exit 1; }
           done
-          test -e "$P/lib/librigExecMath.a" || test -e "$P/lib/librigExecMath.so" \
-            || { echo "missing: $P/lib/librigExecMath.{a,so}"; exit 1; }
+          test -e "$P/lib/librigExecMathGf.a" || test -e "$P/lib/librigExecMathGf.so" \
+            || { echo "missing: $P/lib/librigExecMathGf.{a,so}"; exit 1; }
 
       - name: Install into a DESTDIR staging tree
         run: |
@@ -841,6 +991,7 @@ jobs:
             runtimeIncludes.txt \
             evalCoreSources.txt \
             evalCoreIncludes.txt \
+            opCoreSources.txt \
             runtime-generated/moverCatalog.cpp
           do
             test -e "$S/$f" || { echo "missing from staging tree: $S/$f"; exit 1; }
@@ -870,6 +1021,7 @@ jobs:
                    "sdk data/runtimeIncludes.txt" \
                    "sdk data/evalCoreSources.txt" \
                    "sdk data/evalCoreIncludes.txt" \
+                   "sdk data/opCoreSources.txt" \
                    "sdk data/runtime-generated/moverCatalog.cpp"
           do
             test -f "$A/$f" || { echo "missing from the alt layout: $A/$f"; exit 1; }
@@ -1077,6 +1229,7 @@ jobs:
             sdk-relocated/share/rigExec/evalCoreSources.txt \
             sdk-relocated/share/rigExec/runtimeIncludes.txt \
             sdk-relocated/share/rigExec/evalCoreIncludes.txt \
+            sdk-relocated/share/rigExec/opCoreSources.txt \
             sdk-relocated/share/rigExec/exactFpFlags.txt \
             sdk-relocated/lib/cmake/rigExec/rigexec_flags.cmake \
             sdk-relocated/lib/cmake/rigExec/rigExecConfig.cmake
@@ -1086,7 +1239,7 @@ jobs:
 
       # The SConstruct resolves the SDK's data directory out of the installed
       # package file, the same spelling CMake's packaging writes. Read it the
-      # way the consumer does and require all five files there.
+      # way the consumer does and require all six files there.
       - name: Resolve the data directory the installed SDK declares
         run: |
           python3 - "$GITHUB_WORKSPACE/sdk-relocated" <<'PY'
@@ -1101,7 +1254,7 @@ jobs:
           print("rigExec_DATA_DIR -> " + resolved)
           missing = [name for name in ("runtimeSources.txt", "evalCoreSources.txt",
                                        "runtimeIncludes.txt", "evalCoreIncludes.txt",
-                                       "exactFpFlags.txt")
+                                       "opCoreSources.txt", "exactFpFlags.txt")
                      if not os.path.isfile(os.path.join(resolved, name))]
           if missing:
               sys.exit("the declared data directory holds no " + ", ".join(missing))
@@ -1410,7 +1563,8 @@ jobs:
 
           # Every manifest TU resolves to an actual object in both configurations.
           sources = []
-          for name in ("runtimeSources.txt", "evalCoreSources.txt"):
+          for name in ("runtimeSources.txt", "evalCoreSources.txt",
+                       "opCoreSources.txt"):
               with open(os.path.join(manifest_dir, name), encoding="utf-8") as handle:
                   sources.extend(line.strip() for line in handle if line.strip())
           sources = [e for e in sources
@@ -1829,6 +1983,28 @@ jobs:
             -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/usdrig-install;$USD"
           cmake --build installed-scene-build --parallel 2
           ctest --test-dir installed-scene-build --output-on-failure
+
+      - name: Record exec-row goldens
+        if: ${{ runner.os == 'macOS' && !cancelled() }}
+        shell: bash
+        run: |
+          export USD="$GITHUB_WORKSPACE/usd-install"
+          source bin/_env.sh
+          export PXR_PLUGINPATH_NAME="$PWD/build/usd/rigExecSchema/resources:$PWD/build/usd/rigExecImaging/resources:$PWD/build/usd/rigExecMoverPlugins"
+          touch build/execRows.stamp
+          RIGEXEC_RECORD_EXEC_ROWS=1 ctest --test-dir build \
+            -R '^testRigExecExecGoldens_' \
+            --parallel ${{ matrix.jobs }} --output-on-failure
+          mkdir -p build/execRows
+          find tests/fixtures/execRows -name '*.golden' \
+            -newer build/execRows.stamp -exec cp {} build/execRows/ \;
+
+      - name: Upload exec cross-check rows
+        if: ${{ runner.os == 'macOS' && !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: exec-rows-macos
+          path: build/execRows/
 
       - name: Upload build and test logs
         if: always()

@@ -1,11 +1,13 @@
 // RigExec geometry mover kernels implementation.
 #include "geometryKernels.h"
 #include "deltaMushKernel.h"
+#include "dualQuat.h"
 #include "latticeKernel.h"
+#include "ribbonKernel.h"
+#include "spatialAccel.h"
+#include "surfaceProjectKernel.h"
 #include "meshBoundsKernel.h"
 #include "smoothKernel.h"
-#include "surfaceProjectKernel.h"
-#include "spatialAccel.h"
 #include "wireBasisKernel.h"
 #include "wrinkleKernel.h"
 #include "pxr/base/gf/vec3d.h"
@@ -91,83 +93,13 @@ RigExecRaycastSurfaceFrame(const std::vector<GfVec3f> &points,
 RigExecPartialDecomposition
 RigExecDecomposePartialTransform(const GfMatrix4d &transform)
 {
-    RigExecPartialDecomposition d;
-    // Row lengths are the scale; dividing them out leaves the rotation.
-    GfMatrix4d basis = transform;
-    basis.SetTranslateOnly(GfVec3d(0));
-    for (int axis = 0; axis < 3; ++axis) {
-        const GfVec3d row(basis.GetRow3(axis));
-        const double length = row.GetLength();
-        if (length > 1e-12) {
-            d.scale[axis] = length;
-            basis.SetRow3(axis, row / length);
-        }
-    }
-
-    // The same axis, a fraction of the angle, ABOUT THE SAME PIVOT. The
-    // last part is what makes this radial rather than a rotation with a
-    // separately-faded slide bolted on.
-    //
-    // A cluster's transform rotates about a pivot that is nowhere near
-    // the origin -- a lid turning about an eyeball sits 165 units up --
-    // and a rotation about a distant pivot carries an enormous
-    // translation, P - R P. Scaling THAT by w while turning by w*theta
-    // does not put the point on the arc at all: it lands inside, so a
-    // half-weighted lid pulls back into the eye instead of sweeping
-    // round it.
-    //
-    // So recover the pivot the transform actually turns about -- its
-    // screw axis -- and turn a fraction about that.
-    const GfRotation rotation = basis.ExtractRotation();
-    d.axis = rotation.GetAxis().GetNormalized();
-    d.angle = rotation.GetAngle();
-    // Matrix extraction may choose either quaternion sign. Fractional
-    // weights must follow the same shortest arc for both representations.
-    if (d.angle > 180.0)
-        d.angle -= 360.0;
-    d.translation = transform.ExtractTranslation();
-
-    // Below about a tenth of a degree there is no meaningful axis to
-    // turn about and the chord and the arc agree to within float noise,
-    // so the straight blend is both correct and better conditioned.
-    const double radians = GfDegreesToRadians(d.angle);
-    d.smallAngle = std::abs(std::sin(0.5 * radians)) < 1e-4;
-    if (d.smallAngle) {
-        return d;
-    }
-
-    // Split the translation into the part along the axis (a screw's own
-    // travel, which stays linear in w) and the part across it, which is
-    // (I - R) applied to the pivot and so names where the pivot is.
-    d.along = GfDot(d.translation, d.axis);
-    const GfVec3d across = d.translation - d.axis * d.along;
-    const double half = 0.5 / std::tan(0.5 * radians);
-    d.pivot = across * 0.5 + GfCross(d.axis, across) * half;
-    return d;
+    return RigExecDecomposePartialTransformKernel<GfVec3d>(transform);
 }
 
 GfMatrix4d
 RigExecApplyPartialDecomposition(const RigExecPartialDecomposition &d, double w)
 {
-    GfMatrix4d scaled(1.0);
-    scaled.SetScale(GfVec3d(1.0 + (d.scale[0] - 1.0) * w,
-                            1.0 + (d.scale[1] - 1.0) * w,
-                            1.0 + (d.scale[2] - 1.0) * w));
-
-    GfMatrix4d out(1.0);
-    out.SetRotate(GfRotation(d.axis, d.angle * w));
-    out = scaled * out;
-
-    if (d.smallAngle) {
-        out.SetTranslateOnly(d.translation * w);
-        return out;
-    }
-
-    // p' = R_w (p - pivot) + pivot + w * along * axis.
-    const GfMatrix4d partial = out;
-    out.SetTranslateOnly(d.pivot - partial.TransformDir(d.pivot) +
-                         d.axis * (d.along * w));
-    return out;
+    return RigExecApplyPartialDecompositionKernel<GfMatrix4d>(d, w);
 }
 
 GfMatrix4d
@@ -410,143 +342,12 @@ RigExecApplySurfaceProject(std::vector<GfVec3f> *points,
         faceVertexIndices.data(), faceVertexIndices.size(), weight, accel);
 }
 
-namespace {
-
-// Uniform cubic B-spline position on one nonperiodic segment span.
-GfVec3f
-_BsplinePoint(const GfVec3f &p0, const GfVec3f &p1, const GfVec3f &p2,
-              const GfVec3f &p3, float t)
-{
-    const float t2 = t * t, t3 = t2 * t;
-    const float b0 = (1 - 3 * t + 3 * t2 - t3) / 6.0f;
-    const float b1 = (4 - 6 * t2 + 3 * t3) / 6.0f;
-    const float b2 = (1 + 3 * t + 3 * t2 - 3 * t3) / 6.0f;
-    const float b3 = t3 / 6.0f;
-    return p0 * b0 + p1 * b1 + p2 * b2 + p3 * b3;
-}
-
-} // namespace
-
 RigExecCurveFrameSamples
 RigExecSampleCurveRMF(const GfVec3f *controlPoints, size_t controlPointsSize,
                       int sampleCount)
 {
-    RigExecCurveFrameSamples samples;
-    // The short-curve branch below interpolates segments [i, i + 1].  A
-    // single point has no segment; accepting it makes `size() - 2` equal -1
-    // and indexes before the range.  Treat it like every other degenerate
-    // driver and publish no frames.
-    if (sampleCount < 2 || controlPointsSize < 2 || !controlPoints) {
-        return samples;
-    }
-
-    // Dense presampling for arc-length parameterization. Under four
-    // control points the stock cubic segment count is zero: the control
-    // polygon interpolates linearly (deterministic short-curve rule).
-    const int dense = std::max(sampleCount * 16, 64);
-    std::vector<GfVec3f> densePoints;
-    densePoints.reserve(dense + 1);
-    const int spans = static_cast<int>(controlPointsSize) - 3;
-    for (int i = 0; i <= dense; ++i) {
-        const float u = float(i) / float(dense);
-        if (spans >= 1) {
-            const float s = u * spans;
-            const int span = std::min(spans - 1, int(s));
-            const float t = s - span;
-            densePoints.push_back(_BsplinePoint(
-                controlPoints[span], controlPoints[span + 1],
-                controlPoints[span + 2], controlPoints[span + 3], t));
-        } else {
-            const float s = u * (controlPointsSize - 1);
-            const int seg = std::min(int(controlPointsSize) - 2, int(s));
-            densePoints.push_back(
-                controlPoints[seg] +
-                (controlPoints[seg + 1] - controlPoints[seg]) * (s - seg));
-        }
-    }
-    std::vector<float> arcLength(densePoints.size(), 0.0f);
-    for (size_t i = 1; i < densePoints.size(); ++i) {
-        arcLength[i] = arcLength[i - 1] +
-                       (densePoints[i] - densePoints[i - 1]).GetLength();
-    }
-    const float total = arcLength.back();
-    if (total <= 1e-12f) {
-        return samples;
-    }
-
-    // Sample at equal arc length.
-    samples.positions.reserve(sampleCount);
-    samples.parameters.reserve(sampleCount);
-    size_t cursor = 0;
-    for (int k = 0; k < sampleCount; ++k) {
-        const float target = total * float(k) / float(sampleCount - 1);
-        while (cursor + 1 < arcLength.size() &&
-               arcLength[cursor + 1] < target) {
-            ++cursor;
-        }
-        const float span = arcLength[cursor + 1] - arcLength[cursor];
-        const float t =
-            span > 1e-12f ? (target - arcLength[cursor]) / span : 0.0f;
-        samples.positions.push_back(
-            densePoints[cursor] +
-            (densePoints[cursor + 1] - densePoints[cursor]) * t);
-        samples.parameters.push_back(float(k) / float(sampleCount - 1));
-    }
-
-    // Tangents by central differences; rotation-minimizing normals by the
-    // double-reflection method (Wang et al. 2008).
-    samples.tangents.resize(sampleCount);
-    for (int k = 0; k < sampleCount; ++k) {
-        const GfVec3f &prev = samples.positions[std::max(0, k - 1)];
-        const GfVec3f &next =
-            samples.positions[std::min(sampleCount - 1, k + 1)];
-        GfVec3f tangent = next - prev;
-        const float len = tangent.GetLength();
-        samples.tangents[k] = len > 1e-12f ? tangent / len : GfVec3f(1, 0, 0);
-    }
-    samples.normals.resize(sampleCount);
-    samples.binormals.resize(sampleCount);
-    // Deterministic initial normal: world axis least parallel to the
-    // first tangent, projected.
-    {
-        const GfVec3f t0 = samples.tangents[0];
-        GfVec3f candidate(1, 0, 0);
-        float best = 2.0f;
-        for (const GfVec3f axis :
-             {GfVec3f(1, 0, 0), GfVec3f(0, 1, 0), GfVec3f(0, 0, 1)}) {
-            const float align = std::abs(GfDot(axis, t0));
-            if (align < best) {
-                best = align;
-                candidate = axis;
-            }
-        }
-        GfVec3f n0 = candidate - t0 * GfDot(t0, candidate);
-        n0.Normalize();
-        samples.normals[0] = n0;
-        samples.binormals[0] = GfCross(t0, n0);
-    }
-    for (int k = 0; k + 1 < sampleCount; ++k) {
-        const GfVec3f v1 = samples.positions[k + 1] - samples.positions[k];
-        const float c1 = GfDot(v1, v1);
-        if (c1 <= 1e-20f) {
-            samples.normals[k + 1] = samples.normals[k];
-            samples.binormals[k + 1] = samples.binormals[k];
-            continue;
-        }
-        const GfVec3f nL = samples.normals[k] -
-                           v1 * (2.0f / c1) * GfDot(v1, samples.normals[k]);
-        const GfVec3f tL = samples.tangents[k] -
-                           v1 * (2.0f / c1) * GfDot(v1, samples.tangents[k]);
-        const GfVec3f v2 = samples.tangents[k + 1] - tL;
-        const float c2 = GfDot(v2, v2);
-        GfVec3f n = c2 > 1e-20f ? nL - v2 * (2.0f / c2) * GfDot(v2, nL) : nL;
-        n -= samples.tangents[k + 1] * GfDot(samples.tangents[k + 1], n);
-        const float len = n.GetLength();
-        samples.normals[k + 1] = len > 1e-12f ? n / len : samples.normals[k];
-        samples.binormals[k + 1] =
-            GfCross(samples.tangents[k + 1], samples.normals[k + 1]);
-    }
-    return samples;
+    return RigExecSampleCurveRMFKernel(controlPoints, controlPointsSize,
+                                       sampleCount);
 }
 
 RigExecCurveFrameSamples
@@ -564,41 +365,26 @@ RigExecApplyRibbonTransport(std::vector<GfVec3f> *points,
                             const RigExecCurveFrameSamples &posedSamples)
 {
     const size_t sampleCount = restSamples.GetSize();
-    if (points->empty() || bindCoordsSize != points->size() ||
-        sampleCount < 2 || posedSamples.GetSize() != sampleCount) {
+    if (points->empty() || posedSamples.GetSize() != sampleCount) {
         return; // invalid binding: pass through
     }
-    if (!bindCoords) {
-        return; // a null range with a nonzero size: pass through
-    }
-
-    // Per-sample rigid maps from the rest frame to the posed frame.
-    std::vector<GfMatrix4d> maps(sampleCount);
-    for (size_t k = 0; k < sampleCount; ++k) {
-        const std::array<GfVec3d, 4> rest = {
-            GfVec3d(restSamples.positions[k]),
-            GfVec3d(restSamples.positions[k] + restSamples.tangents[k]),
-            GfVec3d(restSamples.positions[k] + restSamples.normals[k]),
-            GfVec3d(restSamples.positions[k] + restSamples.binormals[k])};
-        const std::array<GfVec3d, 4> posed = {
-            GfVec3d(posedSamples.positions[k]),
-            GfVec3d(posedSamples.positions[k] + posedSamples.tangents[k]),
-            GfVec3d(posedSamples.positions[k] + posedSamples.normals[k]),
-            GfVec3d(posedSamples.positions[k] + posedSamples.binormals[k])};
-        if (!RigExecPointsToMatrix(rest, posed, &maps[k])) {
-            maps[k].SetIdentity();
+    const auto framePoints = [](const RigExecCurveFrameSamples &samples) {
+        std::vector<std::array<GfVec3d, 4>> frames(samples.GetSize());
+        for (size_t k = 0; k < frames.size(); ++k) {
+            const GfVec3f &o = samples.positions[k];
+            frames[k] = {GfVec3d(o), GfVec3d(o + samples.tangents[k]),
+                         GfVec3d(o + samples.normals[k]),
+                         GfVec3d(o + samples.binormals[k])};
         }
-    }
-
-    for (size_t i = 0; i < points->size(); ++i) {
-        const float u = std::min(1.0f, std::max(0.0f, bindCoords[i][0]));
-        const float s = u * float(sampleCount - 1);
-        const size_t k = std::min(sampleCount - 2, size_t(s));
-        const float t = s - float(k);
-        const GfVec3d a = maps[k].TransformAffine(GfVec3d((*points)[i]));
-        const GfVec3d b = maps[k + 1].TransformAffine(GfVec3d((*points)[i]));
-        (*points)[i] = GfVec3f(a + (b - a) * double(t));
-    }
+        return frames;
+    };
+    const std::vector<std::array<GfVec3d, 4>> rest = framePoints(restSamples);
+    const std::vector<std::array<GfVec3d, 4>> posed = framePoints(posedSamples);
+    // An invalid binding passes the points through.
+    RigExecApplyRibbonKernel<RigExecDualQuatMath<GfVec3f, GfVec3d>>(
+        points->data(), points->size(), bindCoords, bindCoordsSize, sampleCount,
+        [&](size_t k) -> const auto & { return rest[k]; },
+        [&](size_t k) -> const auto & { return posed[k]; });
 }
 
 void
@@ -801,210 +587,13 @@ RigExecApplyWireSparse(std::vector<GfVec3f> *points,
 }
 
 bool
-RigExecNurbsPatch::IsValid() const
-{
-    if (!points || !uKnots || !vKnots || uOrder < 2 || uOrder > 16 ||
-        vOrder < 2 || vOrder > 16 || uVertexCount < uOrder ||
-        vVertexCount < vOrder) {
-        return false;
-    }
-    const size_t expectedPoints = size_t(uVertexCount) * size_t(vVertexCount);
-    if (pointCount != expectedPoints ||
-        uKnotCount != size_t(uVertexCount) + size_t(uOrder) ||
-        vKnotCount != size_t(vVertexCount) + size_t(vOrder)) {
-        return false;
-    }
-    for (size_t i = 0; i < uKnotCount; ++i) {
-        if (!std::isfinite(uKnots[i]) || (i > 0 && uKnots[i] < uKnots[i - 1])) {
-            return false;
-        }
-    }
-    for (size_t i = 0; i < vKnotCount; ++i) {
-        if (!std::isfinite(vKnots[i]) || (i > 0 && vKnots[i] < vKnots[i - 1])) {
-            return false;
-        }
-    }
-    if (!(uKnots[size_t(uOrder) - 1] < uKnots[size_t(uVertexCount)]) ||
-        !(vKnots[size_t(vOrder) - 1] < vKnots[size_t(vVertexCount)])) {
-        return false;
-    }
-    for (size_t i = 0; i < pointCount; ++i) {
-        const GfVec3f &p = points[i];
-        if (!std::isfinite(p[0]) || !std::isfinite(p[1]) ||
-            !std::isfinite(p[2])) {
-            return false;
-        }
-    }
-    if (pointWeightCount != 0) {
-        if (!pointWeights || pointWeightCount != pointCount) {
-            return false;
-        }
-        for (size_t i = 0; i < pointWeightCount; ++i) {
-            if (!std::isfinite(pointWeights[i]) || pointWeights[i] <= 0.0) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-double
-RigExecNurbsPatch::UDomainStart() const
-{
-    return uKnots[size_t(uOrder) - 1];
-}
-
-double
-RigExecNurbsPatch::UDomainEnd() const
-{
-    return uKnots[size_t(uVertexCount)];
-}
-
-double
-RigExecNurbsPatch::VDomainStart() const
-{
-    return vKnots[size_t(vOrder) - 1];
-}
-
-double
-RigExecNurbsPatch::VDomainEnd() const
-{
-    return vKnots[size_t(vVertexCount)];
-}
-
-GfVec3f
-RigExecNurbsPatch::EvaluateNormalized(double uNorm, double vNorm) const
-{
-    auto mapParam = [](double norm, bool periodic, double d0, double d1) {
-        double t = norm;
-        if (periodic) {
-            t = t - std::floor(t);
-            if (t < 0.0 || t >= 1.0) {
-                t = 0.0;
-            }
-        } else {
-            t = std::min(std::max(t, 0.0), 1.0);
-        }
-        return std::min(std::max(d0 + t * (d1 - d0), d0), d1);
-    };
-    const double u = mapParam(uNorm, uPeriodic, UDomainStart(), UDomainEnd());
-    const double v = mapParam(vNorm, vPeriodic, VDomainStart(), VDomainEnd());
-
-    auto evalBasis = [](double param, int order, size_t vertexCount,
-                        const double *knots, size_t *spanOut, double *N) {
-        const int degree = order - 1;
-        size_t span = size_t(degree);
-        while (span + 1 < vertexCount && knots[span + 1] <= param) {
-            ++span;
-        }
-        *spanOut = span;
-        double left[16], right[16];
-        N[0] = 1.0;
-        for (int j = 1; j <= degree; ++j) {
-            left[j] = param - knots[span + 1 - size_t(j)];
-            right[j] = knots[span + size_t(j)] - param;
-            double saved = 0.0;
-            for (int r = 0; r < j; ++r) {
-                const double denom = right[r + 1] + left[j - r];
-                const double temp = denom != 0.0 ? N[r] / denom : 0.0;
-                N[r] = saved + right[r + 1] * temp;
-                saved = left[j - r] * temp;
-            }
-            N[j] = saved;
-        }
-    };
-
-    size_t su = 0, sv = 0;
-    double Nu[16], Nv[16];
-    evalBasis(u, uOrder, size_t(uVertexCount), uKnots, &su, Nu);
-    evalBasis(v, vOrder, size_t(vVertexCount), vKnots, &sv, Nv);
-
-    const int pu = uOrder - 1;
-    const int pv = vOrder - 1;
-    const size_t nu = size_t(uVertexCount);
-    GfVec3d sum(0.0, 0.0, 0.0);
-    if (pointWeightCount == 0) {
-        for (int b = 0; b <= pv; ++b) {
-            const size_t iv = sv - size_t(pv) + size_t(b);
-            GfVec3d row(0.0, 0.0, 0.0);
-            for (int a = 0; a <= pu; ++a) {
-                const size_t iu = su - size_t(pu) + size_t(a);
-                row += GfVec3d(points[iv * nu + iu]) * Nu[a];
-            }
-            sum += row * Nv[b];
-        }
-        return GfVec3f(sum);
-    }
-    double wSum = 0.0;
-    for (int b = 0; b <= pv; ++b) {
-        const size_t iv = sv - size_t(pv) + size_t(b);
-        GfVec3d row(0.0, 0.0, 0.0);
-        double wRow = 0.0;
-        for (int a = 0; a <= pu; ++a) {
-            const size_t iu = su - size_t(pu) + size_t(a);
-            const size_t idx = iv * nu + iu;
-            const double w = Nu[a] * pointWeights[idx];
-            row += GfVec3d(points[idx]) * w;
-            wRow += w;
-        }
-        sum += row * Nv[b];
-        wSum += wRow * Nv[b];
-    }
-    return wSum > 0.0 ? GfVec3f(sum / wSum) : GfVec3f(0.0f);
-}
-
-bool
 RigExecApplyPatchMover(std::vector<GfVec3f> *points,
                        const RigExecNurbsPatch &patch, const GfVec3f *uvPoints,
                        size_t uvPointCount, const RigExecRangeRunner *ranges)
 {
-    if (!points || !patch.IsValid()) {
-        return false;
-    }
-    const size_t n = points->size();
-    if (n == 0) {
-        return uvPointCount == 0 ||
-               (uvPoints && uvPointCount == 1 &&
-                std::isfinite(uvPoints[0][0]) && std::isfinite(uvPoints[0][1]));
-    }
-    if (!uvPoints || (uvPointCount != n && uvPointCount != 1)) {
-        return false;
-    }
-    for (size_t i = 0; i < uvPointCount; ++i) {
-        if (!std::isfinite(uvPoints[i][0]) || !std::isfinite(uvPoints[i][1])) {
-            return false;
-        }
-    }
-    const bool broadcast = uvPointCount == 1;
-    GfVec3f *const out = points->data();
-    // UVs read from the storage being written depend on the order of the
-    // writes: only the single loop reproduces them.
-    const std::uintptr_t outBegin = reinterpret_cast<std::uintptr_t>(out);
-    const std::uintptr_t outEnd = reinterpret_cast<std::uintptr_t>(out + n);
-    const std::uintptr_t uvBegin = reinterpret_cast<std::uintptr_t>(uvPoints);
-    const std::uintptr_t uvEnd =
-        reinterpret_cast<std::uintptr_t>(uvPoints + uvPointCount);
-    const bool overlaps = uvBegin < outEnd && outBegin < uvEnd;
-    std::atomic<bool> finite(true);
-    RigExecRunRanges(
-        overlaps ? nullptr : ranges, n, 512, [&](size_t begin, size_t end) {
-            for (size_t i = begin; i < end; ++i) {
-                if (!finite.load(std::memory_order_relaxed)) {
-                    return;
-                }
-                const GfVec3f &uv = uvPoints[broadcast ? 0 : i];
-                const GfVec3f evaluated =
-                    patch.EvaluateNormalized(double(uv[0]), double(uv[1]));
-                if (!std::isfinite(evaluated[0]) ||
-                    !std::isfinite(evaluated[1]) ||
-                    !std::isfinite(evaluated[2])) {
-                    finite.store(false, std::memory_order_relaxed);
-                    return;
-                }
-                out[i] = evaluated;
-            }
-        });
-    return finite.load();
+    return points &&
+           RigExecApplyPatchKernel(points->data(), points->size(), patch,
+                                   uvPoints, uvPointCount, ranges);
 }
 
 } // namespace rigExec

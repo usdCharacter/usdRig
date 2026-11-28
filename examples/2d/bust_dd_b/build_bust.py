@@ -59,7 +59,7 @@ import state as ST  # noqa: E402
 import turn as TU  # noqa: E402
 from parts import ribbon_points  # noqa: E402
 
-from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade, UsdSkel, Vt  # noqa: E402
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade, Vt  # noqa: E402
 
 ROOT = "/Shion"
 RIG = ROOT + "/Rig"
@@ -204,6 +204,17 @@ def rel(prim, name, targets, phase=None):
     if phase:
         r.SetMetadata("rigExecReadPhase", phase)
     return r
+
+
+def blend_shape(s, path, offsets, indices):
+    """A BlendShape prim holding sparse offsets, authored by name as
+    UsdSkel's schema declares them."""
+    p = s.DefinePrim(path, "BlendShape")
+    p.CreateAttribute("offsets", Sdf.ValueTypeNames.Vector3fArray, False,
+                      Sdf.VariabilityUniform).Set(offsets)
+    p.CreateAttribute("pointIndices", Sdf.ValueTypeNames.IntArray, False,
+                      Sdf.VariabilityUniform).Set(indices)
+    return p
 
 
 def translate(x, y, z=0.0):
@@ -707,9 +718,8 @@ class Builder(object):
                 nz = np.array([0])
             tag = ("%g" % act).replace(".", "p")
             shape_path = "%s/%s/%s_%s" % (TARGETS, mesh, channel, tag)
-            bs = UsdSkel.BlendShape.Define(s, shape_path)
-            bs.CreateOffsetsAttr(v3f(d[nz]))
-            bs.CreatePointIndicesAttr(Vt.IntArray.FromNumpy(nz.astype(np.int32)))
+            blend_shape(s, shape_path, v3f(d[nz]),
+                        Vt.IntArray.FromNumpy(nz.astype(np.int32)))
             sp = define(s, "%s/K_%s" % (bpath, tag), "RigExecBlendSample")
             attr(sp, "rigExec:activation", T.Float, float(act))
             rel(sp, "rigExec:blendShape", [shape_path])

@@ -20,13 +20,13 @@ using StepKind = RigExecWireStepKind;
 
 /// Every declared ordinal, the reserved one included.
 constexpr std::size_t StepKindCount =
-    static_cast<std::size_t>(fb::StepKind::ProviderRefresh) + 1;
+    static_cast<std::size_t>(fb::StepKind::OpChainRange) + 1;
 
 /// The kind's name, spelled by the schema the wire enum is generated from.
 const char *StepKindName(StepKind kind);
 
-/// The retired ordinal no step may declare: the wire reader refuses a file
-/// that holds it.
+/// The retired ordinals no step may declare: the wire reader refuses a file
+/// that holds one.
 bool IsReservedStepKind(StepKind kind);
 
 } // namespace eval

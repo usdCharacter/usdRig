@@ -1,0 +1,374 @@
+// Masked/chained armatures are shared RigExec point revisions.
+// These callbacks have no file-format or application dependency.
+// Numerical/source references: docs/references.md.
+#include "rigExecSchema/schemaNames.h"
+#include "rigExec/api/moverRegistry.h"
+#include "rigExec/internal/movers/externalPlayback.h"
+#include "rigExecMath/layeredSkinKernel.h"
+#include "rigExecScene/layeredSkinInputs.h"
+#include "rigExecScene/sceneDescriptors.h"
+#include "rigExecMath/solvers.h"
+#include "pxr/base/tf/staticTokens.h"
+#include "pxr/base/vt/dictionary.h"
+#include "pxr/usd/usdGeom/pointBased.h"
+#include <cmath>
+#include <cstring>
+
+PXR_NAMESPACE_USING_DIRECTIVE
+using namespace rigExec;
+
+// Relationship names the binders and validators read, interned once:
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_relTokens,
+    ((influences, rigExec::SchemaAttrText::rigExecInfluences))
+    ((transform, rigExec::SchemaAttrText::rigExecTransform)));
+
+// Interned once: callbacks, binders and validators run on parallel
+// lanes, and building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_armatureTokens,
+    (classicLinear)
+    ((influences, rigExec::SchemaAttrText::rigExecInfluences))
+    (points)
+    (RigExecJoint)
+    (RigExecControl)
+    ((jointIndices, rigExec::SchemaAttrText::rigExecJointIndices))
+    ((jointWeights, rigExec::SchemaAttrText::rigExecJointWeights))
+    ((elementSize, rigExec::SchemaAttrText::rigExecElementSize))
+    ((inputsMask, rigExec::SchemaAttrText::inputsMask))
+    ((inputsUseBaseInput, rigExec::SchemaAttrText::inputsUseBaseInput))
+    ((skinningMethod, rigExec::SchemaAttrText::rigExecSkinningMethod))
+    ((inputsTransformInput, rigExec::SchemaAttrText::inputsTransformInput))
+    ((transform, rigExec::SchemaAttrText::rigExecTransform)));
+
+namespace {
+using namespace layeredSkinInputs;
+
+// Every read is through the resolved inputs at the evaluated time, over
+// the schema fallback.
+std::vector<RigExecRevisionLeafKey>
+DeclaredInputs(const SdfPath &mover)
+{
+    using Type = RigExecRevisionLeafType;
+    const auto key = [&](const TfToken &name, Type type, VtValue fallback) {
+        return RigExecRevisionLeafKey{
+            mover.AppendProperty(name), type, RigExecRevisionLeafTime::AtTime,
+            RigExecRevisionLeafFlavour::Resolved, std::move(fallback)};
+    };
+    return {
+        key(_armatureTokens->jointIndices, Type::IntArray,
+            VtValue(VtIntArray())),
+        key(_armatureTokens->jointWeights, Type::FloatArray,
+            VtValue(VtFloatArray())),
+        key(_armatureTokens->elementSize, Type::Int, VtValue(1)),
+        key(_armatureTokens->skinningMethod, Type::Token,
+            VtValue(_armatureTokens->classicLinear)),
+        key(_armatureTokens->inputsMask, Type::FloatArray,
+            VtValue(VtFloatArray())),
+        key(_armatureTokens->inputsUseBaseInput, Type::Bool, VtValue(false)),
+        key(_armatureTokens->inputsTransformInput, Type::Bool, VtValue(false))};
+}
+
+// \p value as T, or false when it holds another type.
+template <class T>
+bool
+As(const VtValue &value, T *out)
+{
+    if (!value.IsHolding<T>())
+        return false;
+    *out = value.UncheckedGet<T>();
+    return true;
+}
+
+// A token input's text: a TfToken from the stage-side declared inputs, a
+// std::string from playback, which builds no token (TfToken(text) takes the
+// registry).
+bool
+Text(const VtValue &value, const char **out)
+{
+    if (value.IsHolding<TfToken>()) {
+        *out = value.UncheckedGet<TfToken>().GetText();
+        return true;
+    }
+    if (value.IsHolding<std::string>()) {
+        *out = value.UncheckedGet<std::string>().c_str();
+        return true;
+    }
+    return false;
+}
+bool
+Is(const char *token, const char *text)
+{
+    return std::strcmp(token, text) == 0;
+}
+
+void
+Bind(const RigExecMoverBindContext &ctx)
+{
+    auto &binding = *ctx.binding;
+    binding.influences =
+        RigExecRelationshipTargets(ctx.moverPrim, _relTokens->influences);
+    binding.transformPhase =
+        RigExecPhaseForInput(ctx.moverPrim, _relTokens->influences);
+    if (binding.transformPhase.kind == RigExecReadPhaseKind::Final)
+        for (auto &path : binding.influences) {
+            auto it = ctx.frameChainHeads.find(path);
+            if (it != ctx.frameChainHeads.end())
+                path = it->second;
+        }
+    auto transform =
+        RigExecRelationshipTargets(ctx.moverPrim, _relTokens->transform);
+    if (transform.size() == 1) {
+        binding.transform = transform[0];
+        auto it = ctx.frameChainHeads.find(binding.transform);
+        if (it != ctx.frameChainHeads.end())
+            binding.transform = it->second;
+    }
+}
+
+void
+DeclareInputs(const RigExecMoverBindContext &ctx,
+              std::vector<RigExecRevisionLeafKey> *inputs)
+{
+    *inputs = DeclaredInputs(ctx.moverPrim.GetPath());
+}
+
+bool
+CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
+             const SdfPath &, RigExecRevisionBinding *binding,
+             std::string *error)
+{
+    if (!binding)
+        return false;
+    const auto targets = [&](const TfToken &name) {
+        const auto found = scene.relationships.find(mover.AppendProperty(name));
+        return found == scene.relationships.end() ? SdfPathVector()
+                                                  : found->second.fact.targets;
+    };
+    binding->influences = targets(_armatureTokens->influences);
+    const auto influences = scene.relationships.find(
+        mover.AppendProperty(_armatureTokens->influences));
+    if (influences != scene.relationships.end() &&
+        !RigExecParseReadPhase(influences->second.readPhase.GetString(),
+                               &binding->transformPhase, error))
+        return false;
+    const auto transform = targets(_armatureTokens->transform);
+    if (transform.size() == 1)
+        binding->transform = transform[0];
+    binding->externalInputs = DeclaredInputs(mover);
+    return true;
+}
+
+// The payload from the declared inputs and the provider values. Pure: no
+// stage, registry or shared state.
+bool
+Payload(const std::vector<VtValue> &inputs,
+        const RigExecExternalProviderValues &values, VtValue *data)
+{
+    if (inputs.size() != kInputCount || !values.influenceTransforms ||
+        values.influenceTransforms->empty())
+        return false;
+    VtIntArray indices;
+    VtFloatArray weights, mask;
+    int slots = 0;
+    bool fromBase = false, transformInput = false;
+    const char *method = nullptr;
+    if (!As(inputs[kJointIndices], &indices) ||
+        !As(inputs[kJointWeights], &weights) ||
+        !As(inputs[kElementSize], &slots) ||
+        !Text(inputs[kSkinningMethod], &method) || !As(inputs[kMask], &mask) ||
+        !As(inputs[kUseBaseInput], &fromBase) ||
+        !As(inputs[kTransformInput], &transformInput))
+        return false;
+    if (transformInput && !values.transform)
+        return false;
+    const bool dualQuaternion = Is(method, "dualQuaternion");
+    if (!Is(method, "classicLinear") && !dualQuaternion)
+        return false;
+    const auto &transforms = *values.influenceTransforms;
+    if (!RigExecLayeredSkinAccepts(
+            transforms.data(), transforms.size(), indices.cdata(),
+            indices.size(), weights.cdata(), weights.size(), slots,
+            mask.cdata(), mask.size(), values.basePoints.size()))
+        return false;
+    VtDictionary payload;
+    payload["matrices"] =
+        VtValue(VtMatrix4dArray(transforms.begin(), transforms.end()));
+    payload["indices"] = VtValue(indices);
+    payload["weights"] = VtValue(weights);
+    payload["mask"] = VtValue(mask);
+    payload["slots"] = VtValue(slots);
+    payload["dq"] = VtValue(dualQuaternion);
+    payload["base"] = VtValue(fromBase ? VtVec3fArray(values.basePoints.begin(),
+                                                      values.basePoints.end())
+                                       : VtVec3fArray());
+    payload["inputMatrix"] =
+        VtValue(transformInput ? *values.transform : GfMatrix4d(1));
+    *data = VtValue(payload);
+    return true;
+}
+
+bool
+Assemble(const RigExecExternalInputContext &ctx, VtValue *data)
+{
+    return Payload(ctx.inputs, ctx.values, data);
+}
+
+// The payload entry \p key as T, or null.
+template <class T>
+const T *
+Entry(const VtDictionary &payload, const char *key)
+{
+    const auto found = payload.find(key);
+    return found != payload.end() && found->second.IsHolding<T>()
+               ? &found->second.UncheckedGet<T>()
+               : nullptr;
+}
+
+bool
+Apply(const VtValue &data, std::vector<GfVec3f> *points)
+{
+    if (!data.IsHolding<VtDictionary>())
+        return false;
+    const auto &p = data.UncheckedGet<VtDictionary>();
+    const auto *matrices = Entry<VtMatrix4dArray>(p, "matrices");
+    const auto *indices = Entry<VtIntArray>(p, "indices");
+    const auto *weights = Entry<VtFloatArray>(p, "weights");
+    const auto *mask = Entry<VtFloatArray>(p, "mask");
+    const auto *base = Entry<VtVec3fArray>(p, "base");
+    const auto *slots = Entry<int>(p, "slots");
+    const auto *dq = Entry<bool>(p, "dq");
+    const auto *inputMatrix = Entry<GfMatrix4d>(p, "inputMatrix");
+    if (!matrices || !indices || !weights || !mask || !base || !slots || !dq ||
+        !inputMatrix)
+        return false;
+    if (*slots < 1)
+        return false;
+    const RigExecSkinLayout layout{
+        matrices->cdata(), matrices->size(), indices->cdata(), weights->cdata(),
+        indices->size(),   size_t(*slots),   points->size()};
+    return RigExecApplyLayeredSkinKernel<GfVec3f, GfVec3d, GfMatrix4d>(
+        layout, *dq, base->cdata(), base->size(), mask->cdata(), mask->size(),
+        *inputMatrix, points->data(), points->size());
+}
+
+// .rigexec playback: the compiled rig is a format tag and the frame bytes are
+// empty. The kernel assembles and deforms through Payload and Apply from
+// the declared inputs and the provider values playback evaluated, so a
+// posed playback follows its influences.
+constexpr char kCompiledDataTag[] = {'R', 'L', 'S', '1'};
+
+bool
+EncodeCompiledData(const RigExecRevisionBinding &,
+                   std::vector<uint8_t> *compiledRig)
+{
+    compiledRig->assign(kCompiledDataTag,
+                        kCompiledDataTag + sizeof(kCompiledDataTag));
+    return true;
+}
+
+bool
+Encode(const VtValue &, const RigExecRevisionBinding &binding,
+       std::vector<uint8_t> *compiledRig, std::vector<uint8_t> *frame)
+{
+    frame->clear();
+    return EncodeCompiledData(binding, compiledRig);
+}
+
+std::shared_ptr<const void>
+Prepare(const uint8_t *compiledRig, size_t size, std::string *error)
+{
+    if (size != sizeof(kCompiledDataTag) ||
+        std::memcmp(compiledRig, kCompiledDataTag, size) != 0) {
+        if (error)
+            *error = "not a layered skin compiled rig";
+        return nullptr;
+    }
+    return std::make_shared<int>(1);
+}
+
+bool
+Play(const void *, const uint8_t *, size_t, const RigExecExternalPhasedPoints *,
+     size_t, const RigExecExternalInputValue *inputs, size_t inputCount,
+     const RigExecExternalProviders &providers, float *xyz, size_t count)
+{
+    const RigExecExternalPlaybackProviders values(providers);
+    VtValue data;
+    return Payload(RigExecExternalPlaybackInputs(inputs, inputCount),
+                   RigExecExternalProviderValues(values.values), &data) &&
+           RigExecExternalPlaybackApply(data, &Apply, xyz, count);
+}
+
+bool
+Validate(const RigExecMoverValidateContext &ctx, std::string *error)
+{
+    auto reject = [&](const std::string &message) {
+        *error = ctx.prim.GetPath().GetString() + ": " + message;
+        return false;
+    };
+    if (ctx.targets.size() != 1 ||
+        ctx.targets[0].GetNameToken() != _armatureTokens->points ||
+        !UsdGeomPointBased(
+            ctx.stage->GetPrimAtPath(ctx.targets[0].GetPrimPath())))
+        return reject("requires one native point3f[] points property");
+    VtVec3fArray points;
+    ctx.stage->GetAttributeAtPath(ctx.targets[0]).Get(&points);
+    auto influences =
+        RigExecRelationshipTargets(ctx.prim, _relTokens->influences);
+    if (influences.empty())
+        return reject("no influences");
+    for (const auto &path : influences) {
+        auto type = ctx.stage->GetPrimAtPath(path).GetTypeName();
+        if (type != _armatureTokens->RigExecJoint &&
+            type != _armatureTokens->RigExecControl)
+            return reject("invalid frame provider");
+    }
+    // The authored layout against identity frames and the authored points.
+    std::vector<VtValue> inputs;
+    for (const auto &key : DeclaredInputs(ctx.prim.GetPath())) {
+        VtValue value = key.fallback;
+        if (const UsdAttribute a =
+                ctx.prim.GetAttribute(key.path.GetNameToken()))
+            a.Get(&value);
+        inputs.push_back(value);
+    }
+    RigExecProviderValues values;
+    values.basePoints.assign(points.begin(), points.end());
+    std::vector<GfMatrix4d> matrices(influences.size(), GfMatrix4d(1));
+    values.influenceTransforms = &matrices;
+    GfMatrix4d transform(1);
+    values.transform = &transform;
+    VtValue data;
+    return Payload(inputs, RigExecExternalProviderValues(values), &data) ||
+           reject("invalid skin layout, method or mask");
+}
+
+RigExecMoverHandler
+Handler(const char *type)
+{
+    RigExecMoverHandler handler(
+        type, &RigExecFixedMoverOp<RigExecRevisionOp::External>,
+        RigExecMoverDomain::Points);
+    handler.singleTarget = true;
+    handler.frameRelationships = {rigExec::SchemaAttrText::rigExecInfluences,
+                                  rigExec::SchemaAttrText::rigExecTransform};
+    handler.transformRelationship = rigExec::SchemaAttrText::rigExecInfluences;
+    handler.bind = &Bind;
+    handler.validate = &Validate;
+    handler.declareExternalInputs = &DeclareInputs;
+    handler.compileScene = &CompileScene;
+    handler.assembleExternal = &Assemble;
+    handler.applyExternal = &Apply;
+    handler.encodeExternalCompiledData = &EncodeCompiledData;
+    handler.encodeExternal = &Encode;
+    handler.runtimeKernel.prepare = &Prepare;
+    handler.runtimeKernel.applyWithProviders = &Play;
+    handler.hasScalarOracle = false;
+    handler.layoutAttributes = {
+        _armatureTokens->jointIndices, _armatureTokens->jointWeights,
+        _armatureTokens->elementSize, _armatureTokens->inputsMask,
+        _armatureTokens->inputsUseBaseInput};
+    return handler;
+}
+} // namespace
+RIGEXEC_REGISTER_MOVER(
+    Handler(rigExec::SchemaTypeName::RigExecLayeredSkinMover));

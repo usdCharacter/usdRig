@@ -20,9 +20,9 @@
 // joint's rest frame and its posed frame together and comparing the two
 // halves against each other proves nothing.
 // argv[1] = path to the examples directory.
-#include "rigExec/inputReplay.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/bakedProgramImpl.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/bakedProgramImpl.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/getenv.h"
@@ -491,11 +491,12 @@ TestARestSpaceConnectedToAComputedSpaceHasAProducer(
     };
     bool produced = false;
     for (size_t rest = 0; rest < B.steps.size(); ++rest)
-        if (B.steps[rest].kind == RigExecBakedStepKind::RestCompose &&
+        if (RigExecBakedIdentityOf(B, B.steps[rest]).kind ==
+                RigExecBakedStepKind::RestCompose &&
             contains(B.steps[rest].writes, RigExecBakedSlotDomain::Rest,
                      uint32_t(slot->second)))
             for (size_t sourceOp = 0; sourceOp < B.steps.size(); ++sourceOp)
-                if (B.steps[sourceOp].kind ==
+                if (RigExecBakedIdentityOf(B, B.steps[sourceOp]).kind ==
                     RigExecBakedStepKind::SpaceExpression)
                     for (const auto &write : B.steps[sourceOp].writes)
                         if (write.domain == RigExecBakedSlotDomain::SpaceValue)

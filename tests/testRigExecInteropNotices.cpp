@@ -1,10 +1,10 @@
 // Compile notices for UsdSkel data RigExec does not reproduce: unnormalized
 // skin weights, constant-interpolation skin bindings, and blend shape
 // inbetweens / normalOffsets.
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExecSchema/schemaNames.h"
 
 #include "pxr/usd/usd/stage.h"
-#include "pxr/usd/usdSkel/blendShape.h"
 
 #include <cstdio>
 #include <string>
@@ -108,12 +108,22 @@ TestBlendShapeNotices()
             .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray,
                              false)
             .Set(VtVec3fArray{GfVec3f(0)});
-        const UsdSkelBlendShape shape =
-            UsdSkelBlendShape::Define(stage, SdfPath("/Asset/Shapes/S"));
-        shape.CreateOffsetsAttr().Set(VtVec3fArray{GfVec3f(1, 0, 0)});
+        const UsdPrim shape = stage->DefinePrim(
+            SdfPath("/Asset/Shapes/S"), TfToken(BlendShapeText::typeName));
+        shape
+            .CreateAttribute(TfToken(BlendShapeText::offsets),
+                             SdfValueTypeNames->Vector3fArray, false,
+                             SdfVariabilityUniform)
+            .Set(VtVec3fArray{GfVec3f(1, 0, 0)});
         if (authored) {
-            shape.CreateNormalOffsetsAttr().Set(VtVec3fArray{GfVec3f(0, 1, 0)});
-            shape.CreateInbetween(TfToken("half"));
+            shape
+                .CreateAttribute(TfToken(BlendShapeText::normalOffsets),
+                                 SdfValueTypeNames->Vector3fArray, false,
+                                 SdfVariabilityUniform)
+                .Set(VtVec3fArray{GfVec3f(0, 1, 0)});
+            shape.CreateAttribute(
+                TfToken(std::string(BlendShapeText::inbetweensPrefix) + "half"),
+                SdfValueTypeNames->Point3fArray, false, SdfVariabilityUniform);
         }
         stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
         const UsdPrim input = stage->DefinePrim(

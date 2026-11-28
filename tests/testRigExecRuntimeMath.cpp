@@ -3,7 +3,7 @@
 // Every comparison is exact (bitwise, including signed zeros and NaN
 // payloads): the runtime must perform the SAME operations in the SAME
 // order as Gf. Randomized inputs (fixed seed) plus edge cases.
-#include "rigExecRuntime/runtimeMath.h"
+#include "rigExecMath/runtimeMath.h"
 #include "rigExecMath/geometryKernels.h"
 
 #include "pxr/base/gf/matrix3d.h"
@@ -30,13 +30,13 @@ namespace {
 int _failures = 0;
 std::string _context;
 
-#define CHECK(cond)                                                         \
-    do {                                                                    \
-        if (!(cond)) {                                                      \
-            ++_failures;                                                    \
-            std::printf("FAIL %s:%d [%s]: %s\n", __FILE__, __LINE__,         \
-                        _context.c_str(), #cond);                           \
-        }                                                                   \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++_failures;                                                       \
+            std::printf("FAIL %s:%d [%s]: %s\n", __FILE__, __LINE__,           \
+                        _context.c_str(), #cond);                              \
+        }                                                                      \
     } while (0)
 
 uint64_t _rngState = 0x243F6A8885A308D3ull;
@@ -55,8 +55,7 @@ _NextBits()
 double
 _RandDouble(double lo = -10.0, double hi = 10.0)
 {
-    const double t =
-        (double)(_NextBits() >> 11) * (1.0 / 9007199254740992.0);
+    const double t = (double)(_NextBits() >> 11) * (1.0 / 9007199254740992.0);
     return lo + t * (hi - lo);
 }
 
@@ -208,8 +207,7 @@ _ToRr(const GfVec2f &v)
 GfVec4d
 _RandGfVec4d()
 {
-    return GfVec4d(_RandDouble(), _RandDouble(), _RandDouble(),
-                   _RandDouble());
+    return GfVec4d(_RandDouble(), _RandDouble(), _RandDouble(), _RandDouble());
 }
 
 rigExec::RrVec4d
@@ -247,9 +245,8 @@ rigExec::RrMat4d
 _ToRr(const GfMatrix4d &m)
 {
     return rigExec::RrMat4d(
-        m[0][0], m[0][1], m[0][2], m[0][3], m[1][0], m[1][1], m[1][2],
-        m[1][3], m[2][0], m[2][1], m[2][2], m[2][3], m[3][0], m[3][1],
-        m[3][2], m[3][3]);
+        m[0][0], m[0][1], m[0][2], m[0][3], m[1][0], m[1][1], m[1][2], m[1][3],
+        m[2][0], m[2][1], m[2][2], m[2][3], m[3][0], m[3][1], m[3][2], m[3][3]);
 }
 
 GfQuatd
@@ -299,9 +296,12 @@ _TestVec3d()
         }
     }
     // Edges: zeros (eps path), tiny straddling 1e-10, huge, signed zero.
-    const std::vector<GfVec3d> edges = {
-        GfVec3d(0), GfVec3d(1e-11), GfVec3d(1e-10), GfVec3d(1e-9),
-        GfVec3d(1e15, -1e15, 1e-15), GfVec3d(-0.0, 0.0, -1.0)};
+    const std::vector<GfVec3d> edges = {GfVec3d(0),
+                                        GfVec3d(1e-11),
+                                        GfVec3d(1e-10),
+                                        GfVec3d(1e-9),
+                                        GfVec3d(1e15, -1e15, 1e-15),
+                                        GfVec3d(-0.0, 0.0, -1.0)};
     for (const GfVec3d &a : edges) {
         const rigExec::RrVec3d ra = _ToRr(a);
         CHECK(_SameBits(a.GetLengthSq(), ra.GetLengthSq()));
@@ -348,8 +348,8 @@ _TestVec3f()
             CHECK(_SameVec3f(a / s, ra / s));
         }
     }
-    const std::vector<GfVec3f> edges = {
-        GfVec3f(0), GfVec3f(1e-11f), GfVec3f(1e-9f), GfVec3f(1e20f)};
+    const std::vector<GfVec3f> edges = {GfVec3f(0), GfVec3f(1e-11f),
+                                        GfVec3f(1e-9f), GfVec3f(1e20f)};
     for (const GfVec3f &a : edges) {
         const rigExec::RrVec3f ra = _ToRr(a);
         CHECK(_SameVec3f(a.GetNormalized(), ra.GetNormalized()));
@@ -431,26 +431,20 @@ _TestFree()
         const double v = _RandDouble(-5.0, 5.0);
         const double lo = _RandDouble(-5.0, 0.0);
         const double hi = _RandDouble(0.0, 5.0);
-        CHECK(_SameBits(GfClamp(v, lo, hi),
-                        rigExec::RrClamp(v, lo, hi)));
-        CHECK(_SameBits(GfSqrt(std::fabs(v)),
-                        rigExec::RrSqrt(std::fabs(v))));
+        CHECK(_SameBits(GfClamp(v, lo, hi), rigExec::RrClamp(v, lo, hi)));
+        CHECK(_SameBits(GfSqrt(std::fabs(v)), rigExec::RrSqrt(std::fabs(v))));
         const float fv = _RandFloat(-5.0f, 5.0f);
         CHECK(_SameBits(GfClamp(fv, (float)lo, (float)hi),
                         rigExec::RrClamp(fv, (float)lo, (float)hi)));
-        CHECK(_SameBits(GfSqrt(std::fabs(fv)),
-                        rigExec::RrSqrt(std::fabs(fv))));
-        CHECK(rigExec::RrIsClose(v, lo, 0.5) ==
-              GfIsClose(v, lo, 0.5));
+        CHECK(_SameBits(GfSqrt(std::fabs(fv)), rigExec::RrSqrt(std::fabs(fv))));
+        CHECK(rigExec::RrIsClose(v, lo, 0.5) == GfIsClose(v, lo, 0.5));
         const GfVec3d a = _RandGfVec3d();
         const GfVec3d b = _RandGfVec3d();
         CHECK(rigExec::RrIsClose(_ToRr(a), _ToRr(b), 0.5) ==
               GfIsClose(a, b, 0.5));
         CHECK(_SameBits(GfSqr(v), rigExec::RrSqr(v)));
-        CHECK(_SameBits(GfRadiansToDegrees(v),
-                        rigExec::RrRadiansToDegrees(v)));
-        CHECK(_SameBits(GfDegreesToRadians(v),
-                        rigExec::RrDegreesToRadians(v)));
+        CHECK(_SameBits(GfRadiansToDegrees(v), rigExec::RrRadiansToDegrees(v)));
+        CHECK(_SameBits(GfDegreesToRadians(v), rigExec::RrDegreesToRadians(v)));
         double gs, gc, rs, rc;
         GfSinCos(v, &gs, &gc);
         rigExec::RrSinCos(v, &rs, &rc);
@@ -458,8 +452,7 @@ _TestFree()
         CHECK(_SameBits(gc, rc));
     }
     const double nan = std::numeric_limits<double>::quiet_NaN();
-    CHECK(_SameBits(GfClamp(nan, -1.0, 1.0),
-                    rigExec::RrClamp(nan, -1.0, 1.0)));
+    CHECK(_SameBits(GfClamp(nan, -1.0, 1.0), rigExec::RrClamp(nan, -1.0, 1.0)));
 }
 
 void
@@ -503,8 +496,7 @@ _TestMat3d()
         GfMatrix3d(1, 2, 3, 1, 2, 3, 4, 5, 6)};
     for (const GfMatrix3d &a : singulars) {
         CHECK(_SameMat3d(a.GetInverse(), _ToRr(a).GetInverse()));
-        CHECK(_SameBits(a.GetDeterminant(),
-                        _ToRr(a).GetDeterminant()));
+        CHECK(_SameBits(a.GetDeterminant(), _ToRr(a).GetDeterminant()));
     }
 }
 
@@ -546,17 +538,14 @@ _TestMat4d()
         const GfVec4d w = _RandGfVec4d();
         CHECK(_SameVec3d(a.Transform(v), ra.Transform(_ToRr(v))));
         CHECK(_SameVec3d(a.TransformDir(v), ra.TransformDir(_ToRr(v))));
-        CHECK(_SameVec3d(a.TransformAffine(v),
-                         ra.TransformAffine(_ToRr(v))));
+        CHECK(_SameVec3d(a.TransformAffine(v), ra.TransformAffine(_ToRr(v))));
         CHECK(_SameVec4d(a * w, ra * _ToRr(w)));
         CHECK(_SameVec4d(w * a, _ToRr(w) * ra));
         CHECK(_SameVec4d(a * w, ra * _ToRr(w)));
-        CHECK(_SameVec3d(a.ExtractTranslation(),
-                         ra.ExtractTranslation()));
-        CHECK(_SameMat3d(a.ExtractRotationMatrix(),
-                         ra.ExtractRotationMatrix()));
-        CHECK(_SameQuatd(a.ExtractRotationQuat(),
-                         ra.ExtractRotationQuat()));
+        CHECK(_SameVec3d(a.ExtractTranslation(), ra.ExtractTranslation()));
+        CHECK(
+            _SameMat3d(a.ExtractRotationMatrix(), ra.ExtractRotationMatrix()));
+        CHECK(_SameQuatd(a.ExtractRotationQuat(), ra.ExtractRotationQuat()));
         CHECK(_SameRotation(a.ExtractRotation(), ra.ExtractRotation()));
         for (int row = 0; row < 4; ++row) {
             CHECK(_SameVec4d(a.GetRow(row), ra.GetRow(row)));
@@ -602,8 +591,7 @@ _TestMat4d()
         {
             GfMatrix4d ma = a;
             rigExec::RrMat4d mr = ra;
-            CHECK(ma.Orthonormalize(false) ==
-                  mr.Orthonormalize(false));
+            CHECK(ma.Orthonormalize(false) == mr.Orthonormalize(false));
             CHECK(_SameMat4d(ma, mr));
         }
     }
@@ -612,8 +600,7 @@ _TestMat4d()
         GfMatrix4d(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)};
     for (const GfMatrix4d &a : singulars) {
         CHECK(_SameMat4d(a.GetInverse(), _ToRr(a).GetInverse()));
-        CHECK(_SameBits(a.GetDeterminant(),
-                        _ToRr(a).GetDeterminant()));
+        CHECK(_SameBits(a.GetDeterminant(), _ToRr(a).GetDeterminant()));
         CHECK(_SameQuatd(a.ExtractRotationQuat(),
                          _ToRr(a).ExtractRotationQuat()));
     }
@@ -629,8 +616,7 @@ _TestMat4d()
         const GfMatrix4d a(1.0);
         const GfVec3d v = _RandGfVec3d();
         CHECK(_SameVec3d(a.Transform(v), _ToRr(a).Transform(_ToRr(v))));
-        CHECK(_SameVec3d(a.TransformDir(v),
-                         _ToRr(a).TransformDir(_ToRr(v))));
+        CHECK(_SameVec3d(a.TransformDir(v), _ToRr(a).TransformDir(_ToRr(v))));
     }
 }
 
@@ -667,14 +653,13 @@ _TestQuatd()
         const GfVec3d v = _RandGfVec3d();
         CHECK(_SameVec3d(a.Transform(v), ra.Transform(_ToRr(v))));
         const double alpha = _RandDouble(0.0, 1.0);
-        CHECK(_SameQuatd(GfSlerp(alpha, a.GetNormalized(),
-                                 b.GetNormalized()),
-                         rigExec::RrSlerp(alpha, ra.GetNormalized(),
-                                          rb.GetNormalized())));
+        CHECK(_SameQuatd(
+            GfSlerp(alpha, a.GetNormalized(), b.GetNormalized()),
+            rigExec::RrSlerp(alpha, ra.GetNormalized(), rb.GetNormalized())));
     }
     // Short quaternions normalize to identity.
-    const std::vector<GfQuatd> shorts = {
-        GfQuatd(0.0, GfVec3d(0)), GfQuatd(1e-12, GfVec3d(1e-12))};
+    const std::vector<GfQuatd> shorts = {GfQuatd(0.0, GfVec3d(0)),
+                                         GfQuatd(1e-12, GfVec3d(1e-12))};
     for (const GfQuatd &a : shorts) {
         CHECK(_SameQuatd(a.GetNormalized(), _ToRr(a).GetNormalized()));
         GfQuatd ma = a;
@@ -736,10 +721,8 @@ _TestRotation()
         const rigExec::RrRotation ra(_ToRr(x), angle);
         CHECK(_SameQuatd(a.GetQuat(), ra.GetQuat()));
         CHECK(_SameVec3d(
-            a.Decompose(GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
-                        GfVec3d(0, 0, 1)),
-            ra.Decompose(rigExec::RrVec3d(1, 0, 0),
-                         rigExec::RrVec3d(0, 1, 0),
+            a.Decompose(GfVec3d(1, 0, 0), GfVec3d(0, 1, 0), GfVec3d(0, 0, 1)),
+            ra.Decompose(rigExec::RrVec3d(1, 0, 0), rigExec::RrVec3d(0, 1, 0),
                          rigExec::RrVec3d(0, 0, 1))));
     }
 }
@@ -751,28 +734,29 @@ _TestPartialTransformShortestArc()
     // The expected transform rotates about a known off-origin pivot.
     const GfVec3d pivot(2, -3, 7);
     for (const GfVec3d rawAxis : {GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
-                                GfVec3d(0, 0, 1), GfVec3d(1, -2, 3)}) {
+                                  GfVec3d(0, 0, 1), GfVec3d(1, -2, 3)}) {
         const GfVec3d axis = rawAxis.GetNormalized();
         for (int angle = -175; angle <= 175; angle += 5) {
             _context = "partial shortest arc " + std::to_string(angle);
             GfMatrix4d transform(1);
             transform.SetRotate(GfRotation(axis, double(angle)));
-            transform.SetTranslateOnly(
-                pivot - transform.TransformDir(pivot) + axis * 0.7);
+            transform.SetTranslateOnly(pivot - transform.TransformDir(pivot) +
+                                       axis * 0.7);
             const auto runtimeTransform = _ToRr(transform);
             for (double weight : {0.0, 0.125, 0.5, 0.9, 1.0}) {
-                const auto native = rigExec::RigExecPartialTransform(
-                    transform, weight);
-                const auto runtime = rigExec::RrPartialTransform(
-                    runtimeTransform, weight);
+                const auto native =
+                    rigExec::RigExecPartialTransform(transform, weight);
+                const auto runtime =
+                    rigExec::RrPartialTransform(runtimeTransform, weight);
                 CHECK(_SameMat4d(native, runtime));
                 GfMatrix4d expected(1);
                 expected.SetRotate(GfRotation(axis, angle * weight));
-                expected.SetTranslateOnly(
-                    pivot - expected.TransformDir(pivot) + axis * (0.7 * weight));
+                expected.SetTranslateOnly(pivot - expected.TransformDir(pivot) +
+                                          axis * (0.7 * weight));
                 for (int row = 0; row < 4; ++row) {
                     for (int col = 0; col < 4; ++col) {
-                        CHECK(std::abs(native[row][col] - expected[row][col]) < 1e-11);
+                        CHECK(std::abs(native[row][col] - expected[row][col]) <
+                              1e-11);
                     }
                 }
             }
@@ -780,7 +764,7 @@ _TestPartialTransformShortestArc()
     }
 }
 
-}  // namespace
+} // namespace
 
 int
 main()

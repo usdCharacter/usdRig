@@ -84,7 +84,8 @@ if (GENERATOR MATCHES "Ninja" AND _restricted_path)
     message(STATUS "${_make_name} copies removed from PATH for child configures")
 endif()
 
-set(_manifests runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
+set(_manifests runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes
+    opCoreSources)
 set(_staged "${BINARY_DIR}/sdkManifests")
 set(_module "${SOURCE_DIR}/cmake/installManifests.cmake")
 set(_export "${SOURCE_DIR}/cmake/exportManifests.cmake")
@@ -424,6 +425,7 @@ function(_produce_manifests inputs_dir stage_dir tag)
     file(WRITE "${inputs_dir}/runtimeIncludes.txt" "include/${tag}/runtime\n")
     file(WRITE "${inputs_dir}/evalCoreSources.txt" "libs/rigExecMath/${tag}Core.cpp\n")
     file(WRITE "${inputs_dir}/evalCoreIncludes.txt" "include/${tag}/evalCore\n")
+    file(WRITE "${inputs_dir}/opCoreSources.txt" "libs/rigExecOps/${tag}Op.cpp\n")
     execute_process(COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_ROOT=${SOURCE_DIR}" "-DBUILD_DIR=${inputs_dir}" "-DOUT_DIR=${stage_dir}"
         -P "${_export}"
@@ -473,7 +475,8 @@ if (_broot)
     _destdir_logical_root("${_gdStage}" "${_gdLogical}" _gdRoot)
     set(_gStage2 "${SCRATCH_DIR}/refreshStaged2")
     set(_gInputs2 "${SCRATCH_DIR}/refreshInputs2")
-    foreach (_pair runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
+    foreach (_pair runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes
+                   opCoreSources)
         file(COPY "${_gStage}/${_pair}.txt" DESTINATION "${_gStage2}")
         # The snapshot build tree moves, so its input paths move with it.
         file(READ "${_gInputs}/${_pair}.txt" _moved_input)

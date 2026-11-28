@@ -8,7 +8,7 @@
 // input slots (inputs.h); every other stage value it reads is static data
 // the bake captured into the file, read through RrStatic. Family .cpps own
 // their private scratch (solver live rests, revision packets, weight
-// oracles) behind the extension points on RrProgram, and implement the
+// fields) behind the extension points on RrProgram, and implement the
 // pipeline functions declared here. The framework implements
 // Open/closure/walk/publish.
 #ifndef RIGEXEC_RUNTIME_STORE_H
@@ -17,8 +17,10 @@
 #include "rigExecBinary/external.h"
 #include "rigExecBinary/format.h"
 #include "rigExecRuntime/inputs.h"
+#include "rigExecRuntime/opNodes.h"
 #include "rigExecRuntime/values.h"
 #include "rigExecGraph/opValues.h"
+#include "rigExecGraph/providerInputs.h"
 #include "rigExecGraph/providerRecords.h"
 #include "rigExecGraph/windowHistory.h"
 
@@ -28,6 +30,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 #include <unordered_map>
@@ -335,7 +338,7 @@ struct RrChainPublish {
 
 // One resolved weight field publication.
 // Per-consumer pure weight field result, preserved when its producer skips.
-struct RrOracleReadContext {
+struct RrWeightScalarReadContext {
     std::map<uint32_t, std::vector<int32_t>> versionsBySlot;
     std::map<std::pair<int32_t, int32_t>, size_t> scalarReadIndices;
     std::map<std::pair<int32_t, int32_t>, size_t> pointReadIndices;
@@ -361,7 +364,7 @@ struct RrDerivedPublish {
     uint32_t target = 0;
     RrRetainedArray<RrVec3f> result;
     /// A surface projector target publishes a matrix primvar instead,
-    /// when this run measured one.
+    /// when this run measured one or its ray missed.
     bool matrixTarget = false;
     bool haveMatrix = false;
     RrMat4d matrix;
@@ -374,20 +377,6 @@ struct RrWeightScratch;
 
 // The frame's working state. Sized once at Open from the decoded tables;
 // a run mutates values, never sizes.
-// Conversion storage belongs to one provider op. All slots are sized at Open,
-// so Read* pointers stay stable while that op evaluates, including repeated IDs.
-struct RrProviderConversionScratch {
-    std::vector<RrMat4d> matrices;
-    std::vector<RrPointFrame> frames;
-    std::vector<RrVec3d> vectors;
-    std::vector<double> scalars;
-};
-
-struct RrProviderRefreshScratch {
-    std::vector<RrPointFrame> baseInputs, finInputs, baseOutputs, finOutputs;
-    std::vector<uint8_t> blocked;
-};
-
 struct RrStore {
     RigExecOpWorkspace opWorkspace;
     RigExecOpExecution opExecution;
@@ -433,8 +422,13 @@ struct RrStore {
     /// key over its float arrays' bytes.
     std::vector<std::string> packetContentKeys;
     std::vector<RigExecProviderPlainState> providerValues;
-    std::vector<RrProviderConversionScratch> providerConversionScratch;
-    std::vector<RrProviderRefreshScratch> providerRefreshScratch;
+    /// Per provider op: the authority and the unavailable input its op node
+    /// stored, read when it publishes its result in the same step.
+    std::vector<std::pair<uint8_t, int32_t>> providerOpPending;
+    /// Per provider value producer (eval::spaces::ProviderProducers order):
+    /// the authority and blocked flag its ProviderSelect node stored, read
+    /// when it publishes its answer in the same step.
+    std::vector<std::pair<uint8_t, uint8_t>> providerAnswerPending;
     std::vector<char> propertyPublished;
     std::vector<char> chainHaveBase, chainBaseDirty, lastHaveBase;
     std::vector<char> derivedHaveBase;
@@ -456,10 +450,10 @@ struct RrStore {
     std::vector<RrChainPublish> chainPublish;
     std::vector<RrDerivedPublish> derivedPublish;
     std::vector<RrWeightPacket> weightPackets;
-    // Per provider slot, what that volume's VolumePlacements step last
-    // wrote (the program's slot-indexed volumePlacement) and whether it has
-    // run. Sized at Open and never cleared, so a step the closure skipped
-    // keeps its placement. The oracle and the published weight frames
+    // Per provider slot, what that volume's VolumePlacement op node last
+    // stored (the program's slot-indexed volumePlacement) and whether it has
+    // run. Sized at Open and never cleared, so a node the closure skipped
+    // keeps its placement. The weight field and the published weight frames
     // read them.
     std::vector<RrMat4d> volumePlacement;
     std::vector<char> volumePlaced;
@@ -511,7 +505,7 @@ struct RrStore {
     std::map<uint32_t, RrWeightFieldPublish> weightFields;
     std::vector<RrWeightFieldResult> weightFieldResults;
     std::vector<char> weightFieldChanged;
-    std::vector<RrOracleReadContext> weightFieldContexts;
+    std::vector<RrWeightScalarReadContext> weightFieldContexts;
     std::vector<RrMat4d> volumePlacementBase;
     std::vector<char> volumePlacedBase;
     std::vector<char> jointMatrixPublished;
@@ -535,6 +529,8 @@ struct RrStore {
     // on the owner thread after the join.
     std::vector<std::string> opErrors;
     std::vector<char> opFailed;
+    // The last failed run's failure: its lowest failed op's.
+    std::vector<std::string> failureLines;
     // Windowed operations (rigExecGraph/windowHistory.h), per windowed op:
     // the packet its body captured at the last run (written only by that
     // body), the earlier ticks' packets (oldest first, at most its frames),
@@ -707,6 +703,8 @@ struct RrProgram {
     fb::RigExecWireRequiredStageFramesAdmission requiredStageFramesAdmission;
     bool requiredStageFramesFullOwed = false;
     RigExecCompiledGraph opGraph;
+    /// File.op_graph's nodes, compiled at Open; null without them.
+    std::unique_ptr<RrOpNodes> opNodes;
     /// The windowed operations, settled from the common graph at compile
     /// (RigExecSettleWindowLayout), and the canonical-op mask of a history
     /// tick.
@@ -722,6 +720,12 @@ struct RrProgram {
     /// Per step: the windowed op whose body it is, or -1.
     std::vector<int32_t> windowOfStep;
     RigExecProviderPlainProgram providerProgram;
+    /// Per op node: the provider value producer its ProviderSelect node
+    /// answers, the provider op it runs and the provider refresh it runs,
+    /// or -1.
+    std::vector<int64_t> providerAnswerOfNode, providerOpOfNode, refreshOfNode;
+    /// Per op node: the solver whose frames it stores, or -1.
+    std::vector<int64_t> solverOfNode;
     /// What Open decoded. A program a test assembles by hand leaves it
     /// null and points the tables below at its own.
     std::unique_ptr<RigExecWireFile> file;
@@ -733,7 +737,7 @@ struct RrProgram {
     const RigExecWireConstants *constants = nullptr;
     const RigExecWireDomainPose *poses = nullptr;
     const RigExecWireDomainGeometry *geometry = nullptr;
-    /// The weight objects WeightPacket steps build: the leading entries of
+    /// The weight objects weight packet op steps build: the leading entries of
     /// geometry->weightObjects, before the envelope-only ones.
     size_t stepWeightObjects = 0;
     /// Each path node's text, by id: one pass, a parent before its child.
@@ -763,9 +767,8 @@ struct RrProgram {
     /// published point content version over the points' bytes and fails if
     /// the two disagree on a change.
     bool verifyChainVersions = false;
-    /// What the epilogue visits instead of every step, as the native
-    /// RigExecBakedProgramImpl::EpilogueIndex: indexed with the op graph
-    /// (RrIndexEpilogue) and folded after each run (RrFoldHeldSteps).
+    /// What the epilogue visits instead of every step: indexed with the op
+    /// graph (RrIndexEpilogue) and folded after each run (RrFoldHeldSteps).
     struct EpilogueIndex {
         /// Per solver, 1 where a Solve step publishes it.
         std::vector<char> aliveSolver;
@@ -902,6 +905,20 @@ struct RrProgram {
         return TextOrEmpty(id) == literal;
     }
 
+    // Whether text \p id spells \p text, without copying it.
+    bool TextEquals(uint32_t id, std::string_view text) const
+    {
+        if (id < nodeText.size()) {
+            return nodeText[id] == text;
+        }
+        if (id < inputState.extraTokenBase) {
+            return false;
+        }
+        const size_t k = size_t(id - inputState.extraTokenBase);
+        return k < inputState.extraTokens.size() &&
+               inputState.extraTokens[k] == text;
+    }
+
     // Registered read \p read, bound in place.
     const RigExecWireInput &RegisteredInput(int32_t read) const
     {
@@ -1013,20 +1030,143 @@ bool RrWeightSizeScratch(RrProgram *program, std::string *error);
 /// Runs after the reads are bound.
 bool RrPropertySizeScratch(RrProgram *program, std::string *error);
 
-/// The property chains (RigExecRigEvaluator::_EvaluatePropertyChains,
-/// rigEvaluatorProperties.cpp) over this run's slot values, in dependency
-/// order, before every prologue: each published result lands in
-/// RrStore::propertyResults at once, so a later chain or any read crossing
-/// the target sees it. Diagnostics are appended to \p poseDiagnostics in
-/// chain order. False only when the file and the classified chains
-/// disagree.
-bool RrRunPropertyPart(RrProgram *program, size_t chain, size_t part,
-                       std::vector<std::string> *diagnostics);
+/// Resolves property lookup \p lookup (OpLookupSource::Property)
+/// into \p out, a value of its op input's \p type. False with the error
+/// that stops the evaluation: a missing or non-finite base, a failed
+/// weight field.
+bool RrLookUpProperty(const RrProgram *program, const eval::OpLookup &lookup,
+                      const RigExecTypeDesc &type, void *out,
+                      std::string *error);
+/// Stores a property op node's value in version \p version and in the
+/// phased records that read it; the base's store marks its chain valid.
+bool RrStorePropertyVersion(RrProgram *program, uint32_t version,
+                            const void *value, std::string *error);
+/// Resolves pose version lookup \p lookup (OpLookupSource::PoseVersion):
+/// the frame at fin (part 0) or base (part 1) version \p lookup.object.
+bool RrLookUpPoseVersion(const RrProgram *program, const eval::OpLookup &lookup,
+                         const RigExecTypeDesc &type, void *out,
+                         std::string *error);
+/// Stores a VolumePlacement op node's placement of slot output.object.
+bool RrStoreVolumePlacement(RrProgram *program,
+                            const eval::OpHostOutput &output, const void *value,
+                            std::string *error);
+/// The provider refresh op step \p step runs, or -1 for any other step.
+int64_t RrRefreshOf(const RrProgram *program, const RigExecWireStep &step);
+/// The provider op op step \p step runs, or -1 for any other step.
+int64_t RrProviderOpOf(const RrProgram *program, const RigExecWireStep &step);
+/// Fills a ProviderInputs lookup: one typed input list of a provider op.
+bool RrFillProviderInputs(const RrProgram *program,
+                          const eval::OpLookup &lookup,
+                          const RigExecTypeDesc &type, void *out,
+                          std::string *error);
+/// Stores a provider op's authority, unavailable input or result.
+bool RrStoreProviderValue(RrProgram *program, const eval::OpHostOutput &output,
+                          const void *value, std::string *error);
+/// The provider program's producer counts, as ProviderCandidates lookups
+/// and ProviderAnswer outputs number producers.
+eval::spaces::ProviderProducers RrProviderProducers(const RrProgram *program);
+/// The provider value producer op step \p step answers, or -1 for any other
+/// step.
+int64_t RrProviderAnswerOf(const RrProgram *program,
+                           const RigExecWireStep &step);
+/// Fills a ProviderCandidates lookup: one flag per candidate of a producer.
+bool RrProviderCandidates(const RrProgram *program,
+                          const eval::OpLookup &lookup,
+                          const RigExecTypeDesc &type, void *out,
+                          std::string *error);
+/// Stores a provider value's answer: its authority, its blocked flag, then
+/// the candidate whose value it publishes. An unavailable routed read
+/// reports its line on step \p step.
+bool RrStoreProviderAnswer(RrProgram *program, size_t step,
+                           const eval::OpHostOutput &output, const void *value,
+                           std::string *error);
+/// Resolves a RestFrame, CommitRecordGate, ProviderFrame, ProviderParentRaw,
+/// ProviderInputs or ProviderCandidates lookup.
+bool RrLookUpSpace(const RrProgram *program, const eval::OpLookup &lookup,
+                   const RigExecTypeDesc &type, void *out, std::string *error);
+/// Stores a provider's final or base matrix, a frame record's matrix or
+/// validity, a refresh's frames, a provider op's result or a provider
+/// value's answer.
+bool RrStoreSpace(RrProgram *program, size_t step,
+                  const eval::OpHostOutput &output, const void *value,
+                  std::string *error);
+/// Resolves a compose family lookup (eval::OpComposeLookupSource).
+bool RrLookUpCompose(const RrProgram *program, const eval::OpLookup &lookup,
+                     const RigExecTypeDesc &type, void *value,
+                     std::string *error);
+/// Stores a compose family output (eval::OpComposeOutputTarget).
+/// A pose interpolator's status gives step \p step its line.
+bool RrStoreCompose(RrProgram *program, size_t step,
+                    const eval::OpHostOutput &output, const void *value,
+                    std::string *error);
+/// Resolves a CommitVersions lookup.
+bool RrLookUpCommit(const RrProgram *program, const eval::OpLookup &lookup,
+                    const RigExecTypeDesc &type, void *value,
+                    std::string *error);
+/// Stores a PoseCommit node's frames in the versions its commit writes, or
+/// which of its candidates are present.
+bool RrStoreCommit(RrProgram *program, const eval::OpHostOutput &output,
+                   const void *value, std::string *error);
+/// The failure \p error of commit \p commit's PoseCommit node, as its mover
+/// reports it.
+std::string RrCommitFailure(const RrProgram *program, uint32_t commit,
+                            const std::string &error);
+namespace eval {
+struct ConstraintStepCache;
+}
+/// Resolves a constraint lookup (eval::OpConstraintLookupSource) through
+/// the calling step's \p cache.
+bool RrLookUpConstraint(RrProgram *program, eval::ConstraintStepCache &cache,
+                        const eval::OpLookup &lookup,
+                        const RigExecTypeDesc &type, void *value,
+                        std::string *error);
+/// Stores a constraint node's solved frame or measured delta from step
+/// \p step, which takes its diagnostic lines.
+bool RrStoreConstraint(RrProgram *program, size_t step,
+                       eval::ConstraintStepCache &cache,
+                       const eval::OpHostOutput &output, const void *value,
+                       std::string *error);
+/// The failure \p error of a node of constraint commit \p commit, as its
+/// mover reports it.
+std::string RrConstraintFailure(const RrProgram *program, uint32_t commit,
+                                const std::string &error);
+/// The solver a solver op node stores the frames of, or -1 for any other
+/// step.
+int64_t RrSolveOf(const RrProgram *program, const RigExecWireStep &step);
+/// Resolves a SolverInput lookup.
+bool RrLookUpSolver(const RrProgram *program, const eval::OpLookup &lookup,
+                    const RigExecTypeDesc &type, void *value,
+                    std::string *error);
+/// Stores a solver node's frames as the solver's aggregate and the outputs
+/// its commit reads; a 2D skeleton's planar flag gives step \p step its line.
+bool RrStoreSolver(RrProgram *program, size_t step,
+                   const eval::OpHostOutput &output, const void *value,
+                   std::string *error);
+/// The failure \p error of an op node of solver \p solver.
+std::string RrSolverFailure(const RrProgram *program, uint32_t solver,
+                            const std::string &error);
+/// Resolves WeightArrays lookup \p lookup: input \p lookup.read of weight
+/// object \p lookup.object, an array lent in place.
+bool RrLookUpWeight(const RrProgram *program, const eval::OpLookup &lookup,
+                    const RigExecTypeDesc &type, void *out, std::string *error);
+/// Stores a weight packet op's packet as weightPackets[output.object].
+bool RrStoreWeightPacket(RrProgram *program, const eval::OpHostOutput &output,
+                         const void *value, std::string *error);
+/// "diag <mover>" of revision \p part (from 1) of \p chain.
+std::string RrPropertyRevisionLabel(const RrProgram *program, size_t chain,
+                                    size_t part);
+/// The chain and part (0 the base) version \p version belongs to.
+bool RrPropertyPartOfVersion(const RrProgram *program, uint32_t version,
+                             size_t *chain, size_t *part);
+/// The property chain and part (1 to its revision count) op step \p step
+/// runs: revision part, and for part 1 also the chain's base. False for
+/// any other step.
+bool RrPropertyPartOf(const RrProgram *program, const RigExecWireStep &step,
+                      size_t *chain, size_t *part);
 void RrPropertyBegin(RrProgram *program);
 void RrPropertyPublish(RrProgram *program);
 void RrPropertyPublishFinished(RrProgram *program,
                                const std::vector<char> &finished);
-bool RrRunRestHead(RrProgram *program, size_t group, bool ladder);
 bool RrRunTopologyHead(RrProgram *program, size_t revision);
 bool RrRunPropertyChains(RrProgram *program,
                          std::vector<std::string> *poseDiagnostics);
@@ -1044,32 +1184,76 @@ bool RrPrologueGeometry(RrProgram *program,
 void RrShareLatticeBinds(RrProgram *program);
 
 // Step bodies by family.
-bool RrRunPoseStep(RrProgram *program, size_t step, std::string *error);
 bool RrRunGeometryStep(RrProgram *program, size_t step, std::string *error);
-bool RrWeightFieldEffectiveInputMemo(const RrProgram *, uint32_t, std::string *,
-                                     std::vector<uint32_t> *);
-bool RrRunWeightStep(RrProgram *program, size_t step, std::string *error);
-bool RrRevisionWeightFieldInput(const RrProgram *, size_t, const RrVec3f **,
-                                size_t *);
-bool RrRunRevisionWeightField(RrProgram *program, size_t fieldIndex);
-// Evaluate one compiled per-consumer field without stage or publication-map
-// lookup. The graph producer supplies the actual entering point count.
-bool RrResolveDeclaredWeightField(RrProgram *program, size_t fieldIndex,
-                                  size_t count,
-                                  const std::vector<RrVec3f> *current);
+// Whether the chain of revision \p revision sampled a base this run.
+bool RrGeoRevisionChainHasBase(const RrProgram *program, size_t revision);
+// Group \p g of point chain \p chain's final points; null when the chain has
+// none this run.
+const void *RrGeoFinalGroupPoints(const RrProgram *program, size_t chain,
+                                  size_t g);
+// Group \p g of version \p version of point chain \p chain (0 the base);
+// null when the chain has no such version or group this run.
+const void *RrGeoGroupPointsAt(const RrProgram *program, size_t chain,
+                               size_t version, size_t g);
+// RigExecBakedStoreChainGroup over the runtime's revision groups.
+bool RrStoreChainGroup(RrProgram *program, const eval::OpHostOutput &output,
+                       uint32_t g, const void *elements, size_t count,
+                       std::string *error);
+/// The point count of weight field \p field's revision-form target; false
+/// when its chain has no points this frame.
+bool RrRevisionWeightFieldCount(const RrProgram *program, size_t field,
+                                size_t *count);
+// Revision \p revision, whose groups an op range chain stores, as one that
+// always applies: its packet valid, its status ok, its acceptance Applies.
+bool RrGeoAdoptOpStored(RrProgram *program, uint32_t revision,
+                        std::string *error);
+// Revision \p revision's inputs:enabled, inputs:defaultWeight and whether
+// its rigExec:weightBlend is radial this run.
+bool RrGeoRevisionLeaf(const RrProgram *program, uint32_t revision,
+                       bool *enabled, float *weight, bool *radial,
+                       std::string *error);
+// Revision lookup.object's input lookup.read (eval::OpRevisionRead, past
+// Radial) as its assembler reads it this run; an array is lent from the
+// revision's own storage or its chain's base.
+bool RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
+                         const RigExecTypeDesc &type, void *value,
+                         std::vector<std::string> *lines, std::string *error);
+// The vertex groups the channel a BlendChannelWeight \p lookup reads reaches,
+// from its revision's chunk keys.
+void RrGeoLookupGroups(const RrProgram *program, const eval::OpLookup &lookup,
+                       const uint32_t **groups, size_t *count);
+// Revision \p revision of \p chain when its weight object is measured
+// against the points entering it: its weight field's weights as its dense
+// packet. False when the field holds none, \p missing when the program
+// holds no such weight object.
+bool RrGeoBuildCurrentPhasePacket(RrProgram *program, size_t chain,
+                                  size_t revision, bool *missing);
+// Revision \p revision of \p chain's weight display, published for
+// revision id \p id: its valid packet resolved over the \p count points it
+// weighs.
+void RrGeoPublishRevisionWeights(RrProgram *program, size_t chain,
+                                 size_t revision, int id, size_t count);
+// Revision \p revision, which op nodes compute, enabled or not this frame:
+// its status, and its weight display from the packet its op reads.
+bool RrGeoStoreRevisionEnabled(RrProgram *program, uint32_t revision,
+                               bool enabled, std::string *error);
+/// Resolves ChainVersion lookup \p lookup: the points entering revision
+/// \p lookup.part of point chain \p lookup.object, lent in place or from
+/// \p gather, the lookup's own buffer.
+bool RrLookUpChainVersion(const RrProgram *program,
+                          const eval::OpLookup &lookup,
+                          std::vector<RrVec3f> *gather,
+                          const RigExecTypeDesc &type, void *out,
+                          std::string *error);
+/// Resolves WeightFieldInputs lookup \p lookup: input \p lookup.read of
+/// weight object \p lookup.part as weight field \p lookup.object reads it.
+bool RrLookUpWeightField(const RrProgram *program, const eval::OpLookup &lookup,
+                         const RigExecTypeDesc &type, void *out,
+                         std::string *error);
+/// Stores a weight field's weights as weightFieldResults[output.object].
+bool RrStoreWeightField(RrProgram *program, const eval::OpHostOutput &output,
+                        const void *value, std::string *error);
 void RrSkipGeometryStep(RrProgram *program, size_t step);
-
-/// RigExecRigEvaluator::_ResolveWeights (rigEvaluatorGeometry.cpp) over the
-/// file's weight objects: the field a constraint envelope
-/// (count 1) and a current-phase revision (count = the entering points,
-/// passed as \p current) copy, as the baked program does
-/// (bakedWeights.cpp). \p object indexes geometry.weight_objects.
-/// False with the oracle's own error text, checked in the oracle's order;
-/// \p weights is then unspecified. Pure: reads slot values, the run's
-/// property-chain results, the weight placements and static tables only.
-bool RrResolveWeightOracle(const RrProgram *program, size_t object,
-                           size_t count, const std::vector<RrVec3f> *current,
-                           std::vector<float> *weights, std::string *error);
 
 // Executor and epilogue (framework). The closure dirties what the inputs
 // set since the last run reach; RrStore::animatedTouched stands for a
@@ -1104,7 +1288,6 @@ bool RrFrameRotation(const RrPointFrame &frame, RrQuatd *out);
 RrMat4d RrElementOutSpace(const RrPointFrameArray *source, size_t index);
 RrPointFrame RrExtractElementFrame(const RrPointFrameArray *source,
                                    size_t index);
-RrMat4d RrRoundTrip(const RrMat4d &m);
 
 /// RigExecFrameTranslation: the driver's local translation measured against
 /// its own rest, which is what a pose interpolator's translation channel
@@ -1113,24 +1296,6 @@ bool RrFrameTranslation(const RrPointFrame &driverFinal,
                         const RrPointFrame &driverRest,
                         const RrPointFrame *parentFinal,
                         const RrPointFrame *parentRest, RrVec3d *out);
-
-/// RigExecBlendTransforms: decomposed lerp, with both endpoints returning
-/// their operand untouched so a space switch on a whole number is
-/// bit-identical to selecting that space.
-RrMat4d RrBlendTransforms(const RrMat4d &a, const RrMat4d &b, double weight);
-
-/// RigExecMaskTransform: zero the masked channels per axis, in the
-/// transform's own decomposition. An all-true mask returns \p m untouched.
-RrMat4d RrMaskTransform(const RrMat4d &m, const bool translation[3],
-                        const bool rotation[3], const bool scale[3]);
-
-/// Mirrors RigExecRotationFilter bit for bit.
-enum class RrRotationFilter : uint8_t { All = 0, Twist = 1, Swing = 2 };
-
-/// RigExecFilterSpaceRotation: keep only the twist of \p m's rotation about
-/// \p axis, or only the swing. `All` returns \p m untouched.
-RrMat4d RrFilterSpaceRotation(const RrMat4d &m, const RrVec3d &axis,
-                              RrRotationFilter filter);
 
 } // namespace rigExec
 

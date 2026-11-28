@@ -1,14 +1,15 @@
 // Canonical one-loop acceptance over actual native operations, production
 // translation and backend runners. Fixtures are the supported oneloop_* scenes.
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedSchedule.h"
-#include "rigExec/bakedTrace.h"
-#include "rigExec/frozenContext.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/internal/bakedTrace.h"
+#include "rigExec/internal/weightField.h"
+#include "rigExec/api/frozenContext.h"
 #include "rigExecBake/bake.h"
 #include "rigExecBinary/format.h"
 #include "rigExecRuntime/runtime.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/getenv.h"
@@ -159,8 +160,8 @@ CrossDomainChain
 FindChain(const std::vector<RigExecOpGraphNode> &graph)
 {
     CrossDomainChain c;
-    c.property = OneStep(graph, "PropertyRevision", "/ClampBlendWeight");
-    c.precedingField = OneStep(graph, "WeightField", "/FingerVolume");
+    c.property = OneStep(graph, "OpNode", "/ClampBlendWeight");
+    c.precedingField = OneStep(graph, "OpNode", "/FingerVolume");
     c.blendSolve = OneStep(graph, "Solve", "/IKFKBlend");
     c.constraint = OneStep(graph, "Constraint", "/FingerToWrist");
     c.fingerSolve = OneStep(graph, "Solve", "/FingerFK");
@@ -400,8 +401,8 @@ TestPrecedingWeight(const std::string &fixturesDir)
                     c.precedingField) != graph[c.smoothStatic].preds.end());
     CHECK(rigExecTest::Precedes(trace, c.skinFuse, c.precedingField));
     CHECK(rigExecTest::Precedes(trace, c.precedingField, c.smoothStatic));
-    const auto &bound =
-        B.weightFields[size_t(B.steps[c.precedingField].object)];
+    const auto &bound = B.weightFields[size_t(
+        rigExec::RigExecBakedWeightFieldOf(B, B.steps[c.precedingField]))];
     CHECK(bound.form == RigExecBakedProgramImpl::WeightField::Form::Revision);
     CHECK(bound.placementPhase ==
           RigExecBakedProgramImpl::WeightField::PlacementPhase::Base);
@@ -432,10 +433,9 @@ TestPrecedingWeight(const std::string &fixturesDir)
                                  uint32_t(bound.consumer - 1) >= range.first &&
                                  uint32_t(bound.consumer - 1) <= range.last;
                       }));
-    const auto &preceding =
-        B.chains[size_t(chain)].revisions[size_t(revision - 1)];
-    CHECK(!preceding.output.empty());
-    CHECK(bound.count == preceding.output.size());
+    // The chain runs as an op chain: its points live in vertex groups.
+    CHECK(B.chains[size_t(chain)].groupPointCount > 0);
+    CHECK(bound.count == B.chains[size_t(chain)].groupPointCount);
     std::set<size_t> completed;
     for (const auto &entry : trace)
         CHECK(completed.insert(entry.step).second);
@@ -566,8 +566,9 @@ TestSkipEffects(const std::string &fixturesDir)
     for (uint32_t c = 0; c < B.opGraph.ops.size(); ++c) {
         CHECK(B.opExecution.ran[c]);
         const auto &step = B.steps[B.opGraph.ops[c].originalIndex];
-        const bool effect = RigExecBakedIsGeometryStep(step.kind) ||
-                            step.kind == RigExecBakedStepKind::PropertyRevision;
+        const bool effect =
+            RigExecBakedIsGeometryStep(step.kind) ||
+            RigExecBakedPropertyPartOf(B, step, nullptr, nullptr);
         const bool found =
             std::binary_search(effects.begin(), effects.end(), c);
         CHECK(found == effect);
@@ -640,11 +641,12 @@ TestBackendKernelsAndBinaryCycle(const std::string &fixturesDir)
             size_t kernels = 0;
             for (size_t i = 0; i < B.steps.size(); ++i) {
                 CHECK(counts[i] <= 1);
-                if (B.steps[i].kind == RigExecBakedStepKind::RevisionChunk) {
+                const RigExecBakedStepIdentity id =
+                    RigExecBakedIdentityOf(B, B.steps[i]);
+                if (id.kind == RigExecBakedStepKind::RevisionChunk) {
                     ++kernels;
                     CHECK(counts[i] == 1);
-                    const auto identity =
-                        B.revisionIndex[size_t(B.steps[i].object)];
+                    const auto identity = B.revisionIndex[size_t(id.object)];
                     const auto &revision =
                         B.chains[size_t(identity.first)]
                             .revisions[size_t(identity.second)];
@@ -691,8 +693,8 @@ TestBackendKernelsAndBinaryCycle(const std::string &fixturesDir)
         context.frozen = frozen.get();
         RigExecFrozenRunReport report;
         const auto pose = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(), nullptr,
-            kCrossRig, &report);
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
         CHECK(pose.valid && report.ran);
         checkNative(report.region);
         const auto liveAt6 = E.Evaluate(UsdTimeCode(6));
@@ -724,7 +726,8 @@ TestBackendKernelsAndBinaryCycle(const std::string &fixturesDir)
     size_t runtimeKernels = 0;
     for (size_t i = 0; i < file->steps.size(); ++i) {
         CHECK(runtimeCounts[i] <= 1);
-        if (file->steps[i].kind == fb::StepKind::RevisionChunk) {
+        if (file->steps[i].kind == fb::StepKind::RevisionChunk ||
+            file->steps[i].kind == fb::StepKind::OpChainRange) {
             ++runtimeKernels;
             CHECK(runtimeCounts[i] == 1);
         }
@@ -817,15 +820,18 @@ TestCycle(const std::string &fixturesDir)
             }
             if (found == B.excludedSteps.end())
                 continue;
-            if (found->kind == RigExecBakedStepKind::Solve)
-                solveNamed |= B.solvers[size_t(found->object)].path == ribbon;
+            if (const int solver = RigExecBakedSolverOf(B, *found);
+                solver >= 0 && RigExecBakedIdentityOf(B, *found).kind ==
+                                   RigExecBakedStepKind::Solve)
+                solveNamed |= B.solvers[size_t(solver)].path == ribbon;
             if (found->kind == RigExecBakedStepKind::RevisionFuse) {
                 const auto index = B.revisionIndex[size_t(found->object)];
                 geometryNamed |= B.chains[size_t(index.first)]
                                      .revisions[size_t(index.second)]
                                      .moverPath == lift;
             }
-            if (found->kind == RigExecBakedStepKind::SolverCommit)
+            if (RigExecBakedIdentityOf(B, *found).kind ==
+                RigExecBakedStepKind::SolverCommit)
                 commitNamed |= found->label == ribbon.GetString();
         }
     }
@@ -850,9 +856,9 @@ TestCycle(const std::string &fixturesDir)
     CHECK(
         rigExecTest::FindOpGraphSteps(E.GetOpGraph(), "Solve", "/Solvers/Lift")
             .size() == 1);
-    CHECK(rigExecTest::FindOpGraphSteps(E.GetOpGraph(), "PropertyRevision",
-                                        "/RawSelected")
-              .size() == 1);
+    CHECK(
+        rigExecTest::FindOpGraphSteps(E.GetOpGraph(), "OpNode", "/RawSelected")
+            .size() == 1);
     bool diagnosed = false;
     for (const auto &line : pose.diagnostics)
         diagnosed |= line.find("cycle") != std::string::npos;

@@ -7,11 +7,10 @@
 #include "bridgeSampling.h"
 #include "warmIndex.h"
 
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/frameCacheSparsity.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExecPlayback/backgroundScheduler.h"
+#include "rigExec/internal/frameCacheSparsity.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/tf/diagnostic.h"
 
@@ -29,6 +28,19 @@ RigExecProfiler *
 _Profiler(const RigExecCacheCall &call)
 {
     return const_cast<RigExecProfiler *>(&call.evaluator.GetProfiler());
+}
+
+// Guide styling reads pose.time, and an entry may have been evaluated at
+// another frame with the same inputs: only then is a stamped copy made.
+std::shared_ptr<const RigExecRigPose>
+_PoseAtTime(std::shared_ptr<const RigExecRigPose> pose, UsdTimeCode time)
+{
+    if (!pose || pose->time == time) {
+        return pose;
+    }
+    auto stamped = std::make_shared<RigExecRigPose>(*pose);
+    stamped->time = time;
+    return stamped;
 }
 
 } // namespace
@@ -107,8 +119,7 @@ RigExecBridgeFrameCache::_SyncAffectedIndex(const RigExecCacheCall &call)
         _affectedValid = false;
         return nullptr;
     }
-    const RigExecBakedProgramImpl &impl =
-        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
+    const RigExecProgramView view(program);
     const uint64_t compiledRig =
         RigExecFrameCacheCompiledRigSignature(call.evaluator);
     // The program object test matters as much as the compiled rig: a rebuild can
@@ -121,7 +132,7 @@ RigExecBridgeFrameCache::_SyncAffectedIndex(const RigExecCacheCall &call)
         return _affectedIndex.get();
     }
     _affectedIndex = std::make_unique<RigExecOutputAffectedIndex>();
-    _affectedIndex->Build(impl, compiledRig);
+    _affectedIndex->Build(view, compiledRig);
     _affectedCompiledRig = compiledRig;
     _affectedProgram = program;
     _affectedValid = true;
@@ -167,17 +178,13 @@ RigExecBridgeFrameCache::_ComputePoseOnlyCacheKey(
 }
 
 void
-RigExecBridgeFrameCache::_CompleteServe(const RigExecCacheCall &call,
-                                        const RigExecRigPose &pose,
-                                        const RigExecFrameCacheKey &key,
-                                        RigExecCacheServe *serve)
+RigExecBridgeFrameCache::_CompleteServe(
+    const RigExecCacheCall &call, std::shared_ptr<const RigExecRigPose> pose,
+    const RigExecFrameCacheKey &key, RigExecCacheServe *serve)
 {
     _frameCache->NoteProvenanceAlias(key, call.time);
-    serve->pose = pose;
-    // Guide styling reads pose.time; the stored pose was evaluated for an
-    // earlier visit, so it is re-stamped for the requested frame before
-    // anything reads it.
-    serve->pose.time = call.time;
+    serve->pose = _PoseAtTime(std::move(pose), call.time);
+    serve->time = call.time;
     serve->key = key;
     serve->served = true;
     // The shadow verify is the facade's evaluator step: the cache asks
@@ -210,11 +217,11 @@ RigExecBridgeFrameCache::CarryEntry(const RigExecCacheCall &call,
         // No namespace move for this entry -- the caller stands it.
         return false;
     }
-    RigExecRigPose pose;
+    std::shared_ptr<const RigExecRigPose> pose;
     std::shared_ptr<const void> retained;
     size_t bytes = 0;
-    if (!_frameCache->Lookup(oldKey, &pose, &retained, &bytes) || !pose.valid ||
-        !retained) {
+    if (!_frameCache->Lookup(oldKey, &pose, &retained, &bytes) ||
+        !pose->valid || !retained) {
         return false;
     }
     // The rewrite sequence: publish under the new key, evict the old,
@@ -267,7 +274,7 @@ RigExecBridgeFrameCache::_TrySparseServe(const RigExecCacheCall &call,
     // (a no-op edit retired the proof without moving values). Serve it
     // and heal the proof -- no re-key, no pulls.
     if (baseKey == key) {
-        RigExecRigPose cached;
+        std::shared_ptr<const RigExecRigPose> cached;
         bool hit = false;
         {
             RigExecProfileScope scope(_Profiler(call),
@@ -275,17 +282,17 @@ RigExecBridgeFrameCache::_TrySparseServe(const RigExecCacheCall &call,
             hit = _frameCache->Lookup(key, &cached);
         }
         _Profiler(call)->RecordCacheLookup(hit, stamped);
-        if (!hit || !cached.valid) {
+        if (!hit || !cached->valid) {
             return false;
         }
         _freshDigests[{time.IsDefault(), stamped}] = RigExecFreshProof(
             key.controlDigest, unfolded, &inputs, &call.overrides);
         _warmIndex->NoteCompleted(_rigPath, stamped, key,
                                   _warmIndex->CurrentGeneration(_rigPath));
-        _CompleteServe(call, cached, key, serve);
+        _CompleteServe(call, std::move(cached), key, serve);
         return true;
     }
-    RigExecRigPose base;
+    std::shared_ptr<const RigExecRigPose> base;
     std::shared_ptr<const void> handle;
     bool baseHit = false;
     {
@@ -293,7 +300,7 @@ RigExecBridgeFrameCache::_TrySparseServe(const RigExecCacheCall &call,
                                   "imaging");
         baseHit = _frameCache->Lookup(baseKey, &base, &handle);
     }
-    if (!baseHit || !base.valid || !handle) {
+    if (!baseHit || !base->valid || !handle) {
         // No retained base (evicted, or pose-only): the frame evaluates
         // live. Records the miss: the store was consulted.
         _Profiler(call)->RecordCacheLookup(false, stamped);
@@ -334,25 +341,23 @@ RigExecBridgeFrameCache::_TrySparseServe(const RigExecCacheCall &call,
     if (haveProvenance) {
         provenance.unfoldedControlDigest = unfolded;
     }
-    RigExecRigPose served = base;
-    if (_frameCache->Publish(key, time, served, retained->RetainedBytes(),
-                             handle, haveProvenance ? &provenance : nullptr)) {
+    if (_frameCache->Publish(key, time, base, retained->RetainedBytes(), handle,
+                             haveProvenance ? &provenance : nullptr)) {
         _warmIndex->NoteCompleted(_rigPath, stamped, key,
                                   _warmIndex->CurrentGeneration(_rigPath));
     }
     _freshDigests[{time.IsDefault(), stamped}] = RigExecFreshProof(
         key.controlDigest, unfolded, &inputs, &call.overrides);
     _Profiler(call)->RecordCacheLookup(true, stamped);
-    _CompleteServe(call, served, key, serve);
+    _CompleteServe(call, std::move(base), key, serve);
     return true;
 }
 
 bool
-RigExecBridgeFrameCache::_LookupCachedPose(const RigExecCacheCall &call,
-                                           bool publishing,
-                                           RigExecRigPose *pose,
-                                           RigExecFrameCacheKey *key,
-                                           _CacheMiss *miss)
+RigExecBridgeFrameCache::_LookupCachedPose(
+    const RigExecCacheCall &call, bool publishing,
+    std::shared_ptr<const RigExecRigPose> *pose, RigExecFrameCacheKey *key,
+    _CacheMiss *miss)
 {
     const UsdTimeCode time = call.time;
     // Profiler scopes and lane records belong to the publishing lookup
@@ -402,8 +407,8 @@ RigExecBridgeFrameCache::_LookupCachedPose(const RigExecCacheCall &call,
         if (publishing) {
             _Profiler(call)->RecordCacheLookup(hit, stamped);
         }
-        if (!hit || !pose->valid) {
-            *pose = RigExecRigPose();
+        if (!hit || !(*pose)->valid) {
+            pose->reset();
             return false;
         }
         return true;
@@ -422,7 +427,7 @@ RigExecBridgeFrameCache::_LookupCachedPose(const RigExecCacheCall &call,
             // A pose-only entry whose proof was retired cannot use an
             // index row as its edit-serial check. Sampled entries carry
             // retained inputs (or their enqueue-time proof).
-            if (hit && pose->valid &&
+            if (hit && (*pose)->valid &&
                 (currentPoseOnly || (program && (retained || haveProof)))) {
                 if (publishing) {
                     _Profiler(call)->RecordCacheLookup(true, stamped);
@@ -430,7 +435,7 @@ RigExecBridgeFrameCache::_LookupCachedPose(const RigExecCacheCall &call,
                 *key = cachedKey;
                 return true;
             }
-            *pose = RigExecRigPose();
+            pose->reset();
             // Store miss under a live row: unrecorded, so the lane keeps
             // one record per SetTime -- the fallthrough records its own.
         }
@@ -480,13 +485,13 @@ RigExecBridgeFrameCache::_LookupCachedPose(const RigExecCacheCall &call,
         if (publishing) {
             _Profiler(call)->RecordCacheLookup(hit, stamped);
         }
-        if (hit && pose->valid) {
+        if (hit && (*pose)->valid) {
             *key = miss->key;
             return true;
         }
         // Proven but evicted: the sparse base may still serve (a re-keyed
         // entry under a moved digest), so the caller plans on the miss.
-        *pose = RigExecRigPose();
+        pose->reset();
     }
     return false;
 }
@@ -499,12 +504,12 @@ RigExecBridgeFrameCache::TryServe(const RigExecCacheCall &call,
         return false;
     }
     *serve = RigExecCacheServe();
-    RigExecRigPose cached;
+    std::shared_ptr<const RigExecRigPose> cached;
     RigExecFrameCacheKey key{0, 0};
     _CacheMiss miss;
     if (_LookupCachedPose(call, /* publishing = */ true, &cached, &key,
                           &miss)) {
-        _CompleteServe(call, cached, key, serve);
+        _CompleteServe(call, std::move(cached), key, serve);
         return true;
     }
     // No proof the pre-evaluation sample is fresh -- never evaluated here,
@@ -520,22 +525,26 @@ RigExecBridgeFrameCache::TryServe(const RigExecCacheCall &call,
 }
 
 bool
-RigExecBridgeFrameCache::QueryLookup(const RigExecCacheCall &call,
-                                     RigExecRigPose *pose)
+RigExecBridgeFrameCache::QueryLookup(
+    const RigExecCacheCall &call, std::shared_ptr<const RigExecRigPose> *pose)
 {
     if (!pose) {
         return false;
     }
     RigExecFrameCacheKey key{0, 0};
     _CacheMiss miss;
-    return _LookupCachedPose(call, /* publishing = */ false, pose, &key, &miss);
+    if (!_LookupCachedPose(call, /* publishing = */ false, pose, &key, &miss)) {
+        return false;
+    }
+    *pose = _PoseAtTime(std::move(*pose), call.time);
+    return true;
 }
 
 bool
 RigExecBridgeFrameCache::MemoizeLive(const RigExecCacheCall &call,
-                                     const RigExecRigPose &pose)
+                                     std::shared_ptr<const RigExecRigPose> pose)
 {
-    if (!_frameCache || !pose.valid) {
+    if (!_frameCache || !pose || !pose->valid) {
         return false;
     }
     const UsdTimeCode time = call.time;
@@ -585,25 +594,23 @@ RigExecBridgeFrameCache::MemoizeLive(const RigExecCacheCall &call,
             // Retained-state publish: the source snapshot and
             // the dependency record ride with the pose, so a later edit
             // retains the source snapshot used to validate cache reuse.
-            const RigExecBakedProgramImpl &impl =
-                rigExec::RigExecBakedProgramAccess::StepGraph(
-                    *call.evaluator.GetBakedProgram());
+            const RigExecProgramView view = call.evaluator.GetProgramView();
             RigExecRetainedFrameState retainedState =
                 RigExecCaptureRetainedState(
                     memoInputs, call.overrides, key.compiledRigSignature,
-                    impl.clustering.clusters.size(),
+                    view.ClusterCount(),
                     RigExecCompiledRigConstantDigest(
                         *call.evaluator.GetBakedProgram()));
             auto retained = std::make_shared<RigExecRetainedFrameState>(
                 std::move(retainedState));
             const size_t retainedBytes = retained->RetainedBytes();
             RigExecEntryProvenance provenance =
-                RigExecFullEvalProvenance(impl, time);
+                RigExecFullEvalProvenance(view, time);
             provenance.unfoldedControlDigest = memoUnfolded;
-            stored = _frameCache->Publish(key, time, pose, retainedBytes,
-                                          retained, &provenance);
+            stored = _frameCache->Publish(key, time, std::move(pose),
+                                          retainedBytes, retained, &provenance);
         } else {
-            stored = _frameCache->Publish(key, time, pose);
+            stored = _frameCache->Publish(key, time, std::move(pose));
         }
     }
     // A memoized entry is a cached frame: record the completion the strip

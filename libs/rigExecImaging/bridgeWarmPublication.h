@@ -5,8 +5,8 @@
 #ifndef RIGEXEC_IMAGING_BRIDGE_WARM_PUBLICATION_H
 #define RIGEXEC_IMAGING_BRIDGE_WARM_PUBLICATION_H
 
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/frameCache.h"
+#include "rigExecPlayback/backgroundScheduler.h"
+#include "rigExec/api/frameCache.h"
 
 #include <cstddef>
 #include <functional>
@@ -42,7 +42,8 @@ class RigExecWarmFrameIndex;
 bool RigExecPublishBackgroundCompletion(
     const std::shared_ptr<RigExecFrameCache> &cache,
     const RigExecFrameCacheKey &key, UsdTimeCode time,
-    const RigExecRigPose &pose, RigExecFrameGeneration generation,
+    std::shared_ptr<const RigExecRigPose> pose,
+    RigExecFrameGeneration generation,
     const RigExecBackgroundScheduler *scheduler, const SdfPath &rig);
 
 /// The fenced, retained-state completion: as above, plus the
@@ -57,7 +58,8 @@ bool RigExecPublishBackgroundCompletion(
 bool RigExecPublishBackgroundCompletion(
     const std::shared_ptr<RigExecFrameCache> &cache,
     const RigExecFrameCacheKey &key, UsdTimeCode time,
-    const RigExecRigPose &pose, RigExecFrameGeneration generation,
+    std::shared_ptr<const RigExecRigPose> pose,
+    RigExecFrameGeneration generation,
     const RigExecBackgroundScheduler *scheduler, const SdfPath &rig,
     RigExecWarmFenceToken fenceToken, std::shared_ptr<const void> retained,
     size_t retainedBytes, const RigExecEntryProvenance *provenance,

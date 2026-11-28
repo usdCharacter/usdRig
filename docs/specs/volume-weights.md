@@ -71,8 +71,7 @@ A nonempty `inputs:falloffSamples` array replaces that table: uniformly
 spaced samples of `Curve` from the outer boundary (0) to the inner
 boundary (1), read as an ordinary per-frame input. The weight editor
 previews a curve edit through it without authoring, then commits the
-spline on release. Binary format 27 and later carry it; an older
-`.rigexec` plays its compiled table.
+spline on release. A `.rigexec` file carries it.
 
 ## Three decisions worth knowing
 
@@ -84,7 +83,7 @@ empirically). The three `RigExecWeightObject` contract properties are
 therefore **redeclared** on `RigExecVolumeWeight`, so the composed prim
 definition is identical; what is lost is only `IsA`-testability, and
 RigExec already dispatches weight objects by type *name* everywhere.
-`_IsWeightObjectType` in `libs/rigExec/rigEvaluatorInputs.cpp` names the
+`_IsWeightObjectType` in `libs/rigExec/internal/rigEvaluatorInputs.cpp` names the
 set for the evaluator; `bakedProgram.cpp` repeats it as
 `_IsBakedWeightType`.
 
@@ -105,7 +104,7 @@ a shape they cannot see. So the rigid placement positions the volume and
 `inputs:scaleX/Y/Z` plus `inputs:falloffMin/falloffMax` are the sole
 authority on its size. Guide and field agree by construction.
 
-Both the weight-packet kernel (`libs/rigExec/weightPackets.cpp`) and the CPU
+Both the weight-packet kernel (`libs/rigExec/internal/weightPackets.cpp`) and the CPU
 reference (`libs/rigExecOracle/weightReference.cpp`) call `RemoveScaleShear()` on
 the placement before inverting it, for exactly this reason.
 
@@ -120,12 +119,6 @@ what keeps the field fixed-shape. The animatable knobs are
 `falloffMin`/`falloffMax`, `invert`, and `strength`, all of which are
 ordinary per-frame inputs; a shape that has to change per frame goes
 through `inputs:falloffSamples` rather than the curve.
-
-OpenExec 26.08 has no accessor for an attribute's spline (`// XXX:TODO
-Accessors for AnimSpline` in `exec/computationBuilders.h:584`), so the
-OpenExec registration's `computeFalloffLut` is a stub, and the
-[reference check](../concepts/baked-vs-dynamic.md#openexec-reference-checks)
-supplies the compiled table as a `RigExecValueOverride`.
 
 Editing the curve changes the structure digest and begins a new compiled rig.
 The digest hashes the baked table, which also covers
@@ -185,7 +178,7 @@ fraction of the extent rather than a fixed length so they survive being
 drawn at any scale.
 
 Two independent implementations apply the bound — the weight-packet kernel
-in `libs/rigExec/weightPackets.cpp` and the CPU reference in
+in `libs/rigExec/internal/weightPackets.cpp` and the CPU reference in
 `libs/rigExecOracle/weightReference.cpp` — and the CPU reference check holds them
 together. A bound applied by only one of them still moves points, just not
 the same ones, and the reference mismatch that produces is exactly the
@@ -211,7 +204,7 @@ a compile error.
 A `preceding` weight is a per-revision read. Each revision whose weight
 object samples `preceding` gets its own field, measured against the point
 version entering that revision, and uses it in place of the shared packet
-(`currentPhasePacket` in `libs/rigExec/bakedGeometry.cpp`).
+(`currentPhasePacket` in `libs/rigExec/internal/bakedGeometry.cpp`).
 
 **Know the cost before reaching for it.** A `base` field is one packet per
 generation, shared by every mover that binds the weight object. A
@@ -250,37 +243,15 @@ missing tail.
 |---|---|
 | Schema | `libs/rigExecSchema/schema.usda` (volumetric section) |
 | Pure kernels | `libs/rigExecMath/weightFields.{h,cpp}` |
-| Weight packets | `libs/rigExec/weightPackets.cpp`, `libs/rigExecScene/weightProgram.cpp` |
-| OpenExec registrations, used only by the reference check | `libs/rigExec/moverKernels.cpp` (`_Build*WeightPacket`), `libs/rigExec/computations.cpp` (`RIGEXEC_REGISTER_XFORMABLE(RigExecVolumeWeight)`) |
-| LUT packet type | `libs/rigExec/types.h` (`RigExecFalloffLut`) |
+| Weight packets | `libs/rigExec/internal/weightPackets.cpp`, `libs/rigExecScene/weightProgram.cpp` |
+| LUT packet type | `libs/rigExec/api/types.h` (`RigExecFalloffLut`) |
 | CPU reference | `libs/rigExecOracle/weightReference.cpp` |
-| Compiled rig and falloff tables | `libs/rigExec/rigEvaluatorCompile.cpp`, `libs/rigExec/rigEvaluatorGeometry.cpp` (`_BakeFalloffLut`) |
+| Compiled rig and falloff tables | `libs/rigExec/internal/rigEvaluatorCompile.cpp`, `libs/rigExec/internal/rigEvaluatorGeometry.cpp` (`_BakeFalloffLut`) |
 | Resolved field for tools | `RigExecRigPose::weightFields` |
 | Authoring UI | `plugin/rigExecUsdview/volumeWeightUI.py`, `plugin/rigExecUsdview/volumeWeightModel.py`, `plugin/rigExecUsdview/weightViewport.py` |
 | Influence overlay + guides | `libs/rigExecImaging/` (`RigExecImaging_SetWeightOverlayForStage`) |
 | Example | `examples/11_VolumeWeights.usda` |
 | Tests | `tests/testRigExecWeightFields.cpp`, `tests/testRigExecWeightProgram.cpp`, `tests/testRigExecVolumeWeights.cpp`, `tests/testRigExecWeightOverlay.cpp`, `bin/test/run_testusdview_overlay.bat` |
-
-## Registering computations on an abstract base
-
-This section concerns the OpenExec registrations, which only the
-[reference check](../concepts/baked-vs-dynamic.md#openexec-reference-checks)
-and tests request. `RIGEXEC_REGISTER_XFORMABLE` is invoked on the
-**abstract** `RigExecVolumeWeight`, unlike `RigExecJoint`/`RigExecControl`
-which are concrete. Exec composes a prim's computation set by walking its full
-ancestor type vector strongest-to-weakest
-(`exec/definitionRegistry.cpp::_GetFullyExpandedSchemaTypeVector`), so
-the three concrete volume weights inherit the three xformable
-computations from the base.
-
-It *has* to be the base here, because the concrete types already carry an
-`EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA` block in `moverKernels.cpp` for
-`computeWeightPacket`, and one schema may only be opened once: the macro
-emits a whole registration function plus its `TF_REGISTRY_FUNCTION` per
-invocation, and a second block for the same schema is a second,
-independent registration pass over a type the first pass has already
-marked complete. Splitting by *type* rather than by *file* keeps each
-schema opened exactly once.
 
 ## The influence overlay, and the trap under it
 
@@ -356,14 +327,6 @@ listener that drops cached values for the same edit, or it publishes a
 pre-edit answer. The registry registers its listener before `Compile()`
 (`libs/rigExecImaging/registryLifecycle.cpp:233`), which puts it at the back of the
 delivery list.
-
-Production evaluation holds no OpenExec `ExecUsdSystem`, whose
-`_NoticeListener` drops cached computed values when an attribute is
-authored. Only the `RigExecTapSet` requests of the
-[reference check](../concepts/baked-vs-dynamic.md#openexec-reference-checks)
-and of tests create one. `_OnObjectsChanged` first calls
-`RigExecTapSet::PrepareStageChange` (`registryInvalidation.cpp:499`), which retires
-those requests when a prim is removed.
 
 Two things are worth carrying forward. First, a direct `SetTime()` call
 cannot see this class of bug, because the dispatch has ended by then.

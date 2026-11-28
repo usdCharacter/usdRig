@@ -1,13 +1,13 @@
 // The contract of the shared scaled dual-quaternion blend in
 // rigExecMath/dualQuatKernel.h, checked over both host traits: the Gf core
 // (rigExecMath/dualQuat.h) and the USD-free playback runtime
-// (rigExecRuntime/affineMath.h). A null record is a missing influence
+// (rigExecMath/affineMath.h). A null record is a missing influence
 // (false, identity) unless its weight is exactly zero; the projection to the
 // rigid half never dereferences one; and the two traits agree bit for bit.
 // No stage, no plugin path, no GPU.
 #include "rigExecMath/dualQuat.h"
 #include "rigExecMath/dualQuatKernel.h"
-#include "rigExecRuntime/affineMath.h"
+#include "rigExecMath/affineMath.h"
 
 #include <array>
 #include <cstddef>

@@ -6,6 +6,8 @@
 #include "bridgeGuides.h"
 #include "bridgeSnapshot.h"
 
+#include "rigExec/api/poseFrameReader.h"
+
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/tf/staticTokens.h"
 
@@ -85,17 +87,24 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
         const UsdTimeCode sampleTime(baseTime.GetValue() +
                                      double(shutterOffsets[i]));
         const RigExecRigPose pose = _evaluator->Evaluate(sampleTime);
-        if (!pose.valid) {
+        const RigExecPoseFrameReader reader(pose);
+        if (!reader.IsValid()) {
             return result; // an incomplete sample set never publishes
         }
-        for (const auto &[path, matrix] : pose.providerXforms) {
-            const auto base = pose.providerBaseXforms.find(path);
-            if (base == pose.providerBaseXforms.end())
+        const size_t providerCount =
+            reader.GetCount(RigExecFrameDomain::ProviderTransform);
+        for (size_t provider = 0; provider < providerCount; ++provider) {
+            const SdfPath &path =
+                reader.GetPath(RigExecFrameDomain::ProviderTransform, provider);
+            GfMatrix4d base;
+            if (!reader.FindMatrix(RigExecFrameDomain::ProviderBaseTransform,
+                                   path, &base))
                 return result;
             RigExecPublishedPrim &published = snapshot->prims[path];
             published.sampleOffsets = shutterOffsets;
-            published.xformSamples.push_back(matrix);
-            published.xformBaseSamples.push_back(base->second);
+            published.xformSamples.push_back(reader.GetMatrix(
+                RigExecFrameDomain::ProviderTransform, provider));
+            published.xformBaseSamples.push_back(base);
         }
         if (i == baseIndex) {
             // Guides are single-sampled at the base offset.
@@ -107,14 +116,19 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
             xformCall.stage = _stage;
             xformCall.time = sampleTime;
             xformCall.stageEditSerial = _evaluator->GetStageEditSerial();
-            _snapshot->_FillProviderXforms(xformCall, pose, snapshot.get());
-            _guides->_FillGuides(call, pose, snapshot.get());
-            _guides->_FillControlGuides(call, pose, snapshot.get());
-            _guides->_FillVolumeGuides(call, pose, snapshot.get());
-            _guides->_FillClothConstraintGuides(call, pose, snapshot.get());
-            _guides->_FillWeightOverlay(call, pose, snapshot.get());
+            _snapshot->_FillProviderXforms(xformCall, reader, snapshot.get());
+            _guides->_FillGuides(call, reader, snapshot.get());
+            _guides->_FillControlGuides(call, reader, snapshot.get());
+            _guides->_FillVolumeGuides(call, reader, snapshot.get());
+            _guides->_FillClothConstraintGuides(call, reader, snapshot.get());
+            _guides->_FillWeightOverlay(call, reader, snapshot.get());
         }
-        for (const auto &[propertyPath, value] : pose.movedProperties) {
+        const size_t movedCount =
+            reader.GetCount(RigExecFrameDomain::MovedProperty);
+        for (size_t moved = 0; moved < movedCount; ++moved) {
+            const SdfPath &propertyPath =
+                reader.GetPath(RigExecFrameDomain::MovedProperty, moved);
+            const RigExecMovedValueKind kind = reader.GetMovedKind(moved);
             const SdfPath primPath = propertyPath.GetPrimPath();
             const TfToken property = propertyPath.GetNameToken();
             // Geometry only, and checked before snapshot->prims is indexed:
@@ -123,7 +137,7 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
             const bool isNormals = property == _motionTokens->normals ||
                                    property == _motionTokens->primvarsNormals;
             const bool isGeometry =
-                value.IsHolding<VtVec3fArray>() &&
+                kind == RigExecMovedValueKind::Vec3fArray &&
                 (property == _motionTokens->points || isNormals ||
                  property == _motionTokens->extent);
             if (!isGeometry) {
@@ -133,21 +147,24 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
                 // second evaluation of the rig. Recorded beside the
                 // generation that produced it; see
                 // RigExecImagingSnapshot::movedFloats.
-                if (value.IsHolding<float>()) {
+                if (kind == RigExecMovedValueKind::Float) {
+                    reader.GetMovedValue(moved,
+                                         &snapshot->movedFloats[propertyPath]);
+                } else if (kind == RigExecMovedValueKind::Double) {
+                    double value = 0.0;
+                    reader.GetMovedValue(moved, &value);
                     snapshot->movedFloats[propertyPath] =
-                        value.UncheckedGet<float>();
-                } else if (value.IsHolding<double>()) {
-                    snapshot->movedFloats[propertyPath] =
-                        static_cast<float>(value.UncheckedGet<double>());
-                } else if (value.IsHolding<VtDoubleArray>()) {
-                    snapshot->movedArrays[propertyPath] =
-                        value.UncheckedGet<VtDoubleArray>();
+                        static_cast<float>(value);
+                } else if (kind == RigExecMovedValueKind::DoubleArray) {
+                    reader.GetMovedValue(moved,
+                                         &snapshot->movedArrays[propertyPath]);
                 }
                 continue;
             }
             RigExecPublishedPrim &published = snapshot->prims[primPath];
             published.sampleOffsets = shutterOffsets;
-            const auto &array = value.UncheckedGet<VtVec3fArray>();
+            VtVec3fArray array;
+            reader.GetMovedValue(moved, &array);
             if (property == _motionTokens->points)
                 published.pointsSamples.push_back(array);
             else if (isNormals)
@@ -160,16 +177,15 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
             if (i == baseIndex) {
                 if (property == _motionTokens->points) {
                     published.hasPoints = true;
-                    published.points = value.UncheckedGet<VtVec3fArray>();
+                    published.points = array;
                 } else if (isNormals) {
                     published.hasNormals = true;
-                    published.normals = value.UncheckedGet<VtVec3fArray>();
+                    published.normals = array;
                 } else {
-                    const auto extent = value.UncheckedGet<VtVec3fArray>();
-                    if (extent.size() == 2) {
+                    if (array.size() == 2) {
                         published.hasExtent = true;
-                        published.extentMin = GfVec3d(extent[0]);
-                        published.extentMax = GfVec3d(extent[1]);
+                        published.extentMin = GfVec3d(array[0]);
+                        published.extentMax = GfVec3d(array[1]);
                     }
                 }
             }

@@ -1,12 +1,12 @@
 // .rigexec bake conformance: the FlatBuffer file a bake writes, held to the
 // program it was baked from, and the format's refusals on real bakes.
 #include "rigExecBake/bake.h"
-#include "rigExec/bakedProgramImpl.h"
+#include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExecBake/revisionReads.h"
 #include "rigExecBake/staticReport.h"
-#include "rigExec/bakedSchedule.h"
-#include "rigExec/frozenContextInternal.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/internal/frozenContextInternal.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBinary/external.h"
 #include "rigExecBinary/format.h"
 #include "rigExecBinary/transport.h"
@@ -904,8 +904,6 @@ _ComputedRunChains(const fb::RigExecWireFile &file,
             }
             const std::string mover = _BinaryText(file, revision.mover);
             if (_ChainRead(file, *overlay, *revision.enabled).bits == 0) {
-                diagnostics->push_back("diag " + mover +
-                                       ": disabled; revision passed through");
                 continue;
             }
             float weight = 1.0f;
@@ -1166,7 +1164,7 @@ _BinaryCheckInputs(const RigExecBakedProgramImpl &program,
          file.geometry->weightObjects) {
         stepBacked += object.envelopeOnly ? 0 : 1;
         inFlight += object.samplesInFlight ? 1 : 0;
-        staticErrors += object.oracleStaticError.empty() ? 0 : 1;
+        staticErrors += object.fieldStaticError.empty() ? 0 : 1;
     }
     CHECK(stepBacked == program.weightObjects.size());
     std::string previous;
@@ -1525,36 +1523,6 @@ _HeldSettings(fb::RigExecWireFile *file, const std::string &mover)
     return held;
 }
 
-/// \p file with every format-21 setting of its Delta Mush, lattice and
-/// surface revisions taken out (path reads and leaf sites), relabelled
-/// format 20: what a format-20 export of the same legacy rig holds.
-static void
-_AsFormat20(fb::RigExecWireFile *file)
-{
-    auto &reads = file->geometry->pathReads;
-    for (fb::RigExecWireChain &chain : file->geometry->chains) {
-        for (fb::RigExecWireRevision &revision : chain.revisions) {
-            const auto extended = [&](uint32_t path) {
-                return _IsExtendedSetting(*file, revision, path);
-            };
-            for (auto *sites :
-                 {&revision.leafSites, &revision.layoutLeafSites}) {
-                sites->erase(std::remove_if(sites->begin(), sites->end(),
-                                            [&](const auto &site) {
-                                                return extended(site.path);
-                                            }),
-                             sites->end());
-            }
-            reads.erase(std::remove_if(reads.begin(), reads.end(),
-                                       [&](const auto &read) {
-                                           return extended(read.path);
-                                       }),
-                        reads.end());
-        }
-    }
-    file->formatVersion = 20;
-}
-
 /// \p stage's file baked at time 1 into \p bytes; false with a diagnostic.
 static bool
 _BakeAtOne(const UsdStageRefPtr &stage, std::vector<uint8_t> *bytes)
@@ -1635,7 +1603,7 @@ TestExtendedDeformerSettingsBake()
               rewritten == bytes);
         fb::RigExecWireFile relabelled(*file);
         relabelled.formatVersion = 20;
-        CHECK(_Refused(relabelled, "format 20 holds no"));
+        CHECK(_Refused(relabelled, "this reader reads"));
         relabelled.formatVersion = RigExecFormatVersion + 1;
         const std::vector<uint8_t> future =
             RigExecTestPackUnchecked(relabelled);
@@ -1672,40 +1640,12 @@ TestExtendedDeformerSettingsBake()
                 lone->influenceRecords.pop_back();
             }
             CHECK(_Refused(one, "1 frame providers on a Lattice revision"));
-            fb::RigExecWireFile previous(*file);
-            _AsFormat20(&previous);
-            CHECK(_Refused(previous, "holds no frame providers"));
         }
     }
 
-    // The legacy Delta Mush, as format 20.
-    bool legacyOpened = false;
-    if (const UsdStageRefPtr stage = _StageFromText(_kLegacyMushStage)) {
-        std::vector<uint8_t> bytes;
-        CHECK(_BakeAtOne(stage, &bytes));
-        const std::unique_ptr<fb::RigExecWireFile> file =
-            bytes.empty() ? nullptr : RigExecTestUnpack(bytes);
-        if (file) {
-            CHECK(!_HeldSettings(file.get(), "/Rig/Mush").empty());
-            _AsFormat20(file.get());
-            CHECK(_HeldSettings(file.get(), "/Rig/Mush").empty());
-            const std::vector<uint8_t> previous =
-                RigExecTestPackUnchecked(*file);
-            std::unique_ptr<fb::RigExecWireFile> opened;
-            std::string why;
-            legacyOpened = RigExecFormatOpen(previous.data(), previous.size(),
-                                             &opened, &why) &&
-                           opened && opened->formatVersion == 20;
-            if (!legacyOpened) {
-                std::printf("  legacy format 20: %s\n", why.c_str());
-            }
-            CHECK(legacyOpened);
-        }
-    }
     std::printf("extended deformer settings: %zu held over %zu rigs, %zu "
-                "frame providers, legacy format 20 %s\n",
-                settings, std::size(rows), framed,
-                legacyOpened ? "opens" : "REFUSED");
+                "frame providers\n",
+                settings, std::size(rows), framed);
 }
 
 // Format 21 holds affine frame expressions as provider ops. A joint whose
@@ -1769,7 +1709,7 @@ TestAffineFrameRecords()
     CHECK(RigExecFormatWrite(*file, &rewritten, &why) && rewritten == bytes);
     fb::RigExecWireFile previous(*file);
     previous.formatVersion = 20;
-    CHECK(_Refused(previous, "holds no affine frame expressions"));
+    CHECK(_Refused(previous, "this reader reads"));
     fb::RigExecWireFile unknown(*file);
     affineOp(&unknown)->affineKind = RigExecAffineFrameTypeCount;
     CHECK(_Refused(unknown, "affine frame expression does not match"));
@@ -1938,15 +1878,39 @@ TestComputedEnvelopeBake()
             const auto &field =
                 file->geometry->weightFields[size_t(fieldIndex)];
             CHECK(field.object == index && uint8_t(field.form) == 1);
+            // Only a weight an envelope reads, or one it composes, makes a
+            // packet node; a constraint reads the weight's field.
+            std::vector<char> packeted(program.weightObjects.size(), 0);
+            std::vector<int> pending;
+            for (const auto &chain : program.chains) {
+                for (const auto &revision : chain.revisions)
+                    pending.push_back(revision.weightObject);
+                for (const auto &derived : chain.derived)
+                    pending.push_back(derived.revision.weightObject);
+            }
+            while (!pending.empty()) {
+                const int w = pending.back();
+                pending.pop_back();
+                if (w < 0 || size_t(w) >= packeted.size() ||
+                    packeted[size_t(w)])
+                    continue;
+                packeted[size_t(w)] = 1;
+                pending.push_back(program.weightObjects[size_t(w)].base);
+                for (const int input : program.weightObjects[size_t(w)].inputs)
+                    pending.push_back(input);
+            }
             size_t producers = 0;
-            for (const auto &step : program.steps)
-                producers += step.kind == RigExecBakedStepKind::WeightPacket &&
-                                     step.object == index
+            for (const auto &step : program.steps) {
+                const RigExecBakedStepIdentity id =
+                    RigExecBakedIdentityOf(program, step);
+                producers += id.kind == RigExecBakedStepKind::WeightPacket &&
+                                     id.object == index
                                  ? 1
                                  : 0;
-            CHECK(producers == 1);
-            CHECK(object.oracleStaticError.empty());
-            CHECK(object.oraclePhaseError.empty());
+            }
+            CHECK(producers == size_t(packeted[size_t(index)]));
+            CHECK(object.fieldStaticError.empty());
+            CHECK(object.fieldPhaseError.empty());
             CHECK(object.defaultWeight->mode == fb::ReadMode::Baked);
             const bool dynamic = RigExecFormatPathText(*file, object.type) ==
                                  "RigExecDynamicWeight";
@@ -2087,9 +2051,9 @@ TestComputedCurrentPhaseBake()
         }
         CHECK(!found->envelopeOnly);
         CHECK(found->samplesInFlight);
-        CHECK(found->oracleSamplesSlot == -1);
-        CHECK(found->oraclePhaseError.empty());
-        CHECK(found->oracleStaticError.empty());
+        CHECK(found->fieldSamplesSlot == -1);
+        CHECK(found->fieldPhaseError.empty());
+        CHECK(found->fieldStaticError.empty());
         CHECK(found->falloffMax->mode == fb::ReadMode::Baked);
         CHECK(found->falloffMax->walk.size() == 1);
         if (found->falloffMax->walk.size() == 1) {
@@ -2152,7 +2116,7 @@ _ChainScalarEnvelopes(const fb::RigExecWireFile &file)
                        : fallback;
         };
         std::string painted;
-        CHECK(!object.envelopeOnly && object.oracleStaticError.empty() &&
+        CHECK(!object.envelopeOnly && object.fieldStaticError.empty() &&
               object.base < 0 && object.inputs.empty() &&
               representation == "constant" &&
               (object.valuesSlot < 0 ||
@@ -2234,7 +2198,7 @@ TestComputedChainBake()
             chains[slotName(chain.target)] = &chain;
             CHECK(file.inputs[chain.target].chain() == int32_t(c));
         }
-        CHECK(chains.size() == 8);
+        CHECK(chains.size() == 7);
         const fb::RigExecWirePropertyChain *dial =
             chains["/Asset/Rig/Channels/Dial.rigExec:amount"];
         const fb::RigExecWirePropertyChain *wide =
@@ -2243,10 +2207,8 @@ TestComputedChainBake()
             chains["/Asset/Rig/Channels/Vec.rigExec:offset"];
         const fb::RigExecWirePropertyChain *space =
             chains["/Asset/Rig/Channels/Space.rigExec:local"];
-        const fb::RigExecWirePropertyChain *missing =
-            chains["/Asset/Rig/Channels/Missing.rigExec:none"];
-        CHECK(dial && wide && vec && space && missing);
-        if (!dial || !wide || !vec || !space || !missing) {
+        CHECK(dial && wide && vec && space);
+        if (!dial || !wide || !vec || !space) {
             return;
         }
         // A consumer chain runs after the chain it reads.
@@ -2259,15 +2221,14 @@ TestComputedChainBake()
         CHECK(wide->valueType == fb::PropertyValueType::Double);
         CHECK(vec->valueType == fb::PropertyValueType::Vec3f);
         CHECK(space->valueType == fb::PropertyValueType::Matrix4d);
-        CHECK(!_HasValue(file.inputs[missing->target]));
-        const char *order[] = {"Gain", "Shape", "Fade", "Nudge",
-                               "Off",  "Over",  "Limit"};
-        CHECK(dial->revisions.size() == 7);
-        for (size_t r = 0; r < dial->revisions.size() && r < 7; ++r) {
+        const char *order[] = {"Gain",  "Shape", "Fade",
+                               "Nudge", "Off",   "Limit"};
+        CHECK(dial->revisions.size() == 6);
+        for (size_t r = 0; r < dial->revisions.size() && r < 6; ++r) {
             CHECK(text(dial->revisions[r].mover) ==
                   std::string("/Asset/Rig/Movers/Dial/") + order[r]);
         }
-        if (dial->revisions.size() == 7) {
+        if (dial->revisions.size() == 6) {
             // Gain multiplies by the control's double avar, read through its
             // connection.
             const fb::RigExecWirePropertyRevision &gain = dial->revisions[0];
@@ -2310,10 +2271,7 @@ TestComputedChainBake()
             if (enabled.walk.size() == 1) {
                 CHECK(_SlotValue(file, enabled.walk[0]).bits == 1);
             }
-            const fb::RigExecWirePropertyRevision &over = dial->revisions[5];
-            CHECK(over.defaultWeight->mode == fb::ReadMode::Pinned &&
-                  over.defaultWeight->walk.size() == 1);
-            CHECK(dial->revisions[6].op == fb::PropertyOp::Clamp);
+            CHECK(dial->revisions[5].op == fb::PropertyOp::Clamp);
         }
         CHECK(wide->revisions.size() == 1 &&
               wide->revisions[0].value->tag == fb::InputTag::Float);
@@ -2387,8 +2345,8 @@ TestComputedChainBake()
             CHECK(memoCopies > 0);
         }
 
-        // Every property result, with the envelopes resolved, and the
-        // chains' lines as the evaluator printed them first at the time.
+        // Every property result, with the envelopes resolved; a valid rig's
+        // chains print no line.
         size_t skipped = 0, chainReads = 0;
         std::vector<std::string> lines;
         const size_t compared =
@@ -2400,22 +2358,48 @@ TestComputedChainBake()
         CHECK(skipped == 0);
         CHECK(compared == 10);
         CHECK(chainReads == 1);
-        CHECK(lines.size() == 3);
+        CHECK(lines.empty());
         RigExecRigEvaluator replay(stage, rigPath);
         const RigExecRigPose pose = replay.Evaluate(UsdTimeCode(time));
-        const auto at =
-            std::search(pose.diagnostics.begin(), pose.diagnostics.end(),
-                        lines.begin(), lines.end());
-        if (at == pose.diagnostics.end()) {
-            for (const std::string &line : lines) {
-                std::printf("  reference line: %s\n", line.c_str());
-            }
-            for (const std::string &line : pose.diagnostics) {
-                std::printf("  evaluator line: %s\n", line.c_str());
-            }
+        CHECK(pose.valid);
+        for (const std::string &line : lines) {
+            std::printf("  reference line: %s\n", line.c_str());
         }
-        CHECK(at != pose.diagnostics.end());
     }
+}
+
+/// A wire step's own kind, object and part; an op range chain's head and
+/// range steps as the static and group steps of the revision whose groups
+/// its members store (OpHostOutput target 4).
+struct _WireIdentity {
+    fb::StepKind kind;
+    int32_t object, part;
+};
+
+static _WireIdentity
+_IdentityOf(const fb::RigExecWireFile &file, const fb::RigExecWireStep &step)
+{
+    const bool head = step.kind == fb::StepKind::OpChainHead;
+    if ((head || step.kind == fb::StepKind::OpChainRange) && file.opGraph &&
+        step.object >= 0 && size_t(step.object) < file.opGraph->chains.size()) {
+        const fb::RigExecWireOpChain &chain =
+            *file.opGraph->chains[size_t(step.object)];
+        for (const auto &output : file.opGraph->hostOutputs) {
+            if (output->target != uint8_t(eval::OpOutputTarget::ChainGroup) ||
+                std::find(chain.members.begin(), chain.members.end(),
+                          output->node) == chain.members.end()) {
+                continue;
+            }
+            const int32_t groups =
+                chain.bounds.size() > 1 ? int32_t(chain.bounds.size() - 1) : 1;
+            return head ? _WireIdentity{fb::StepKind::RevisionStatic,
+                                        int32_t(output->object), -1}
+                        : _WireIdentity{fb::StepKind::RevisionChunk,
+                                        int32_t(output->object),
+                                        step.part % groups};
+        }
+    }
+    return {step.kind, step.object, step.part};
 }
 
 /// Whether \p step declares a read of slot \p slot of \p domain.
@@ -2622,15 +2606,19 @@ TestRangeChainBake()
         CHECK(size_t(id) < g.revisionChunkCount.size() &&
               size_t(g.revisionChunkCount[size_t(id)]) == ranges);
         for (const fb::RigExecWireStep &step : file->steps) {
-            if (step.kind == fb::StepKind::RevisionChunk && step.object == id) {
+            const _WireIdentity identity = _IdentityOf(*file, step);
+            if (identity.kind == fb::StepKind::RevisionChunk &&
+                identity.object == id) {
                 ++rangeSteps;
+                // The blend's group steps read the base; a matrix's op range
+                // step reads the group entering it alone.
                 CHECK(_DeclaresRead(step, fb::SlotDomain::ChainBase,
-                                    uint32_t(c)));
+                                    uint32_t(c)) == (r == 0));
                 // Group `part` of the entering version: the previous
                 // revision's group, never its whole version.
                 if (r > 0) {
-                    const uint32_t entering =
-                        uint32_t(chain.revisions[r - 1].chunkBase + step.part);
+                    const uint32_t entering = uint32_t(
+                        chain.revisions[r - 1].chunkBase + identity.part);
                     CHECK(_DeclaresRead(step, fb::SlotDomain::RevisionOut,
                                         entering));
                     CHECK(!_DeclaresRead(step, fb::SlotDomain::RevisionDone,
@@ -2677,8 +2665,10 @@ TestRangeChainBake()
                            uint32_t id, int32_t part) {
         fb::RigExecWireStep *found = nullptr;
         for (fb::RigExecWireStep &step : f.steps) {
-            if (step.kind == kind && step.object == int32_t(id) &&
-                (kind != fb::StepKind::RevisionChunk || step.part == part)) {
+            const _WireIdentity identity = _IdentityOf(f, step);
+            if (identity.kind == kind && identity.object == int32_t(id) &&
+                (kind != fb::StepKind::RevisionChunk ||
+                 identity.part == part)) {
                 found = &step;
             }
         }
@@ -2741,7 +2731,9 @@ TestRangeChainBake()
             _DropRead(step, fb::SlotDomain::RevisionOut, firstBase + 1);
             return true;
         },
-        " does not declare RevisionOut[" + std::to_string(firstBase + 1) + "]");
+        // A matrix's group steps are op range steps, whose reads the op
+        // graph's typed projection fixes.
+        "common_graph: semantic typed projection differs from body");
     refuse(
         "a group step missing the blend shape's group",
         [&](fb::RigExecWireFile &f) {
@@ -2754,7 +2746,7 @@ TestRangeChainBake()
             _DropRead(step, fb::SlotDomain::RevisionOut, blendBase + 1);
             return true;
         },
-        " does not declare RevisionOut[" + std::to_string(blendBase + 1) + "]");
+        "common_graph: semantic typed projection differs from body");
     refuse(
         "a group step declaring the previous revision's version",
         [&](fb::RigExecWireFile &f) {
@@ -2770,7 +2762,8 @@ TestRangeChainBake()
                                      firstRange + 1);
             return true;
         },
-        "which a range-pipelined range step does not read");
+        "reads RevisionDone slots [" + std::to_string(firstRange) + ", " +
+            std::to_string(firstRange + 1) + "), which no earlier step writes");
     refuse(
         "a join missing one of its groups",
         [&](fb::RigExecWireFile &f) {
@@ -2786,13 +2779,6 @@ TestRangeChainBake()
         },
         " does not declare RevisionOut[" +
             std::to_string(firstBase + ranges - 1) + "]");
-    {
-        fb::RigExecWireFile legacy(*file);
-        legacy.formatVersion = 29;
-        std::string why;
-        CHECK(!RigExecFormatValidate(legacy, &why));
-        CHECK(_Contains(why, "does not declare RevisionDone["));
-    }
     std::printf("range chain bake: %zu Range revisions of %zu groups "
                 "accepted; %d group rule violations refused\n",
                 chain.revisions.size(), ranges, refused);
@@ -3345,15 +3331,18 @@ _GroupsHolding(const std::vector<int> &indices, size_t points, size_t groups)
     return held;
 }
 
-/// The parts of revision \p r of chain \p c's RevisionChunk steps.
+/// The parts of revision \p r of chain \p c's group steps: its
+/// RevisionChunk steps, or the op range steps standing in for them.
 static std::set<int>
 _ChunkParts(const fb::RigExecWireFile &file, size_t c, int r)
 {
     std::set<int> parts;
     const int32_t id = file.geometry->chainRevisionBegin[c] + int32_t(r);
     for (const fb::RigExecWireStep &step : file.steps) {
-        if (step.kind == fb::StepKind::RevisionChunk && step.object == id) {
-            parts.insert(int(step.part));
+        const _WireIdentity identity = _IdentityOf(file, step);
+        if (identity.kind == fb::StepKind::RevisionChunk &&
+            identity.object == id) {
+            parts.insert(int(identity.part));
         }
     }
     return parts;
@@ -4141,7 +4130,7 @@ TestBake(const std::string &fixture, const std::vector<double> &tableFrames,
                     file->geometry->pathReads.size(), stats.readRows,
                     stats.valueRows, stats.enumeratedKeys, stats.topologies,
                     stats.droppedEntries, stats.samples, stats.bases,
-                    stats.propertyChains, stats.oracleFacts, failed);
+                    stats.propertyChains, stats.fieldFacts, failed);
         std::printf("  array inputs: %zu (%zu live rows, %zu rest rows, %zu "
                     "blend samples, %zu layout pairs, %zu chain bases, %zu "
                     "painted arrays, %zu oracle points)\n",
@@ -4422,8 +4411,13 @@ main(int argc, char **argv)
         (std::filesystem::path(RIGEXEC_EXAMPLES_DIR) / "01_FkChainTail.usda")
             .string();
     const std::vector<uint8_t> tailBytes = _BakeFixture(tail, 1001.0);
-    TestWrinkleWireExtensions(tailBytes);
-    TestExternalMoversWire(tailBytes);
+    // A first revision that runs no op node, whose op the codec cases swap.
+    const std::vector<uint8_t> faceBytes = _BakeFixture(
+        (std::filesystem::path(RIGEXEC_EXAMPLES_DIR) / "04_BlendShapeFace.usda")
+            .string(),
+        1001.0);
+    TestWrinkleWireExtensions(faceBytes);
+    TestExternalMoversWire(faceBytes);
     TestRealFileCorruption(tailBytes);
     TestComputedEnvelopeBake();
     TestComputedCurrentPhaseBake();

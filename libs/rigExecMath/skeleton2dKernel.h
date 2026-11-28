@@ -1,8 +1,8 @@
 // 2D skeleton solve: the one numerical body behind RigExecSkeleton2d in
 // native, frozen and .rigexec evaluation.
 //
-// USD-free and header-only: the runtime instantiates it. No locks, statics
-// or diagnostics; the workspace is owned by the calling operation.
+// Header-only: the runtime instantiates it. No locks, statics or diagnostics;
+// the workspace is owned by the calling operation.
 //
 // Plane and units: bones lie in the XY plane of the skeleton's start frame
 // (the rig's asset space without one), angles are degrees about its +Z,
@@ -81,7 +81,11 @@
 
 namespace rigExec {
 
-enum class RigExecBone2dScaling : uint8_t { Normal = 0, SquashStretch = 1, Uniform = 2 };
+enum class RigExecBone2dScaling : uint8_t {
+    Normal = 0,
+    SquashStretch = 1,
+    Uniform = 2
+};
 
 /// Bit flags of RigExecBone2dSetup::flags.
 enum : uint8_t {
@@ -97,9 +101,14 @@ enum : uint8_t {
 /// start frame, or asset space), or outside space e
 /// (RigExecBone2dSpaceExternal(e)).
 inline constexpr int32_t kRigExecBone2dSpaceBase = -1;
-inline constexpr int32_t RigExecBone2dSpaceExternal(size_t e) { return -2 - int32_t(e); }
+inline constexpr int32_t
+RigExecBone2dSpaceExternal(size_t e)
+{
+    return -2 - int32_t(e);
+}
 /// The outside space a source names, or -1 for a bone or the base.
-inline constexpr int64_t RigExecBone2dSpaceExternalIndex(int32_t source)
+inline constexpr int64_t
+RigExecBone2dSpaceExternalIndex(int32_t source)
 {
     return source <= -2 ? int64_t(-2) - int64_t(source) : int64_t(-1);
 }
@@ -124,14 +133,20 @@ inline constexpr double kRigExecSkeleton2dBendSideEpsilon = 1e-9;
 /// The thirteen channels a bone reads, in RigExecBone2dChannels order.
 inline constexpr size_t kRigExecBone2dChannelCount = 13;
 /// Whether channel \p c (sideFlip, endFlip, lock) is a bool.
-inline constexpr bool RigExecBone2dChannelIsBool(size_t c) { return c >= 4 && c <= 6; }
+inline constexpr bool
+RigExecBone2dChannelIsBool(size_t c)
+{
+    return c >= 4 && c <= 6;
+}
 /// Baked per-bone storage: ten doubles (tx, ty, rz, sx, lockX, lockY,
 /// lockAngle, offsetX, offsetY, targetIndex) and three bools (sideFlip,
 /// endFlip, lock).
-inline constexpr size_t kRigExecBone2dDoubleChannels = kRigExecBone2dChannelCount - 3;
+inline constexpr size_t kRigExecBone2dDoubleChannels =
+    kRigExecBone2dChannelCount - 3;
 inline constexpr size_t kRigExecBone2dBoolChannels = 3;
 /// Where channel \p c sits in its type's storage (the bool or double slot).
-inline constexpr size_t RigExecBone2dChannelStorage(size_t c)
+inline constexpr size_t
+RigExecBone2dChannelStorage(size_t c)
 {
     return RigExecBone2dChannelIsBool(c) ? c - 4 : (c < 4 ? c : c - 3);
 }
@@ -145,9 +160,10 @@ inline constexpr double kRigExecBone2dMinScale = 1e-6;
 /// union of the namespace parents and every space-switch source, so any
 /// per-frame parent comes before its child.
 struct RigExecBone2dSetup {
-    int32_t parent = -1;                ///< namespace parent bone, -1 root
+    int32_t parent = -1; ///< namespace parent bone, -1 root
     uint8_t flags = 0;
-    double minAngle = 0, maxAngle = 0;  ///< degrees, relative to the setup local angle
+    double minAngle = 0,
+           maxAngle = 0; ///< degrees, relative to the setup local angle
     RigExecBone2dScaling scaling = RigExecBone2dScaling::Normal;
     double squashFactor = 1;
     double maxStretch = 1;
@@ -170,6 +186,22 @@ struct RigExecBone2dSetup {
     // Delta form: a controller adds its change from rest, scaled by the factor.
     int32_t angleController = -1, posController = -1, scaleController = -1;
     double angleFactor = 0, posFactorX = 0, posFactorY = 0, scaleFactor = 0;
+
+    bool operator==(const RigExecBone2dSetup &o) const
+    {
+        return parent == o.parent && flags == o.flags &&
+               minAngle == o.minAngle && maxAngle == o.maxAngle &&
+               scaling == o.scaling && squashFactor == o.squashFactor &&
+               maxStretch == o.maxStretch && tipBone == o.tipBone &&
+               tipX == o.tipX && tipY == o.tipY && spaceBegin == o.spaceBegin &&
+               spaceCount == o.spaceCount && spaceSelector == o.spaceSelector &&
+               targetBegin == o.targetBegin && targetCount == o.targetCount &&
+               angleController == o.angleController &&
+               posController == o.posController &&
+               scaleController == o.scaleController &&
+               angleFactor == o.angleFactor && posFactorX == o.posFactorX &&
+               posFactorY == o.posFactorY && scaleFactor == o.scaleFactor;
+    }
 };
 
 /// Parent-space, target and group arrays, shared by reference (never copied
@@ -194,8 +226,8 @@ struct RigExecSkeleton2dStatic {
 /// A bone's setup frame, planar: a value. The solver rest route refreshes
 /// it from rest:space whenever that rest moves, without a recompile.
 struct RigExecBone2dRest {
-    double x = 0, y = 0;   ///< setup base in the plane
-    double angle = 0;      ///< setup world angle, degrees
+    double x = 0, y = 0; ///< setup base in the plane
+    double angle = 0;    ///< setup world angle, degrees
 };
 
 /// One evaluation's values besides the channels: each outside parent
@@ -228,24 +260,51 @@ struct RigExecBone2dChannels {
 /// Sets channel \p c of \p channels (avars:tx, ty, rz, sx, sideFlip,
 /// endFlip, lock, lockX, lockY, lockAngle, offsetX, offsetY, targetIndex;
 /// a bool channel is true when \p value is not 0).
-inline void RigExecBone2dSetChannel(RigExecBone2dChannels *channels, size_t c,
-    double value)
+inline void
+RigExecBone2dSetChannel(RigExecBone2dChannels *channels, size_t c, double value)
 {
     switch (c) {
-    case 0: channels->tx = value; break;
-    case 1: channels->ty = value; break;
-    case 2: channels->rz = value; break;
-    case 3: channels->sx = value; break;
-    case 4: channels->sideFlip = value != 0; break;
-    case 5: channels->endFlip = value != 0; break;
-    case 6: channels->lock = value != 0; break;
-    case 7: channels->lockX = value; break;
-    case 8: channels->lockY = value; break;
-    case 9: channels->lockAngle = value; break;
-    case 10: channels->offsetX = value; break;
-    case 11: channels->offsetY = value; break;
-    case 12: channels->targetIndex = value; break;
-    default: break;
+    case 0:
+        channels->tx = value;
+        break;
+    case 1:
+        channels->ty = value;
+        break;
+    case 2:
+        channels->rz = value;
+        break;
+    case 3:
+        channels->sx = value;
+        break;
+    case 4:
+        channels->sideFlip = value != 0;
+        break;
+    case 5:
+        channels->endFlip = value != 0;
+        break;
+    case 6:
+        channels->lock = value != 0;
+        break;
+    case 7:
+        channels->lockX = value;
+        break;
+    case 8:
+        channels->lockY = value;
+        break;
+    case 9:
+        channels->lockAngle = value;
+        break;
+    case 10:
+        channels->offsetX = value;
+        break;
+    case 11:
+        channels->offsetY = value;
+        break;
+    case 12:
+        channels->targetIndex = value;
+        break;
+    default:
+        break;
     }
 }
 
@@ -291,8 +350,9 @@ struct RigExecSkeleton2dWorkspace {
 /// The cross scale of \p scaling for along-bone scale \p sx: normal 1,
 /// uniform sx, squashStretch |sx|^(-squashFactor) (1 when |sx| is below
 /// kRigExecBone2dMinScale, where the volume rule has no finite answer).
-inline double RigExecBone2dCrossScale(RigExecBone2dScaling scaling,
-    double sx, double squashFactor)
+inline double
+RigExecBone2dCrossScale(RigExecBone2dScaling scaling, double sx,
+                        double squashFactor)
 {
     switch (scaling) {
     case RigExecBone2dScaling::Uniform:
@@ -314,8 +374,9 @@ inline double RigExecBone2dCrossScale(RigExecBone2dScaling scaling,
 /// [restLocal + minAngle, restLocal + maxAngle]. Evaluation never applies
 /// it to keyed or driven channels. A tool clamping an avars:rz delta passes
 /// restLocal = 0. Reversed limits are taken in order.
-inline double RigExecBone2dClampLocalAngle(double restLocal, double minAngle,
-    double maxAngle, double value)
+inline double
+RigExecBone2dClampLocalAngle(double restLocal, double minAngle, double maxAngle,
+                             double value)
 {
     const double lo = restLocal + std::min(minAngle, maxAngle);
     const double hi = restLocal + std::max(minAngle, maxAngle);
@@ -330,9 +391,10 @@ inline constexpr double kRigExecBone2dPlanarTolerance = 1e-9;
 /// the frame is not a rotation about +Z plus a translation: X and Y unit,
 /// orthogonal and in the XY plane, Z = +Z (each within
 /// kRigExecBone2dPlanarTolerance). The origin's z is not part of the rest.
-inline bool RigExecBone2dRestFromLandmarks(const double origin[3],
-    const double xPoint[3], const double yPoint[3], const double zPoint[3],
-    RigExecBone2dRest *rest)
+inline bool
+RigExecBone2dRestFromLandmarks(const double origin[3], const double xPoint[3],
+                               const double yPoint[3], const double zPoint[3],
+                               RigExecBone2dRest *rest)
 {
     const double tol = kRigExecBone2dPlanarTolerance;
     double x[3], y[3], z[3];
@@ -347,14 +409,13 @@ inline bool RigExecBone2dRestFromLandmarks(const double origin[3],
             return false;
         }
     }
-    const bool planar =
-        std::fabs(x[2]) <= tol && std::fabs(y[2]) <= tol &&
-        std::fabs(z[0]) <= tol && std::fabs(z[1]) <= tol &&
-        std::fabs(z[2] - 1.0) <= tol &&
-        std::fabs(x[0] * x[0] + x[1] * x[1] - 1.0) <= tol &&
-        std::fabs(y[0] * y[0] + y[1] * y[1] - 1.0) <= tol &&
-        std::fabs(x[0] * y[0] + x[1] * y[1]) <= tol &&
-        std::fabs(x[0] * y[1] - x[1] * y[0] - 1.0) <= tol;
+    const bool planar = std::fabs(x[2]) <= tol && std::fabs(y[2]) <= tol &&
+                        std::fabs(z[0]) <= tol && std::fabs(z[1]) <= tol &&
+                        std::fabs(z[2] - 1.0) <= tol &&
+                        std::fabs(x[0] * x[0] + x[1] * x[1] - 1.0) <= tol &&
+                        std::fabs(y[0] * y[0] + y[1] * y[1] - 1.0) <= tol &&
+                        std::fabs(x[0] * y[0] + x[1] * y[1]) <= tol &&
+                        std::fabs(x[0] * y[1] - x[1] * y[0] - 1.0) <= tol;
     if (!planar) {
         return false;
     }
@@ -370,9 +431,12 @@ inline bool RigExecBone2dRestFromLandmarks(const double origin[3],
 /// as RigExecBone2dRestFromLandmarks, but a scale on the axes is not part of
 /// the placement (the axes are normalized before the checks). False for a
 /// frame that is degenerate, mirrored or not a rotation about +Z.
-inline bool RigExecBone2dPlacementFromLandmarks(const double origin[3],
-    const double xPoint[3], const double yPoint[3], const double zPoint[3],
-    RigExecBone2dRest *placement)
+inline bool
+RigExecBone2dPlacementFromLandmarks(const double origin[3],
+                                    const double xPoint[3],
+                                    const double yPoint[3],
+                                    const double zPoint[3],
+                                    RigExecBone2dRest *placement)
 {
     double x[3], y[3], z[3];
     for (int a = 0; a < 3; ++a) {
@@ -395,11 +459,14 @@ inline bool RigExecBone2dPlacementFromLandmarks(const double origin[3],
         oz[a] = z[a] / lz;
     }
     double stand[3];
-    for (int a = 0; a < 3; ++a) stand[a] = origin[a] + ox[a];
+    for (int a = 0; a < 3; ++a)
+        stand[a] = origin[a] + ox[a];
     double side[3];
-    for (int a = 0; a < 3; ++a) side[a] = origin[a] + oy[a];
+    for (int a = 0; a < 3; ++a)
+        side[a] = origin[a] + oy[a];
     double up[3];
-    for (int a = 0; a < 3; ++a) up[a] = origin[a] + oz[a];
+    for (int a = 0; a < 3; ++a)
+        up[a] = origin[a] + oz[a];
     return RigExecBone2dRestFromLandmarks(origin, stand, side, up, placement);
 }
 
@@ -409,35 +476,48 @@ inline constexpr double kPi = 3.14159265358979323846;
 inline constexpr double kDegToRad = kPi / 180.0;
 inline constexpr double kRadToDeg = 180.0 / kPi;
 
-inline bool Finite(double v) { return std::isfinite(v); }
+inline bool
+Finite(double v)
+{
+    return std::isfinite(v);
+}
 
-inline RigExecBone2dFrame RestFrame(const RigExecBone2dRest &rest)
+inline RigExecBone2dFrame
+RestFrame(const RigExecBone2dRest &rest)
 {
     RigExecBone2dFrame f;
     const double c = std::cos(rest.angle * kDegToRad);
     const double s = std::sin(rest.angle * kDegToRad);
-    f.originX = rest.x; f.originY = rest.y;
-    f.xAxisX = c; f.xAxisY = s;
-    f.yAxisX = -s; f.yAxisY = c;
+    f.originX = rest.x;
+    f.originY = rest.y;
+    f.xAxisX = c;
+    f.xAxisY = s;
+    f.yAxisX = -s;
+    f.yAxisY = c;
     return f;
 }
 
 /// Wraps degrees into (-180, 180].
-inline double Wrap180(double degrees)
+inline double
+Wrap180(double degrees)
 {
     double w = std::fmod(degrees, 360.0);
-    if (w <= -180.0) w += 360.0;
-    else if (w > 180.0) w -= 360.0;
+    if (w <= -180.0)
+        w += 360.0;
+    else if (w > 180.0)
+        w -= 360.0;
     return w;
 }
 
 /// +1 when \p f keeps orientation, -1 when it mirrors.
-inline double Parity(const RigExecBone2dFrame &f)
+inline double
+Parity(const RigExecBone2dFrame &f)
 {
     return (f.xAxisX * f.yAxisY - f.xAxisY * f.yAxisX) < 0 ? -1.0 : 1.0;
 }
 
-inline double WorldAngle(const RigExecBone2dFrame &f)
+inline double
+WorldAngle(const RigExecBone2dFrame &f)
 {
     return std::atan2(f.xAxisY, f.xAxisX) * kRadToDeg;
 }
@@ -453,13 +533,15 @@ struct Affine {
 /// The frame of landmarks \p lm (origin, +X, +Y, +Z tips). False when the
 /// axes are degenerate or not finite.
 template <class Landmarks>
-inline bool AffineOf(const Landmarks &lm, Affine *f)
+inline bool
+AffineOf(const Landmarks &lm, Affine *f)
 {
     for (int a = 0; a < 3; ++a) {
         f->o[a] = lm[0][a];
-        for (int k = 0; k < 3; ++k) f->m[k][a] = lm[size_t(k) + 1][a] - lm[0][a];
+        for (int k = 0; k < 3; ++k)
+            f->m[k][a] = lm[size_t(k) + 1][a] - lm[0][a];
     }
-    const double (&m)[3][3] = f->m;
+    const double(&m)[3][3] = f->m;
     const double c00 = m[1][1] * m[2][2] - m[1][2] * m[2][1];
     const double c01 = m[1][2] * m[2][0] - m[1][0] * m[2][2];
     const double c02 = m[1][0] * m[2][1] - m[1][1] * m[2][0];
@@ -479,23 +561,27 @@ inline bool AffineOf(const Landmarks &lm, Affine *f)
     f->inverse[2][2] = (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * inv;
     for (int k = 0; k < 3; ++k) {
         for (int a = 0; a < 3; ++a) {
-            if (!std::isfinite(f->inverse[k][a])) return false;
+            if (!std::isfinite(f->inverse[k][a]))
+                return false;
         }
     }
     return true;
 }
 
 /// Point \p p in frame \p f's coordinates: (p - o) * m^-1.
-inline void ToFrame(const Affine &f, const double p[3], double c[3])
+inline void
+ToFrame(const Affine &f, const double p[3], double c[3])
 {
     const double d[3] = {p[0] - f.o[0], p[1] - f.o[1], p[2] - f.o[2]};
     for (int a = 0; a < 3; ++a) {
-        c[a] = d[0] * f.inverse[0][a] + d[1] * f.inverse[1][a] + d[2] * f.inverse[2][a];
+        c[a] = d[0] * f.inverse[0][a] + d[1] * f.inverse[1][a] +
+               d[2] * f.inverse[2][a];
     }
 }
 
 /// Frame \p f's point at coordinates \p c: o + c * m.
-inline void FromFrame(const Affine &f, const double c[3], double p[3])
+inline void
+FromFrame(const Affine &f, const double c[3], double p[3])
 {
     for (int a = 0; a < 3; ++a) {
         p[a] = f.o[a] + c[0] * f.m[0][a] + c[1] * f.m[1][a] + c[2] * f.m[2][a];
@@ -505,40 +591,50 @@ inline void FromFrame(const Affine &f, const double c[3], double p[3])
 /// Landmarks \p lm expressed in frame \p f (each of the four points), or
 /// copied when \p f is null.
 template <class Landmarks>
-inline void LandmarksIn(const Affine *f, const Landmarks &lm, double out[4][3])
+inline void
+LandmarksIn(const Affine *f, const Landmarks &lm, double out[4][3])
 {
     for (size_t i = 0; i < 4; ++i) {
-        const double p[3] = {double(lm[i][0]), double(lm[i][1]), double(lm[i][2])};
+        const double p[3] = {double(lm[i][0]), double(lm[i][1]),
+                             double(lm[i][2])};
         if (f) {
             ToFrame(*f, p, out[i]);
         } else {
-            for (int a = 0; a < 3; ++a) out[i][a] = p[a];
+            for (int a = 0; a < 3; ++a)
+                out[i][a] = p[a];
         }
     }
 }
 
-inline RigExecBone2dFrame IdentityFrame() { return RigExecBone2dFrame(); }
+inline RigExecBone2dFrame
+IdentityFrame()
+{
+    return RigExecBone2dFrame();
+}
 
 /// Whether bone \p i blends a second parent space this frame.
-inline bool Blends(const RigExecSkeleton2dWorkspace &ws, size_t i)
+inline bool
+Blends(const RigExecSkeleton2dWorkspace &ws, size_t i)
 {
     return ws.spaceBlend[i] > 0;
 }
 
 /// The posed frame of parent space \p source, null for the base.
-inline const RigExecBone2dFrame *SpaceFrame(const RigExecSkeleton2dWorkspace &ws,
-    int32_t source)
+inline const RigExecBone2dFrame *
+SpaceFrame(const RigExecSkeleton2dWorkspace &ws, int32_t source)
 {
-    if (source >= 0) return &ws.pose[size_t(source)];
+    if (source >= 0)
+        return &ws.pose[size_t(source)];
     const int64_t e = RigExecBone2dSpaceExternalIndex(source);
     return e >= 0 ? &ws.external[size_t(e)] : nullptr;
 }
 
 /// Bone \p i's frame under parent space \p source (candidate \p c):
 /// rz is ws.localAngle[i], the solved local position ws.localX/Y[2i + c].
-inline RigExecBone2dFrame ComposeUnder(const RigExecBone2dSetup &b,
-    const RigExecBone2dChannels &ch, size_t i, size_t c, int32_t source,
-    const RigExecSkeleton2dWorkspace &ws)
+inline RigExecBone2dFrame
+ComposeUnder(const RigExecBone2dSetup &b, const RigExecBone2dChannels &ch,
+             size_t i, size_t c, int32_t source,
+             const RigExecSkeleton2dWorkspace &ws)
 {
     const size_t at = 2 * i + c;
     const double angle = (ws.baseAngle[at] + ws.localAngle[i]) * kDegToRad;
@@ -554,17 +650,23 @@ inline RigExecBone2dFrame ComposeUnder(const RigExecBone2dSetup &b,
     if (!parent) {
         out.originX = ws.localX[at];
         out.originY = ws.localY[at];
-        out.xAxisX = lxX; out.xAxisY = lxY;
-        out.yAxisX = lyX; out.yAxisY = lyY;
+        out.xAxisX = lxX;
+        out.xAxisY = lxY;
+        out.yAxisX = lyX;
+        out.yAxisY = lyY;
         return out;
     }
     const RigExecBone2dFrame &p = *parent;
-    out.originX = p.originX + ws.localX[at] * p.xAxisX + ws.localY[at] * p.yAxisX;
-    out.originY = p.originY + ws.localX[at] * p.xAxisY + ws.localY[at] * p.yAxisY;
+    out.originX =
+        p.originX + ws.localX[at] * p.xAxisX + ws.localY[at] * p.yAxisX;
+    out.originY =
+        p.originY + ws.localX[at] * p.xAxisY + ws.localY[at] * p.yAxisY;
     if (b.flags & kRigExecBone2dIndependentAngle) {
         // Ancestors' turns and flips leave the orientation unchanged.
-        out.xAxisX = lxX; out.xAxisY = lxY;
-        out.yAxisX = lyX; out.yAxisY = lyY;
+        out.xAxisX = lxX;
+        out.xAxisY = lxY;
+        out.yAxisX = lyX;
+        out.yAxisY = lyY;
         return out;
     }
     // Flips compose down the hierarchy (parent parity).
@@ -579,29 +681,33 @@ inline RigExecBone2dFrame ComposeUnder(const RigExecBone2dSetup &b,
 /// linearly, the X axis along the shortest arc, the handedness of the
 /// nearer frame (the space switch's blend, which lerps translation and
 /// slerps rotation, restricted to the plane).
-inline RigExecBone2dFrame BlendFrames(const RigExecBone2dFrame &a,
-    const RigExecBone2dFrame &b, double w)
+inline RigExecBone2dFrame
+BlendFrames(const RigExecBone2dFrame &a, const RigExecBone2dFrame &b, double w)
 {
     RigExecBone2dFrame out;
     out.originX = (1 - w) * a.originX + w * b.originX;
     out.originY = (1 - w) * a.originY + w * b.originY;
     const double ta = std::atan2(a.xAxisY, a.xAxisX);
     double turn = std::atan2(b.xAxisY, b.xAxisX) - ta;
-    if (turn > kPi) turn -= 2 * kPi;
-    else if (turn <= -kPi) turn += 2 * kPi;
+    if (turn > kPi)
+        turn -= 2 * kPi;
+    else if (turn <= -kPi)
+        turn += 2 * kPi;
     const double t = ta + w * turn;
     const double cs = std::cos(t), sn = std::sin(t);
     const double parity = Parity(w < 0.5 ? a : b);
-    out.xAxisX = cs; out.xAxisY = sn;
-    out.yAxisX = -parity * sn; out.yAxisY = parity * cs;
+    out.xAxisX = cs;
+    out.xAxisY = sn;
+    out.yAxisX = -parity * sn;
+    out.yAxisY = parity * cs;
     return out;
 }
 
 /// Composes bone \p i's pose frame from its parent spaces' (already
 /// composed).
-inline void Compose(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, size_t i,
-    RigExecSkeleton2dWorkspace &ws)
+inline void
+Compose(const RigExecBone2dSetup *setup, const RigExecBone2dChannels *channels,
+        size_t i, RigExecSkeleton2dWorkspace &ws)
 {
     const RigExecBone2dFrame under =
         ComposeUnder(setup[i], channels[i], i, 0, ws.spaceA[i], ws);
@@ -609,16 +715,18 @@ inline void Compose(const RigExecBone2dSetup *setup,
         ws.pose[i] = under;
         return;
     }
-    ws.pose[i] = BlendFrames(under,
-        ComposeUnder(setup[i], channels[i], i, 1, ws.spaceB[i], ws), ws.spaceBlend[i]);
+    ws.pose[i] = BlendFrames(
+        under, ComposeUnder(setup[i], channels[i], i, 1, ws.spaceB[i], ws),
+        ws.spaceBlend[i]);
 }
 
 /// The bone's local positions from its rest-local positions and channels:
 /// a parent bone's along-bone scale moves the attach point along the
 /// parent, and the offset translates the posed bone in the parent's frame.
-inline void LocalPosition(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, size_t i,
-    RigExecSkeleton2dWorkspace &ws)
+inline void
+LocalPosition(const RigExecBone2dSetup *setup,
+              const RigExecBone2dChannels *channels, size_t i,
+              RigExecSkeleton2dWorkspace &ws)
 {
     (void)setup;
     const size_t spaces = Blends(ws, i) ? 2 : 1;
@@ -628,24 +736,29 @@ inline void LocalPosition(const RigExecBone2dSetup *setup,
         const double parentScale = p < 0 ? 1.0 : ws.scale[size_t(p)];
         // The offset is an extra posed translation only.
         const size_t at = 2 * i + c;
-        ws.localX[at] = ws.restLocalX[at] * parentScale + channels[i].tx + channels[i].offsetX;
-        ws.localY[at] = ws.restLocalY[at] + channels[i].ty + channels[i].offsetY;
+        ws.localX[at] = ws.restLocalX[at] * parentScale + channels[i].tx +
+                        channels[i].offsetX;
+        ws.localY[at] =
+            ws.restLocalY[at] + channels[i].ty + channels[i].offsetY;
     }
 }
 
 /// Whether bone \p i composes from a bone marked dirty.
-inline bool ReadsDirty(const RigExecSkeleton2dWorkspace &ws, size_t i)
+inline bool
+ReadsDirty(const RigExecSkeleton2dWorkspace &ws, size_t i)
 {
     const int32_t a = ws.spaceA[i];
-    if (a >= 0 && ws.dirty[size_t(a)]) return true;
+    if (a >= 0 && ws.dirty[size_t(a)])
+        return true;
     const int32_t b = ws.spaceB[i];
     return Blends(ws, i) && b >= 0 && ws.dirty[size_t(b)];
 }
 
 /// Recomposes every bone composed from \p root (solve order is parents first).
-inline void RecomposeBelow(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, size_t count, size_t root,
-    RigExecSkeleton2dWorkspace &ws)
+inline void
+RecomposeBelow(const RigExecBone2dSetup *setup,
+               const RigExecBone2dChannels *channels, size_t count, size_t root,
+               RigExecSkeleton2dWorkspace &ws)
 {
     std::fill(ws.dirty.begin(), ws.dirty.end(), uint8_t(0));
     ws.dirty[root] = 1;
@@ -660,17 +773,20 @@ inline void RecomposeBelow(const RigExecBone2dSetup *setup,
 }
 
 /// Clamps bone \p i's solved turn to its limits when they are on.
-inline void ClampTurn(const RigExecBone2dSetup &b, double *turn)
+inline void
+ClampTurn(const RigExecBone2dSetup &b, double *turn)
 {
     if (b.flags & kRigExecBone2dAngleLimits) {
-        *turn = RigExecBone2dClampLocalAngle(0.0, b.minAngle, b.maxAngle, *turn);
+        *turn =
+            RigExecBone2dClampLocalAngle(0.0, b.minAngle, b.maxAngle, *turn);
     }
 }
 
 /// The world-space sign a turn of bone \p i takes: an independent bone or
 /// a root turns in asset space; any other bone turns in its parent's frame.
-inline double TurnSign(const RigExecBone2dSetup *setup, size_t i,
-    const RigExecSkeleton2dWorkspace &ws)
+inline double
+TurnSign(const RigExecBone2dSetup *setup, size_t i,
+         const RigExecSkeleton2dWorkspace &ws)
 {
     const int32_t p = setup[i].parent;
     if (p < 0 || (setup[i].flags & kRigExecBone2dIndependentAngle)) {
@@ -681,9 +797,9 @@ inline double TurnSign(const RigExecBone2dSetup *setup, size_t i,
 
 /// Turns bone \p j so the ray from its base to the effector point turns by
 /// the world angle \p delta (degrees), within its limits; recomposes below.
-inline void Turn(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, size_t count, size_t j,
-    double delta, RigExecSkeleton2dWorkspace &ws)
+inline void
+Turn(const RigExecBone2dSetup *setup, const RigExecBone2dChannels *channels,
+     size_t count, size_t j, double delta, RigExecSkeleton2dWorkspace &ws)
 {
     double turn = ws.localAngle[j] + delta * TurnSign(setup, j, ws);
     ClampTurn(setup[j], &turn);
@@ -697,9 +813,10 @@ inline void Turn(const RigExecBone2dSetup *setup,
 /// Turns chain bone \p ws.chain[c] by the world angle \p delta (degrees),
 /// within its limits, and recomposes the chain below it down to \p k only:
 /// the rest of the subtree is recomposed once the lock is solved.
-inline bool TurnOnChain(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, size_t c, size_t k, double delta,
-    RigExecSkeleton2dWorkspace &ws)
+inline bool
+TurnOnChain(const RigExecBone2dSetup *setup,
+            const RigExecBone2dChannels *channels, size_t c, size_t k,
+            double delta, RigExecSkeleton2dWorkspace &ws)
 {
     const size_t j = size_t(ws.chain[c]);
     double turn = ws.localAngle[j] + delta * TurnSign(setup, j, ws);
@@ -721,8 +838,9 @@ inline bool TurnOnChain(const RigExecBone2dSetup *setup,
 /// bone with more than one child not ignored by IK -- and at most
 /// kRigExecSkeleton2dMaxChain.
 // A stop ends the chain and is not turned; roots keep their keyed placement.
-inline void LockChain(const RigExecBone2dSetup *setup, size_t k,
-    RigExecSkeleton2dWorkspace &ws)
+inline void
+LockChain(const RigExecBone2dSetup *setup, size_t k,
+          RigExecSkeleton2dWorkspace &ws)
 {
     ws.chain.clear();
     for (int32_t a = setup[k].parent; a >= 0; a = setup[size_t(a)].parent) {
@@ -739,8 +857,9 @@ inline void LockChain(const RigExecBone2dSetup *setup, size_t k,
 }
 
 /// Distance from bone \p k's base to (goalX, goalY).
-inline double LockResidual(const RigExecSkeleton2dWorkspace &ws, size_t k,
-    double goalX, double goalY)
+inline double
+LockResidual(const RigExecSkeleton2dWorkspace &ws, size_t k, double goalX,
+             double goalY)
 {
     const double dx = ws.pose[k].originX - goalX;
     const double dy = ws.pose[k].originY - goalY;
@@ -748,9 +867,10 @@ inline double LockResidual(const RigExecSkeleton2dWorkspace &ws, size_t k,
 }
 
 /// Recomposes the lock chain top-down, then the locked bone \p k.
-inline void ComposeLockChain(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, size_t k,
-    RigExecSkeleton2dWorkspace &ws)
+inline void
+ComposeLockChain(const RigExecBone2dSetup *setup,
+                 const RigExecBone2dChannels *channels, size_t k,
+                 RigExecSkeleton2dWorkspace &ws)
 {
     for (size_t c = ws.chain.size(); c-- > 0;) {
         Compose(setup, channels, size_t(ws.chain[c]), ws);
@@ -762,9 +882,10 @@ inline void ComposeLockChain(const RigExecBone2dSetup *setup,
 /// ws.chain, from the bone nearest k outward, a fixed number of sweeps; a
 /// sweep that turns nothing, or an exact hit, ends it early (method: the
 /// "Cyclic coordinate descent" row of docs/references.md).
-inline void LockDescent(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, size_t k, double goalX,
-    double goalY, RigExecSkeleton2dWorkspace &ws)
+inline void
+LockDescent(const RigExecBone2dSetup *setup,
+            const RigExecBone2dChannels *channels, size_t k, double goalX,
+            double goalY, RigExecSkeleton2dWorkspace &ws)
 {
     for (int sweep = 0; sweep < kRigExecSkeleton2dLockSweeps; ++sweep) {
         bool moved = false;
@@ -777,15 +898,15 @@ inline void LockDescent(const RigExecBone2dSetup *setup,
             if ((ex == 0 && ey == 0) || (tx == 0 && ty == 0)) {
                 continue;
             }
-            const double delta = std::atan2(ex * ty - ey * tx,
-                                            ex * tx + ey * ty) * kRadToDeg;
+            const double delta =
+                std::atan2(ex * ty - ey * tx, ex * tx + ey * ty) * kRadToDeg;
             if (delta == 0) {
                 continue;
             }
             moved = TurnOnChain(setup, channels, c, k, delta, ws) || moved;
         }
-        if (!moved || (ws.pose[k].originX == goalX &&
-                       ws.pose[k].originY == goalY)) {
+        if (!moved ||
+            (ws.pose[k].originX == goalX && ws.pose[k].originY == goalY)) {
             break;
         }
     }
@@ -795,7 +916,8 @@ inline void LockDescent(const RigExecBone2dSetup *setup,
 /// \p *turn - 360, then \p *turn + 360; the first within
 /// kRigExecSkeleton2dLimitSlack degrees of [min, max] is clamped onto it.
 /// False when none fits. A bone without limits always fits.
-inline bool FitLimits(const RigExecBone2dSetup &b, double *turn)
+inline bool
+FitLimits(const RigExecBone2dSetup &b, double *turn)
 {
     if (!(b.flags & kRigExecBone2dAngleLimits)) {
         return true;
@@ -824,9 +946,11 @@ inline bool FitLimits(const RigExecBone2dSetup &b, double *turn)
 /// (FitLimits); it replaces the state when its residual is below
 /// \p *best - \p tol. Leaves the kept angles composed.
 template <class Recompose, class Residual>
-inline void RetryTwoLinkClosedForm(const RigExecBone2dSetup *setup, double endX,
-    double endY, double goalX, double goalY, double tol, double *best,
-    RigExecSkeleton2dWorkspace &ws, Recompose &&recompose, Residual &&residual)
+inline void
+RetryTwoLinkClosedForm(const RigExecBone2dSetup *setup, double endX,
+                       double endY, double goalX, double goalY, double tol,
+                       double *best, RigExecSkeleton2dWorkspace &ws,
+                       Recompose &&recompose, Residual &&residual)
 {
     const size_t mid = size_t(ws.chain[0]), top = size_t(ws.chain[1]);
     const double ox = ws.pose[top].originX, oy = ws.pose[top].originY;
@@ -843,9 +967,10 @@ inline void RetryTwoLinkClosedForm(const RigExecBone2dSetup *setup, double endX,
     // Positive side: link 2 turns counter-clockwise from link 1, which
     // puts link 1 clockwise of the goal direction (phi - alpha).
     const double cross = ax * by - ay * bx;
-    const double side = cross < -kRigExecSkeleton2dBendSideEpsilon * l1 * l2 ? -1.0 : 1.0;
-    const double cosAlpha = std::min(1.0, std::max(-1.0,
-        (l1 * l1 + d * d - l2 * l2) / (2.0 * l1 * d)));
+    const double side =
+        cross < -kRigExecSkeleton2dBendSideEpsilon * l1 * l2 ? -1.0 : 1.0;
+    const double cosAlpha = std::min(
+        1.0, std::max(-1.0, (l1 * l1 + d * d - l2 * l2) / (2.0 * l1 * d)));
     const double alpha = std::acos(cosAlpha) * kRadToDeg;
     const double phi = std::atan2(gy, gx) * kRadToDeg;
     const double theta1 = std::atan2(ay, ax) * kRadToDeg;
@@ -866,7 +991,8 @@ inline void RetryTwoLinkClosedForm(const RigExecBone2dSetup *setup, double endX,
         const double d2 = Wrap180(t2 - (theta2 + d1));
         double turnTop = fromTop + d1 * signTop;
         double turnMid = fromMid + d2 * signMid;
-        if (!FitLimits(setup[top], &turnTop) || !FitLimits(setup[mid], &turnMid)) {
+        if (!FitLimits(setup[top], &turnTop) ||
+            !FitLimits(setup[mid], &turnMid)) {
             continue;
         }
         ws.localAngle[top] = turnTop;
@@ -893,22 +1019,26 @@ inline void RetryTwoLinkClosedForm(const RigExecBone2dSetup *setup, double endX,
 /// positive side), then the other. A bend is a candidate only when both
 /// turns fit their limits (FitLimits); it replaces the state when its
 /// residual is below \p *best - \p tol. Leaves the kept angles composed.
-inline void RetryLockTwoJoint(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, size_t k, double goalX,
-    double goalY, double tol, double *best, RigExecSkeleton2dWorkspace &ws)
+inline void
+RetryLockTwoJoint(const RigExecBone2dSetup *setup,
+                  const RigExecBone2dChannels *channels, size_t k, double goalX,
+                  double goalY, double tol, double *best,
+                  RigExecSkeleton2dWorkspace &ws)
 {
-    RetryTwoLinkClosedForm(setup, ws.pose[k].originX, ws.pose[k].originY, goalX, goalY,
-        tol, best, ws, [&] { ComposeLockChain(setup, channels, k, ws); },
+    RetryTwoLinkClosedForm(
+        setup, ws.pose[k].originX, ws.pose[k].originY, goalX, goalY, tol, best,
+        ws, [&] { ComposeLockChain(setup, channels, k, ws); },
         [&] { return LockResidual(ws, k, goalX, goalY); });
 }
 
 /// Runs the descent from the start the caller set in ws and keeps the result
 /// when its residual is below \p *best - \p tol; otherwise restores the
 /// chain angles \p kept (ws.chain order) and recomposes the chain.
-inline void DescendFromStart(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, size_t k, double goalX,
-    double goalY, double tol, const double *kept, double *best,
-    RigExecSkeleton2dWorkspace &ws)
+inline void
+DescendFromStart(const RigExecBone2dSetup *setup,
+                 const RigExecBone2dChannels *channels, size_t k, double goalX,
+                 double goalY, double tol, const double *kept, double *best,
+                 RigExecSkeleton2dWorkspace &ws)
 {
     LockDescent(setup, channels, k, goalX, goalY, ws);
     const double r = LockResidual(ws, k, goalX, goalY);
@@ -934,9 +1064,11 @@ inline void DescendFromStart(const RigExecBone2dSetup *setup,
 ///     bound: those joints restart from their limits' midpoint and the top
 ///     bone turns the effector toward the goal (the other bend of a chain
 ///     held straight by a bound, whose mirror image is itself).
-inline void RetryLockLongChain(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, size_t k, double goalX,
-    double goalY, double tol, double *best, RigExecSkeleton2dWorkspace &ws)
+inline void
+RetryLockLongChain(const RigExecBone2dSetup *setup,
+                   const RigExecBone2dChannels *channels, size_t k,
+                   double goalX, double goalY, double tol, double *best,
+                   RigExecSkeleton2dWorkspace &ws)
 {
     const size_t n = ws.chain.size();
     const size_t top = size_t(ws.chain[n - 1]);
@@ -964,7 +1096,8 @@ inline void RetryLockLongChain(const RigExecBone2dSetup *setup,
         const double vy = ws.pose[next].originY - ws.pose[j].originY;
         const double along = vx * ux + vy * uy;
         kept[c] = ws.localAngle[j];
-        mirrored[c] = std::atan2(2.0 * along * uy - vy, 2.0 * along * ux - vx) * kRadToDeg;
+        mirrored[c] = std::atan2(2.0 * along * uy - vy, 2.0 * along * ux - vx) *
+                      kRadToDeg;
     }
     for (size_t c = n; c-- > 0;) {
         const size_t j = size_t(ws.chain[c]);
@@ -974,7 +1107,8 @@ inline void RetryLockLongChain(const RigExecBone2dSetup *setup,
         if (vx == 0 && vy == 0) {
             continue;
         }
-        const double delta = Wrap180(mirrored[c] - std::atan2(vy, vx) * kRadToDeg);
+        const double delta =
+            Wrap180(mirrored[c] - std::atan2(vy, vx) * kRadToDeg);
         TurnOnChain(setup, channels, c, k, delta, ws);
     }
     DescendFromStart(setup, channels, k, goalX, goalY, tol, kept, best, ws);
@@ -1005,7 +1139,8 @@ inline void RetryLockLongChain(const RigExecBone2dSetup *setup,
     // toward it on their legal side instead of straightening onto the bound.
     const double ex = ws.pose[k].originX - ox, ey = ws.pose[k].originY - oy;
     if (!(ex == 0 && ey == 0)) {
-        const double delta = std::atan2(ex * ly - ey * lx, ex * lx + ey * ly) * kRadToDeg;
+        const double delta =
+            std::atan2(ex * ly - ey * lx, ex * lx + ey * ly) * kRadToDeg;
         if (delta != 0) {
             TurnOnChain(setup, channels, n - 1, k, delta, ws);
         }
@@ -1016,7 +1151,8 @@ inline void RetryLockLongChain(const RigExecBone2dSetup *setup,
 /// Rounds \p v to an index into [0, \p count), or -1 when it names
 /// nothing (not finite, negative, or past the end). Half rounds away from
 /// zero. Never passes a huge value to llround.
-inline int64_t SelectIndex(double v, size_t count)
+inline int64_t
+SelectIndex(double v, size_t count)
 {
     if (count == 0 || !(v >= -0.5) || !(v < double(count) - 0.5)) {
         return -1;
@@ -1038,8 +1174,9 @@ enum : uint8_t {
 /// controller's current values. Controllers read keyed (pre-solve) values.
 /// A zero factor, or no controller, applies nothing bit for bit.
 // Delta form, in the parent's frame.
-inline void ResolveControls(const RigExecBone2dSetup *setup, size_t count,
-    RigExecSkeleton2dWorkspace &ws)
+inline void
+ResolveControls(const RigExecBone2dSetup *setup, size_t count,
+                RigExecSkeleton2dWorkspace &ws)
 {
     for (size_t i = 0; i < count; ++i) {
         const RigExecBone2dSetup &b = setup[i];
@@ -1061,7 +1198,8 @@ inline void ResolveControls(const RigExecBone2dSetup *setup, size_t count,
                 ws.ctrlDone[size_t(b.angleController)] ==
                     (kCtrlAngle | kCtrlPos | kCtrlScale)) {
                 if (b.angleFactor != 0) {
-                    ch.rz += b.angleFactor * ws.eff[size_t(b.angleController)].rz;
+                    ch.rz +=
+                        b.angleFactor * ws.eff[size_t(b.angleController)].rz;
                 }
                 ws.ctrlDone[i] = uint8_t(done | kCtrlAngle);
                 progress = true;
@@ -1084,8 +1222,9 @@ inline void ResolveControls(const RigExecBone2dSetup *setup, size_t count,
                 ws.ctrlDone[size_t(b.scaleController)] ==
                     (kCtrlAngle | kCtrlPos | kCtrlScale)) {
                 if (b.scaleFactor != 0) {
-                    ch.sx *= 1.0 + b.scaleFactor *
-                                        (ws.eff[size_t(b.scaleController)].sx - 1.0);
+                    ch.sx *=
+                        1.0 + b.scaleFactor *
+                                  (ws.eff[size_t(b.scaleController)].sx - 1.0);
                 }
                 ws.ctrlDone[i] = uint8_t(afterPos | kCtrlScale);
                 progress = true;
@@ -1121,7 +1260,7 @@ inline void ResolveControls(const RigExecBone2dSetup *setup, size_t count,
             if (!(done & kCtrlScale) && b.scaleController >= 0 &&
                 b.scaleFactor != 0) {
                 ch.sx *= 1.0 + b.scaleFactor *
-                                    (ws.eff[size_t(b.scaleController)].sx - 1.0);
+                                   (ws.eff[size_t(b.scaleController)].sx - 1.0);
             }
             ws.ctrlDone[i] = kCtrlAngle | kCtrlPos | kCtrlScale;
             break;
@@ -1137,9 +1276,11 @@ inline void ResolveControls(const RigExecBone2dSetup *setup, size_t count,
 /// parent is the nearer space when it is a bone, otherwise none. False when
 /// a bone source does not precede its bone (the static order covers every
 /// source, so the compile rules that out).
-inline bool ResolveSpaces(const RigExecBone2dSetup *setup, size_t count,
-    const RigExecSkeleton2dStatic *extra, const RigExecSkeleton2dFrameInputs &inputs,
-    RigExecSkeleton2dWorkspace &ws)
+inline bool
+ResolveSpaces(const RigExecBone2dSetup *setup, size_t count,
+              const RigExecSkeleton2dStatic *extra,
+              const RigExecSkeleton2dFrameInputs &inputs,
+              RigExecSkeleton2dWorkspace &ws)
 {
     ws.effSetup.assign(setup, setup + count);
     ws.spaceA.resize(count);
@@ -1159,7 +1300,8 @@ inline bool ResolveSpaces(const RigExecBone2dSetup *setup, size_t count,
             lower = extra->spaceSources[b.spaceBegin + below];
             upper = extra->spaceSources[b.spaceBegin + above];
             blend = above == below ? 0.0 : active - double(below);
-            if (!(blend > 0)) upper = lower;
+            if (!(blend > 0))
+                upper = lower;
         }
         for (const int32_t source : {lower, upper}) {
             if (source >= int32_t(i)) {
@@ -1178,17 +1320,18 @@ inline bool ResolveSpaces(const RigExecBone2dSetup *setup, size_t count,
 /// Marks ws.active by the joint-group rule (RigExecResolveJointGroups) over
 /// this frame's chain parents. Inactive bones publish their rest frames and
 /// neither solve nor join chains.
-inline void ResolveGroups(const RigExecBone2dSetup *effSetup, size_t count,
-    const RigExecSkeleton2dStatic *extra, const double *groupActive,
-    RigExecSkeleton2dWorkspace &ws)
+inline void
+ResolveGroups(const RigExecBone2dSetup *effSetup, size_t count,
+              const RigExecSkeleton2dStatic *extra, const double *groupActive,
+              RigExecSkeleton2dWorkspace &ws)
 {
     ws.active.assign(count, 1);
     if (!extra || extra->groupCount == 0) {
         return;
     }
     ws.groupSlot.assign(extra->groupCount, -1);
-    RigExecResolveJointGroups(count,
-        [effSetup](size_t i) { return effSetup[i].parent; },
+    RigExecResolveJointGroups(
+        count, [effSetup](size_t i) { return effSetup[i].parent; },
         extra->groups, extra->groupCount, extra->groupMembers, groupActive,
         ws.groupSlot.data(), ws.active.data());
 }
@@ -1199,16 +1342,18 @@ inline void ResolveGroups(const RigExecBone2dSetup *effSetup, size_t count,
 /// child not ignored by IK -- and at most kRigExecSkeleton2dMaxChain bones
 /// including the owner. A root is included: a lone bone aims.
 // The owner aims its tip.
-inline void TargetChain(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, size_t k,
-    RigExecSkeleton2dWorkspace &ws)
+inline void
+TargetChain(const RigExecBone2dSetup *setup,
+            const RigExecBone2dChannels *channels, size_t k,
+            RigExecSkeleton2dWorkspace &ws)
 {
     ws.chain.clear();
     ws.chain.push_back(int32_t(k));
     for (int32_t a = setup[k].parent; a >= 0; a = setup[size_t(a)].parent) {
         const RigExecBone2dSetup &b = setup[size_t(a)];
-        if ((b.flags & kRigExecBone2dIndependentAngle) || !ws.active[size_t(a)] ||
-            channels[size_t(a)].lock || ws.countedChildren[size_t(a)] > 1) {
+        if ((b.flags & kRigExecBone2dIndependentAngle) ||
+            !ws.active[size_t(a)] || channels[size_t(a)].lock ||
+            ws.countedChildren[size_t(a)] > 1) {
             break;
         }
         if (ws.chain.size() >= kRigExecSkeleton2dMaxChain) {
@@ -1221,16 +1366,20 @@ inline void TargetChain(const RigExecBone2dSetup *setup,
 /// The owner's tip: its tip offset in its pose frame, the along-bone part
 /// times its along-bone scale (where a child's base lands). A pin's tip is
 /// its base.
-inline void TipOf(const RigExecSkeleton2dWorkspace &ws, size_t k, double *x, double *y)
+inline void
+TipOf(const RigExecSkeleton2dWorkspace &ws, size_t k, double *x, double *y)
 {
     const double along = ws.tipX[k] * ws.scale[k];
     const double across = ws.tipY[k];
-    *x = ws.pose[k].originX + along * ws.pose[k].xAxisX + across * ws.pose[k].yAxisX;
-    *y = ws.pose[k].originY + along * ws.pose[k].xAxisY + across * ws.pose[k].yAxisY;
+    *x = ws.pose[k].originX + along * ws.pose[k].xAxisX +
+         across * ws.pose[k].yAxisX;
+    *y = ws.pose[k].originY + along * ws.pose[k].xAxisY +
+         across * ws.pose[k].yAxisY;
 }
 
 /// Distance from bone \p k's base to its tip (zero for a pin).
-inline double TipReach(const RigExecSkeleton2dWorkspace &ws, size_t k)
+inline double
+TipReach(const RigExecSkeleton2dWorkspace &ws, size_t k)
 {
     const double along = ws.tipX[k] * ws.scale[k];
     const double across = ws.tipY[k];
@@ -1238,8 +1387,9 @@ inline double TipReach(const RigExecSkeleton2dWorkspace &ws, size_t k)
 }
 
 /// Distance from bone \p k's tip to (goalX, goalY).
-inline double TargetResidual(const RigExecSkeleton2dWorkspace &ws, size_t k,
-    double goalX, double goalY)
+inline double
+TargetResidual(const RigExecSkeleton2dWorkspace &ws, size_t k, double goalX,
+               double goalY)
 {
     double tipX = 0, tipY = 0;
     TipOf(ws, k, &tipX, &tipY);
@@ -1249,9 +1399,10 @@ inline double TargetResidual(const RigExecSkeleton2dWorkspace &ws, size_t k,
 
 /// Turns chain bone \p ws.chain[c] by the world angle \p delta (degrees)
 /// and recomposes the chain below it down to the owner.
-inline bool TargetTurnOnChain(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, size_t c, double delta,
-    RigExecSkeleton2dWorkspace &ws)
+inline bool
+TargetTurnOnChain(const RigExecBone2dSetup *setup,
+                  const RigExecBone2dChannels *channels, size_t c, double delta,
+                  RigExecSkeleton2dWorkspace &ws)
 {
     const size_t j = size_t(ws.chain[c]);
     double turn = ws.localAngle[j] + delta * TurnSign(setup, j, ws);
@@ -1268,8 +1419,10 @@ inline bool TargetTurnOnChain(const RigExecBone2dSetup *setup,
 }
 
 /// Recomposes the target chain top-down.
-inline void ComposeTargetChain(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, RigExecSkeleton2dWorkspace &ws)
+inline void
+ComposeTargetChain(const RigExecBone2dSetup *setup,
+                   const RigExecBone2dChannels *channels,
+                   RigExecSkeleton2dWorkspace &ws)
 {
     for (size_t c = ws.chain.size(); c-- > 0;) {
         Compose(setup, channels, size_t(ws.chain[c]), ws);
@@ -1279,9 +1432,10 @@ inline void ComposeTargetChain(const RigExecBone2dSetup *setup,
 /// Cyclic coordinate descent of bone \p k's tip toward (goalX, goalY) over
 /// ws.chain, from the owner outward, a fixed number of sweeps; a sweep that
 /// turns nothing, or an exact hit, ends it early.
-inline void TargetDescent(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, size_t k,
-    double goalX, double goalY, RigExecSkeleton2dWorkspace &ws)
+inline void
+TargetDescent(const RigExecBone2dSetup *setup,
+              const RigExecBone2dChannels *channels, size_t k, double goalX,
+              double goalY, RigExecSkeleton2dWorkspace &ws)
 {
     for (int sweep = 0; sweep < kRigExecSkeleton2dLockSweeps; ++sweep) {
         bool moved = false;
@@ -1295,8 +1449,8 @@ inline void TargetDescent(const RigExecBone2dSetup *setup,
             if ((ex == 0 && ey == 0) || (tx == 0 && ty == 0)) {
                 continue;
             }
-            const double delta = std::atan2(ex * ty - ey * tx,
-                                            ex * tx + ey * ty) * kRadToDeg;
+            const double delta =
+                std::atan2(ex * ty - ey * tx, ex * tx + ey * ty) * kRadToDeg;
             if (delta == 0) {
                 continue;
             }
@@ -1314,14 +1468,16 @@ inline void TargetDescent(const RigExecBone2dSetup *setup,
 /// the two closed-form bends (law of cosines on l1 = |owner - top|,
 /// l2 = |tip - owner|, d = |goal - top|), current bend side first, each
 /// within its limits, kept only below \p *best - \p tol.
-inline void TargetRetryTwoJoint(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, size_t k,
-    double goalX, double goalY, double tol, double *best,
-    RigExecSkeleton2dWorkspace &ws)
+inline void
+TargetRetryTwoJoint(const RigExecBone2dSetup *setup,
+                    const RigExecBone2dChannels *channels, size_t k,
+                    double goalX, double goalY, double tol, double *best,
+                    RigExecSkeleton2dWorkspace &ws)
 {
     double tipX = 0, tipY = 0;
     TipOf(ws, k, &tipX, &tipY);
-    RetryTwoLinkClosedForm(setup, tipX, tipY, goalX, goalY, tol, best, ws,
+    RetryTwoLinkClosedForm(
+        setup, tipX, tipY, goalX, goalY, tol, best, ws,
         [&] { ComposeTargetChain(setup, channels, ws); },
         [&] { return TargetResidual(ws, k, goalX, goalY); });
 }
@@ -1332,9 +1488,11 @@ inline void TargetRetryTwoJoint(const RigExecBone2dSetup *setup,
 /// closed-form. A pin owner turns its ancestors so its base meets the
 /// target. Locked or inactive owners keep their state, and out-of-reach
 /// chains straighten toward the goal.
-inline void SolveTarget(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, size_t count, size_t k,
-    const RigExecSkeleton2dStatic *extra, RigExecSkeleton2dWorkspace &ws)
+inline void
+SolveTarget(const RigExecBone2dSetup *setup,
+            const RigExecBone2dChannels *channels, size_t count, size_t k,
+            const RigExecSkeleton2dStatic *extra,
+            RigExecSkeleton2dWorkspace &ws)
 {
     const RigExecBone2dChannels &ch = channels[k];
     const RigExecBone2dSetup &b = setup[k];
@@ -1345,7 +1503,8 @@ inline void SolveTarget(const RigExecBone2dSetup *setup,
     if (index < 0) {
         return;
     }
-    const int64_t target = extra->targetCandidates[b.targetBegin + size_t(index)];
+    const int64_t target =
+        extra->targetCandidates[b.targetBegin + size_t(index)];
     if (target < 0 || target >= int64_t(count) || target == int64_t(k)) {
         return;
     }
@@ -1375,8 +1534,9 @@ inline void SolveTarget(const RigExecBone2dSetup *setup,
         }
         double tipX = 0, tipY = 0;
         TipOf(ws, k, &tipX, &tipY);
-        const double delta = Wrap180(std::atan2(gy, gx) * kRadToDeg -
-                                     std::atan2(tipY - baseY, tipX - baseX) * kRadToDeg);
+        const double delta =
+            Wrap180(std::atan2(gy, gx) * kRadToDeg -
+                    std::atan2(tipY - baseY, tipX - baseX) * kRadToDeg);
         Turn(setup, channels, count, k, delta, ws);
         return;
     }
@@ -1410,7 +1570,8 @@ inline void SolveTarget(const RigExecBone2dSetup *setup,
         RecomposeBelow(setup, channels, count, top, ws);
     }
     TargetDescent(setup, channels, k, goalX, goalY, ws);
-    const double tol = kRigExecSkeleton2dLockReachTolerance * std::max(1.0, reach);
+    const double tol =
+        kRigExecSkeleton2dLockReachTolerance * std::max(1.0, reach);
     double best = TargetResidual(ws, k, goalX, goalY);
     if (best > tol && ws.chain.size() == 2 && TipReach(ws, k) > 0) {
         TargetRetryTwoJoint(setup, channels, k, goalX, goalY, tol, &best, ws);
@@ -1421,9 +1582,10 @@ inline void SolveTarget(const RigExecBone2dSetup *setup,
 /// Solves bone \p k's lock: its base toward (lockX, lockY) by turning the
 /// chain, then its world angle to lockAngle.
 // Only parented bones lock.
-inline void SolveLock(const RigExecBone2dSetup *setup,
-    const RigExecBone2dChannels *channels, size_t count, size_t k,
-    RigExecSkeleton2dWorkspace &ws)
+inline void
+SolveLock(const RigExecBone2dSetup *setup,
+          const RigExecBone2dChannels *channels, size_t count, size_t k,
+          RigExecSkeleton2dWorkspace &ws)
 {
     const RigExecBone2dChannels &ch = channels[k];
     if (setup[k].parent < 0) {
@@ -1444,7 +1606,8 @@ inline void SolveLock(const RigExecBone2dSetup *setup,
                 const double dx = ws.pose[next].originX - fromX;
                 const double dy = ws.pose[next].originY - fromY;
                 reach += std::sqrt(dx * dx + dy * dy);
-                fromX = ws.pose[next].originX; fromY = ws.pose[next].originY;
+                fromX = ws.pose[next].originX;
+                fromY = ws.pose[next].originY;
             }
         }
         const double gx = goalX - ws.pose[top].originX;
@@ -1468,13 +1631,16 @@ inline void SolveLock(const RigExecBone2dSetup *setup,
         // Descent with clamped turns can stop on a limit although a legal
         // bend reaches the lock point. Only a lock left short retries, so a
         // lock the descent reached keeps its result bit for bit.
-        const double tol = kRigExecSkeleton2dLockReachTolerance * std::max(1.0, reach);
+        const double tol =
+            kRigExecSkeleton2dLockReachTolerance * std::max(1.0, reach);
         double best = LockResidual(ws, k, goalX, goalY);
         if (best > tol) {
             if (ws.chain.size() == 2) {
-                RetryLockTwoJoint(setup, channels, k, goalX, goalY, tol, &best, ws);
+                RetryLockTwoJoint(setup, channels, k, goalX, goalY, tol, &best,
+                                  ws);
             } else if (ws.chain.size() > 2) {
-                RetryLockLongChain(setup, channels, k, goalX, goalY, tol, &best, ws);
+                RetryLockLongChain(setup, channels, k, goalX, goalY, tol, &best,
+                                   ws);
             }
         }
         RecomposeBelow(setup, channels, count, top, ws);
@@ -1484,27 +1650,29 @@ inline void SolveLock(const RigExecBone2dSetup *setup,
     Turn(setup, channels, count, k, delta, ws);
 }
 
-}  // namespace skeleton2d_detail
+} // namespace skeleton2d_detail
 
 /// Whether the parent-space, target and group arrays \p extra (or their
 /// absence) and the per-evaluation inputs are sane: every range inside its
 /// array, every stored bone index a bone (or -1 where a root fits), every
 /// outside space and selector present, every controller a bone (or -1),
 /// and finite factors, tips and group active indices.
-inline bool RigExecBone2dStaticIsValid(const RigExecBone2dSetup *setup,
-    size_t count, const RigExecSkeleton2dStatic *extra,
-    const RigExecSkeleton2dFrameInputs &inputs)
+inline bool
+RigExecBone2dStaticIsValid(const RigExecBone2dSetup *setup, size_t count,
+                           const RigExecSkeleton2dStatic *extra,
+                           const RigExecSkeleton2dFrameInputs &inputs)
 {
     namespace d = skeleton2d_detail;
-    if ((inputs.externalCount > 0 && (!inputs.externalRests || !inputs.externalPoses)) ||
+    if ((inputs.externalCount > 0 &&
+         (!inputs.externalRests || !inputs.externalPoses)) ||
         (inputs.selectorCount > 0 && !inputs.selectors) ||
         (inputs.groupSelectorCount > 0 && !inputs.groupSelectors)) {
         return false;
     }
     for (size_t i = 0; i < count; ++i) {
         const RigExecBone2dSetup &b = setup[i];
-        if (b.tipBone < -1 || b.tipBone >= int32_t(count) || !d::Finite(b.tipX) ||
-            !d::Finite(b.tipY)) {
+        if (b.tipBone < -1 || b.tipBone >= int32_t(count) ||
+            !d::Finite(b.tipX) || !d::Finite(b.tipY)) {
             return false;
         }
     }
@@ -1527,13 +1695,15 @@ inline bool RigExecBone2dStaticIsValid(const RigExecBone2dSetup *setup,
             return false;
         }
         if (b.spaceCount > 0 &&
-            (b.spaceSelector < 0 || size_t(b.spaceSelector) >= inputs.selectorCount)) {
+            (b.spaceSelector < 0 ||
+             size_t(b.spaceSelector) >= inputs.selectorCount)) {
             return false;
         }
         for (uint32_t k = 0; k < b.spaceCount; ++k) {
             const int32_t c = extra->spaceSources[b.spaceBegin + k];
             const int64_t e = RigExecBone2dSpaceExternalIndex(c);
-            if (c >= int32_t(count) || (e >= 0 && size_t(e) >= inputs.externalCount)) {
+            if (c >= int32_t(count) ||
+                (e >= 0 && size_t(e) >= inputs.externalCount)) {
                 return false;
             }
         }
@@ -1581,11 +1751,12 @@ inline bool RigExecBone2dStaticIsValid(const RigExecBone2dSetup *setup,
 /// solve order, each seeing the corrections of the ones before; targets
 /// solve after locks (locks hold against targets). Evaluation never clamps
 /// keyed or driven angles; limits bound only the turns the solves give.
-inline bool RigExecSolveSkeleton2d(const RigExecBone2dSetup *setup,
-    const RigExecBone2dRest *rests, const RigExecBone2dChannels *channels,
-    size_t count, RigExecSkeleton2dWorkspace *workspace,
-    RigExecBone2dFrame *pose, RigExecBone2dFrame *deform,
-    const RigExecSkeleton2dStatic *extra = nullptr,
+inline bool
+RigExecSolveSkeleton2d(
+    const RigExecBone2dSetup *setup, const RigExecBone2dRest *rests,
+    const RigExecBone2dChannels *channels, size_t count,
+    RigExecSkeleton2dWorkspace *workspace, RigExecBone2dFrame *pose,
+    RigExecBone2dFrame *deform, const RigExecSkeleton2dStatic *extra = nullptr,
     const RigExecSkeleton2dFrameInputs &inputs = RigExecSkeleton2dFrameInputs())
 {
     namespace d = skeleton2d_detail;
@@ -1597,11 +1768,15 @@ inline bool RigExecSolveSkeleton2d(const RigExecBone2dSetup *setup,
             if (rests && d::Finite(rests[i].x) && d::Finite(rests[i].y) &&
                 d::Finite(rests[i].angle)) {
                 const RigExecBone2dFrame f = d::RestFrame(rests[i]);
-                if (pose) pose[i] = f;
-                if (deform) deform[i] = f;
+                if (pose)
+                    pose[i] = f;
+                if (deform)
+                    deform[i] = f;
             } else {
-                if (pose) pose[i] = RigExecBone2dFrame();
-                if (deform) deform[i] = RigExecBone2dFrame();
+                if (pose)
+                    pose[i] = RigExecBone2dFrame();
+                if (deform)
+                    deform[i] = RigExecBone2dFrame();
             }
         }
         return false;
@@ -1693,16 +1868,18 @@ inline bool RigExecSolveSkeleton2d(const RigExecBone2dSetup *setup,
                 continue;
             }
             const int64_t e = RigExecBone2dSpaceExternalIndex(source);
-            const RigExecBone2dRest &pr =
-                e >= 0 ? inputs.externalRests[size_t(e)] : rests[size_t(source)];
+            const RigExecBone2dRest &pr = e >= 0
+                                              ? inputs.externalRests[size_t(e)]
+                                              : rests[size_t(source)];
             const double a = pr.angle * d::kDegToRad;
             const double cs = std::cos(a), sn = std::sin(a);
             const double dx = rests[i].x - pr.x, dy = rests[i].y - pr.y;
             ws.restLocalX[at] = dx * cs + dy * sn;
             ws.restLocalY[at] = -dx * sn + dy * cs;
-            ws.baseAngle[at] = (effSetup[i].flags & kRigExecBone2dIndependentAngle)
-                                   ? rests[i].angle
-                                   : rests[i].angle - pr.angle;
+            ws.baseAngle[at] =
+                (effSetup[i].flags & kRigExecBone2dIndependentAngle)
+                    ? rests[i].angle
+                    : rests[i].angle - pr.angle;
         }
         // The tip in the bone's setup frame: a child bone's setup base, or
         // the compiled End joint offset; a pin has none.
@@ -1710,7 +1887,8 @@ inline bool RigExecSolveSkeleton2d(const RigExecBone2dSetup *setup,
         ws.tipY[i] = 0;
         if (effSetup[i].flags & kRigExecBone2dTip) {
             if (effSetup[i].tipBone >= 0) {
-                const RigExecBone2dRest &tip = rests[size_t(effSetup[i].tipBone)];
+                const RigExecBone2dRest &tip =
+                    rests[size_t(effSetup[i].tipBone)];
                 const double a = rests[i].angle * d::kDegToRad;
                 const double cs = std::cos(a), sn = std::sin(a);
                 const double dx = tip.x - rests[i].x, dy = tip.y - rests[i].y;
@@ -1751,11 +1929,15 @@ inline bool RigExecSolveSkeleton2d(const RigExecBone2dSetup *setup,
         const RigExecBone2dFrame &p = ws.pose[i];
         pose[i] = p;
         const double along = ws.scale[i];
-        const double across = RigExecBone2dCrossScale(b.scaling, along, b.squashFactor);
+        const double across =
+            RigExecBone2dCrossScale(b.scaling, along, b.squashFactor);
         RigExecBone2dFrame &out = deform[i];
-        out.originX = p.originX; out.originY = p.originY;
-        out.xAxisX = p.xAxisX * along; out.xAxisY = p.xAxisY * along;
-        out.yAxisX = p.yAxisX * across; out.yAxisY = p.yAxisY * across;
+        out.originX = p.originX;
+        out.originY = p.originY;
+        out.xAxisX = p.xAxisX * along;
+        out.xAxisY = p.xAxisY * along;
+        out.yAxisX = p.yAxisX * across;
+        out.yAxisY = p.yAxisY * across;
         if (!d::Finite(out.originX) || !d::Finite(out.originY) ||
             !d::Finite(out.xAxisX) || !d::Finite(out.xAxisY) ||
             !d::Finite(out.yAxisX) || !d::Finite(out.yAxisY)) {
@@ -1774,13 +1956,27 @@ struct RigExecSkeleton2dScratch {
     std::vector<RigExecBone2dFrame> pose, deform;
 };
 
-enum class RigExecSkeleton2dResult : uint8_t { Solved, Malformed, NotPlanar, NotFinite };
+enum class RigExecSkeleton2dResult : uint8_t {
+    Solved,
+    Malformed,
+    NotPlanar,
+    NotFinite
+};
+
+/// The line every evaluator gives after the solver's path when a solve
+/// returned NotPlanar and published the setup frames.
+inline constexpr const char *kRigExecSkeleton2dNotPlanar =
+    "a 2D bone's rest (its rest:space, or the frame a pose step below the "
+    "skeleton wrote) or parent space is not a rotation about +Z in the "
+    "skeleton's plane; publishing the rests";
 
 /// The shared parent-space, target and group arrays as the kernel reads
 /// them; the vectors must outlive the result.
-inline RigExecSkeleton2dStatic RigExecSkeleton2dStaticOf(
-    const std::vector<int32_t> &spaceSources, const std::vector<int32_t> &targetCandidates,
-    const std::vector<RigExecJointGroup> &groups, const std::vector<int32_t> &groupMembers)
+inline RigExecSkeleton2dStatic
+RigExecSkeleton2dStaticOf(const std::vector<int32_t> &spaceSources,
+                          const std::vector<int32_t> &targetCandidates,
+                          const std::vector<RigExecJointGroup> &groups,
+                          const std::vector<int32_t> &groupMembers)
 {
     RigExecSkeleton2dStatic extra;
     extra.spaceSources = spaceSources.data();
@@ -1796,11 +1992,13 @@ inline RigExecSkeleton2dStatic RigExecSkeleton2dStaticOf(
 
 /// A bone's planar rest from its four landmarks (origin, +X, +Y, +Z tips).
 template <class Landmarks>
-inline bool RigExecBone2dRestFromLandmarkSet(const Landmarks &rest, RigExecBone2dRest *out)
+inline bool
+RigExecBone2dRestFromLandmarkSet(const Landmarks &rest, RigExecBone2dRest *out)
 {
     double p[4][3];
     for (size_t i = 0; i < 4; ++i) {
-        for (size_t a = 0; a < 3; ++a) p[i][a] = rest[i][a];
+        for (size_t a = 0; a < 3; ++a)
+            p[i][a] = rest[i][a];
     }
     return RigExecBone2dRestFromLandmarks(p[0], p[1], p[2], p[3], out);
 }
@@ -1816,46 +2014,56 @@ public:
     bool Set(const Landmarks *rest, const Landmarks *posed)
     {
         _start = rest && posed;
-        if (!_start) return true;
+        if (!_start)
+            return true;
         return skeleton2d_detail::AffineOf(*rest, &_rest) &&
                skeleton2d_detail::AffineOf(*posed, &_posed);
     }
-    bool HasStart() const { return _start; }
+    bool HasStart() const
+    {
+        return _start;
+    }
     /// Rest landmarks \p lm as a planar rest in the start frame's rest
     /// frame, and its origin's height there (\p height may be null).
     template <class Landmarks>
-    bool Rest(const Landmarks &lm, RigExecBone2dRest *out, double *height = nullptr) const
+    bool Rest(const Landmarks &lm, RigExecBone2dRest *out,
+              double *height = nullptr) const
     {
         double p[4][3];
         skeleton2d_detail::LandmarksIn(_start ? &_rest : nullptr, lm, p);
-        if (height) *height = p[0][2];
+        if (height)
+            *height = p[0][2];
         return RigExecBone2dRestFromLandmarks(p[0], p[1], p[2], p[3], out);
     }
     /// An outside space's placement: rest landmarks in the rest frame,
     /// posed landmarks in the posed frame (\p posed true).
     template <class Landmarks>
-    bool Placement(const Landmarks &lm, bool posed, RigExecBone2dRest *out) const
+    bool Placement(const Landmarks &lm, bool posed,
+                   RigExecBone2dRest *out) const
     {
         double p[4][3];
-        skeleton2d_detail::LandmarksIn(_start ? (posed ? &_posed : &_rest) : nullptr, lm, p);
+        skeleton2d_detail::LandmarksIn(
+            _start ? (posed ? &_posed : &_rest) : nullptr, lm, p);
         return RigExecBone2dPlacementFromLandmarks(p[0], p[1], p[2], p[3], out);
     }
     /// Point \p point (rig-common) in the start frame's rest frame.
-    template <class Vec3>
-    void PointIn(const Vec3 &point, double out[3]) const
+    template <class Vec3> void PointIn(const Vec3 &point, double out[3]) const
     {
-        const double p[3] = {double(point[0]), double(point[1]), double(point[2])};
+        const double p[3] = {double(point[0]), double(point[1]),
+                             double(point[2])};
         if (_start) {
             skeleton2d_detail::ToFrame(_rest, p, out);
         } else {
-            for (int a = 0; a < 3; ++a) out[a] = p[a];
+            for (int a = 0; a < 3; ++a)
+                out[a] = p[a];
         }
     }
     /// The landmarks of plane frame \p frame at height \p z, composed back
     /// through the start frame's posed frame: origin, +X, +Y and +Z (a 2D
     /// frame never tilts out of its plane).
     template <class Vec3>
-    std::array<Vec3, 4> Landmarks(const RigExecBone2dFrame &frame, double z) const
+    std::array<Vec3, 4> Landmarks(const RigExecBone2dFrame &frame,
+                                  double z) const
     {
         const double plane[4][3] = {
             {frame.originX, frame.originY, z},
@@ -1885,8 +2093,7 @@ private:
 /// asset space), each outside parent space's rest and posed landmarks
 /// (externalCount of each), and the switch and group selectors
 /// (RigExecSkeleton2dFrameInputs).
-template <class Landmarks>
-struct RigExecSkeleton2dLandmarkInputs {
+template <class Landmarks> struct RigExecSkeleton2dLandmarkInputs {
     const Landmarks *startRest = nullptr, *startPose = nullptr;
     const Landmarks *externalRests = nullptr, *externalPoses = nullptr;
     size_t externalCount = 0;
@@ -1905,20 +2112,25 @@ struct RigExecSkeleton2dLandmarkInputs {
 /// writing (Malformed, frames untouched). On any other failure each frame
 /// carries its rest unchanged, so a failed solve publishes the setup frames.
 template <class Landmarks, class PointFrame, class ReadChannels>
-inline RigExecSkeleton2dResult RigExecSolveSkeleton2dJoints(
+inline RigExecSkeleton2dResult
+RigExecSolveSkeleton2dJoints(
     const std::vector<uint32_t> &order, const std::vector<Landmarks> &rests,
-    const std::vector<RigExecBone2dSetup> &setup, const RigExecSkeleton2dStatic &extra,
-    const RigExecSkeleton2dLandmarkInputs<Landmarks> &frames, ReadChannels &&readChannels,
-    uint32_t validFlag, RigExecSkeleton2dScratch *scratch, std::vector<PointFrame> *out)
+    const std::vector<RigExecBone2dSetup> &setup,
+    const RigExecSkeleton2dStatic &extra,
+    const RigExecSkeleton2dLandmarkInputs<Landmarks> &frames,
+    ReadChannels &&readChannels, uint32_t validFlag,
+    RigExecSkeleton2dScratch *scratch, std::vector<PointFrame> *out)
 {
     using Vec3 = std::decay_t<decltype(std::declval<PointFrame &>().points[0])>;
     const size_t n = order.size();
     if (rests.size() != n || setup.size() != n ||
-        (frames.externalCount > 0 && (!frames.externalRests || !frames.externalPoses))) {
+        (frames.externalCount > 0 &&
+         (!frames.externalRests || !frames.externalPoses))) {
         return RigExecSkeleton2dResult::Malformed;
     }
     for (size_t e = 0; e < n; ++e) {
-        if (size_t(order[e]) >= n) return RigExecSkeleton2dResult::Malformed;
+        if (size_t(order[e]) >= n)
+            return RigExecSkeleton2dResult::Malformed;
     }
     scratch->rests.resize(n);
     scratch->heights.resize(n);
@@ -1931,14 +2143,17 @@ inline RigExecSkeleton2dResult RigExecSolveSkeleton2dJoints(
     bool planar = plane.Set(frames.startRest, frames.startPose);
     for (size_t e = 0; e < n; ++e) {
         const size_t j = order[e];
-        planar = planar && plane.Rest(rests[j], &scratch->rests[e], &scratch->heights[e]);
+        planar = planar &&
+                 plane.Rest(rests[j], &scratch->rests[e], &scratch->heights[e]);
         scratch->channels[e] = RigExecBone2dChannels();
         readChannels(j, &scratch->channels[e]);
     }
     for (size_t e = 0; e < frames.externalCount; ++e) {
         planar = planar &&
-                 plane.Placement(frames.externalRests[e], false, &scratch->externalRests[e]) &&
-                 plane.Placement(frames.externalPoses[e], true, &scratch->externalPoses[e]);
+                 plane.Placement(frames.externalRests[e], false,
+                                 &scratch->externalRests[e]) &&
+                 plane.Placement(frames.externalPoses[e], true,
+                                 &scratch->externalPoses[e]);
     }
     RigExecSkeleton2dFrameInputs inputs;
     inputs.externalRests = scratch->externalRests.data();
@@ -1948,9 +2163,11 @@ inline RigExecSkeleton2dResult RigExecSolveSkeleton2dJoints(
     inputs.selectorCount = frames.selectorCount;
     inputs.groupSelectors = frames.groupSelectors;
     inputs.groupSelectorCount = frames.groupSelectorCount;
-    const bool solved = planar && RigExecSolveSkeleton2d(setup.data(), scratch->rests.data(),
-        scratch->channels.data(), n, &scratch->solve, scratch->pose.data(),
-        scratch->deform.data(), &extra, inputs);
+    const bool solved = planar && RigExecSolveSkeleton2d(
+                                      setup.data(), scratch->rests.data(),
+                                      scratch->channels.data(), n,
+                                      &scratch->solve, scratch->pose.data(),
+                                      scratch->deform.data(), &extra, inputs);
     out->resize(n);
     for (size_t e = 0; e < n; ++e) {
         const size_t j = order[e];
@@ -1962,12 +2179,15 @@ inline RigExecSkeleton2dResult RigExecSolveSkeleton2dJoints(
         }
         // The deform frame at the bone's own height: children were composed
         // from the pose frame.
-        frame.points = plane.template Landmarks<Vec3>(scratch->deform[e], scratch->heights[e]);
+        frame.points = plane.template Landmarks<Vec3>(scratch->deform[e],
+                                                      scratch->heights[e]);
     }
-    if (solved) return RigExecSkeleton2dResult::Solved;
-    return planar ? RigExecSkeleton2dResult::NotFinite : RigExecSkeleton2dResult::NotPlanar;
+    if (solved)
+        return RigExecSkeleton2dResult::Solved;
+    return planar ? RigExecSkeleton2dResult::NotFinite
+                  : RigExecSkeleton2dResult::NotPlanar;
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_MATH_SKELETON2D_KERNEL_H
+#endif // RIGEXEC_MATH_SKELETON2D_KERNEL_H

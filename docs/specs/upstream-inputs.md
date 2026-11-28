@@ -14,7 +14,7 @@ and an empty list lifts all standing values.
 Each key must name an existing, unconnected attribute with a stage value.
 Its value must hold exactly the attribute's supported input type, and the rig
 must have a listed read of that attribute. This includes admitted mover and
-weight-object reads, including oracle reads. Upstream values replace the
+weight-object reads, including weight-field reads. Upstream values replace the
 attribute's authored value; interactive overrides take precedence, and connected
 attributes are rejected. The stage remains unchanged. Admitted paths are sorted
 by `GetUpstreamInputPaths`.
@@ -109,21 +109,21 @@ arrays use `ResetInput` even when numeric samples mark their slots Animated.
 Standing upstream arrays are reapplied after stage sampling.
 
 The stage sampler copies Animated AtTime arrays of any element count. Each
-consumer validates the resulting count as live evaluation does. An oracle's
+consumer validates the resulting count as live evaluation does. A weight field's
 failed `sampleSource` Get falls back to the raw canonical `weightTarget`;
 successful empty samples take precedence and undergo the normal count check.
 A failed Get clears HasValue; a successful empty array remains a value. Both leaves retain
 separate captured Default data, so stage samples affect only AtTime reads.
 Eligibility comes from the file's actual chain base, layout, dense sample,
-AtTime path-read and oracle consumers. Structural and Default-only leaves are
+AtTime path-read and weight-field consumers. Structural and Default-only leaves are
 excluded; wire knots (`double[]`) are currently Default-only. Animated skin
 layouts retain the exporter's existing refusal. Static reports omit only arrays
 covered by this same sampler inventory.
 
 Only the evaluator's admitted array paths are public file inputs. Structural
-painted arrays and excluded point/oracle arrays remain captured as private typed
+painted arrays and excluded point/weight-field arrays remain captured as private typed
 storage slots and are absent from `GetInputInfo`, `FindInput` and public set
-APIs. An internal stage-only bridge samples eligible private oracle arrays,
+APIs. An internal stage-only bridge samples eligible private weight-field arrays,
 without granting authored overrides or changing public input counts. Static
 private arrays retain their captured defaults.
 

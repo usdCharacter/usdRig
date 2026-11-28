@@ -43,9 +43,9 @@
 // be flipped in-process, so its off mode is covered by the fallback test plus
 // the validation-plan runs of this binary under =0. The fallback test forces
 // the gate closed and passes in every ambient mode.
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/parallel.h"
+#include "rigExecPlayback/backgroundScheduler.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/internal/parallel.h"
 
 #include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/setenv.h"
@@ -238,6 +238,26 @@ TestRigsAreIndependent()
     CHECK(scheduler.CurrentGeneration(first) == 1);
     CHECK(scheduler.CurrentGeneration(second) == 0);
     CHECK(scheduler.IsGenerationCurrent(second, 0));
+}
+
+// A rig's cancellation token reads canceled once its generation moves on,
+// including a token taken before the rig's first edit.
+void
+TestCancellationTokensFollowTheGeneration()
+{
+    RigExecBackgroundScheduler scheduler(/*workerCount=*/0);
+    const SdfPath rig("/Asset/Rig");
+    const SdfPath other("/Asset/Other");
+    const RigExecCancellationToken unseen = scheduler.CancellationToken(rig, 0);
+    const RigExecCancellationToken otherRig =
+        scheduler.CancellationToken(other, 0);
+    CHECK(!unseen.IsCanceled());
+    CHECK(scheduler.CancellationToken(rig, 1).IsCanceled());
+    scheduler.CancelGeneration(rig);
+    CHECK(unseen.IsCanceled());
+    CHECK(!otherRig.IsCanceled());
+    CHECK(!scheduler.CancellationToken(rig, 1).IsCanceled());
+    CHECK(!RigExecCancellationToken().IsCanceled());
 }
 
 // A job enqueued under a superseded token is refused for staleness: the edit
@@ -1860,6 +1880,7 @@ main()
     TestCancelBumpsMonotonically();
     TestRigsAreIndependent();
     TestAStaleJobIsRefused();
+    TestCancellationTokensFollowTheGeneration();
     TestFrameCacheModeParses();
     TestWarmingGateTruthTable();
     TestFrameCacheModeReadsLiveFromTheEnvironment();

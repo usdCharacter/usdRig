@@ -30,10 +30,10 @@ RigExecWireDropoffKernel(double distance, double dropoffDistance)
     return 1.0 - s * s * (3.0 - 2.0 * s);
 }
 
-template <class Point, class Double, class Bind>
+template <class Point, class Double, class Bind, class Knots>
 bool
 RigExecNurbsCurveIsValidKernel(const std::vector<Point> *points,
-                               const std::vector<double> *knots, int order)
+                               const Knots *knots, int order)
 {
     if (!points || !knots || order < 2) {
         return false;
@@ -44,16 +44,17 @@ RigExecNurbsCurveIsValidKernel(const std::vector<Point> *points,
            (*knots)[size_t(order) - 1] < (*knots)[n];
 }
 
-inline double
-RigExecNurbsCurveDomainStartKernel(const std::vector<double> *knots, int order)
+template <class Knots>
+double
+RigExecNurbsCurveDomainStartKernel(const Knots *knots, int order)
 {
     return (*knots)[size_t(order) - 1];
 }
 
-template <class Point>
+template <class Point, class Knots>
 double
 RigExecNurbsCurveDomainEndKernel(const std::vector<Point> *points,
-                                 const std::vector<double> *knots)
+                                 const Knots *knots)
 {
     return (*knots)[points->size()];
 }
@@ -61,9 +62,9 @@ RigExecNurbsCurveDomainEndKernel(const std::vector<Point> *points,
 // The span of \p knots holding \p u: the largest s in [p, n-1] with
 // knots[s] <= u < knots[s+1]; the domain end belongs to the last non-empty
 // span.
-inline size_t
-RigExecNurbsCurveSpanKernel(const std::vector<double> &knots, int order,
-                            size_t n, double u)
+template <class Knots>
+size_t
+RigExecNurbsCurveSpanKernel(const Knots &knots, int order, size_t n, double u)
 {
     const int p = order - 1;
     size_t s = size_t(p);
@@ -73,13 +74,12 @@ RigExecNurbsCurveSpanKernel(const std::vector<double> &knots, int order,
     return s;
 }
 
-template <class Point, class Double, class Bind>
+template <class Point, class Double, class Bind, class Knots>
 Point
 RigExecEvaluateNurbsCurveKernel(const std::vector<Point> *points,
-                                const std::vector<double> *knots, int order,
-                                double u)
+                                const Knots *knots, int order, double u)
 {
-    const std::vector<double> &k = *knots;
+    const Knots &k = *knots;
     const std::vector<Point> &cv = *points;
     const int p = order - 1;
     const size_t n = cv.size();
@@ -104,9 +104,10 @@ RigExecEvaluateNurbsCurveKernel(const std::vector<Point> *points,
 }
 
 // The order nonzero basis functions at \p u, as the basis build needs them.
-inline void
-RigExecNurbsCurveBasisRowKernel(const std::vector<double> &knots, int order,
-                                size_t n, double u, size_t span, double *N)
+template <class Knots>
+void
+RigExecNurbsCurveBasisRowKernel(const Knots &knots, int order, size_t n,
+                                double u, size_t span, double *N)
 {
     const int p = order - 1;
     double left[kRigExecWireCurveMaxOrder];
@@ -145,12 +146,11 @@ RigExecWireInputsAreUsableKernel(const Curve &restCurve,
            !(*restCurve.knots != *posedCurve.knots) && bindCount == pointCount;
 }
 
-template <class Point, class Double, class Bind>
+template <class Point, class Double, class Bind, class Knots>
 bool
 RigExecWireBasisInputsAreUsableKernel(const Bind *bindCoords, size_t bindCount,
                                       size_t meshPointCount, size_t indexCount,
-                                      int order,
-                                      const std::vector<double> &knots,
+                                      int order, const Knots &knots,
                                       size_t controlPointCount)
 {
     const size_t n = controlPointCount;
@@ -160,14 +160,13 @@ RigExecWireBasisInputsAreUsableKernel(const Bind *bindCoords, size_t bindCount,
            (bindCount == meshPointCount || bindCount == indexCount);
 }
 
-template <class Point, class Double, class Bind, class Basis>
+template <class Point, class Double, class Bind, class Basis, class Knots>
 bool
 RigExecBuildWireBasisKernel(const Bind *bindCoords, size_t bindCount,
                             size_t meshPointCount,
                             const std::vector<int> &indices, int order,
-                            const std::vector<double> &knots,
-                            size_t controlPointCount, double dropoffDistance,
-                            Basis *basis)
+                            const Knots &knots, size_t controlPointCount,
+                            double dropoffDistance, Basis *basis)
 {
     const size_t n = controlPointCount;
     if (!basis || !RigExecWireBasisInputsAreUsableKernel<Point, Double, Bind>(

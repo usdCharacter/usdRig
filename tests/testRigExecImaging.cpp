@@ -16,10 +16,10 @@
 #include "rigExecBinary/format.h"
 #include "rigExecMath/avarScale.h"
 #include "rigExecSchema/schemaTokens.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedSchedule.h"
-#include "rigExec/bakedTrace.h"
-#include "rigExec/frozenContext.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/internal/bakedTrace.h"
+#include "rigExec/api/frozenContext.h"
 #include "rigExecRuntimeDrive.h"
 #include "rigExecClothStage.h"
 
@@ -31,7 +31,7 @@
 #include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usd/references.h"
 
-#include "rigExec/frameCacheSparsity.h"
+#include "rigExec/internal/frameCacheSparsity.h"
 
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/gf/matrix4f.h"
@@ -7084,8 +7084,8 @@ _CheckUpstreamFrozen(const _UpstreamImaging &imaging,
     context.frozen = frozen.get();
     RigExecFrozenRunReport report;
     const RigExecRigPose job = RigExecEvaluateFrozen(
-        context, inputs, RigExecMakeProductionStepRunner(), nullptr, SdfPath(),
-        &report);
+        context, inputs, RigExecMakeProductionStepRunner(),
+        RigExecCancellationToken(), &report);
     CHECK(job.valid);
     CHECK(report.ran);
     // The reference: a baked evaluator over a stage authoring the values.
@@ -7599,6 +7599,16 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
                               info.defaultValue.matrix[3][0] == 0.0 &&
                               info.defaultValue.matrix[3][2] == 10.0);
                     std::vector<char> cone(file->steps.size(), 0);
+                    const auto avarSlotOf = [&](const auto &step) {
+                        if (step.kind != fb::StepKind::OpNode || !file->opGraph)
+                            return int64_t(-1);
+                        for (const auto &output : file->opGraph->hostOutputs)
+                            if (output &&
+                                output->node == uint64_t(step.object) &&
+                                output->target == 40)
+                                return int64_t(output->object);
+                        return int64_t(-1);
+                    };
                     for (size_t i = 0; i < file->steps.size(); ++i) {
                         const auto &step = file->steps[i];
                         if (std::find(step.headInputSlots.begin(),
@@ -7633,8 +7643,7 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
                                 avar.read->walk.end())
                                 continue;
                             const uint32_t provider = avar.flat / 11;
-                            if (step.kind != fb::StepKind::AvarInputs ||
-                                step.object != int32_t(provider))
+                            if (avarSlotOf(step) != int64_t(provider))
                                 continue;
                             CHECK(std::any_of(
                                 step.writes.begin(), step.writes.end(),
@@ -7653,13 +7662,12 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
                                       uint32_t(slot)) == avar.read->walk.end())
                             continue;
                         const uint32_t provider = avar.flat / 11;
-                        CHECK(std::count_if(
-                                  file->steps.begin(), file->steps.end(),
-                                  [&](const auto &step) {
-                                      return step.kind ==
-                                                 fb::StepKind::AvarInputs &&
-                                             step.object == int32_t(provider);
-                                  }) == 1);
+                        CHECK(std::count_if(file->steps.begin(),
+                                            file->steps.end(),
+                                            [&](const auto &step) {
+                                                return avarSlotOf(step) ==
+                                                       int64_t(provider);
+                                            }) == 1);
                     }
                     // Provider raw sampling enters through a typed SpaceLeaf,
                     // rather than a head input memo or an avar binding.
@@ -7682,10 +7690,20 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
                                         read.begin() > leaf ||
                                         leaf >= read.end())
                                         continue;
-                                    CHECK(step.kind ==
-                                          fb::StepKind::SpaceExpression);
-                                    CHECK(step.part == 2 &&
-                                          step.object == int32_t(leaf));
+                                    bool answers = false;
+                                    for (const auto &output :
+                                         file->opGraph->hostOutputs)
+                                        answers = answers ||
+                                                  (output &&
+                                                   output->node ==
+                                                       uint64_t(step.object) &&
+                                                   output->target == 52 &&
+                                                   output->object ==
+                                                       file->providerProgram
+                                                               ->ops.size() +
+                                                           leaf);
+                                    CHECK(step.kind == fb::StepKind::OpNode);
+                                    CHECK(answers);
                                     cone[i] = 1;
                                     ++readers;
                                 }
@@ -8650,17 +8668,15 @@ TestClothConstraintGuides()
 }
 
 // QUERY CONTRACT. SnapshotAtTimeWithoutPublishing (frames on demand,
-// docs/specs/frames-on-demand.md) answers one frame's pose WITHOUT
-// publishing it: the store keeps the generation it had, the generation
-// counter is not consumed, the results index delivers no notice, the GPU
-// deform history is not touched, and the query's own snapshot carries no
-// generation stamp (its Describes() is false -- stamping is the
-// publisher's, and the query's miss on it is a preserved quirk). The
-// 'evaluated' flag says truthfully whether the evaluator ran: false on a
-// cache serve, true on the live query, and a miss with evaluate=false
-// answers false without evaluating. Interactive overrides refuse the
-// query outright. These pins run through the public surface only, so the
-// bridge decomposition must keep them green.
+// docs/specs/frames-on-demand.md) answers one frame's pose WITHOUT publishing
+// it: the store keeps the generation it had, the generation counter is not
+// consumed, the results index delivers no notice, the GPU deform history is not
+// touched, and the query's own snapshot carries no generation stamp (its
+// Describes() is false: stamping is the publisher's). The 'evaluated' flag says
+// truthfully whether the evaluator ran: false on a cache serve, true on the
+// live query, and a miss with evaluate=false answers false without evaluating.
+// Interactive overrides refuse the query outright. These pins run through the
+// public surface only, so the bridge decomposition must keep them green.
 static UsdStageRefPtr
 _MakeQueryRig()
 {
@@ -8826,7 +8842,7 @@ TestQuerySnapshotPublicationIsolation()
     if (snap) {
         // No generation is minted or stamped for a query; the published
         // generation counter is untouched, so the query snapshot carries
-        // generation 0 and Describes() nothing (preserved quirk).
+        // generation 0 and Describes() nothing.
         CHECK(snap->generation == 0);
         CHECK(!snap->Describes(stage, UsdTimeCode(3.0)));
         CHECK(snap->prims.count(meshPath) == 1);

@@ -7,7 +7,7 @@
 // mechanism nobody has invented yet.
 // argv[1] = path to the examples directory. The codeless schema plugin is
 // expected at <examples>/../plugin/rigExecSchema/resources.
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecImaging/registry.h"
 
 #include "pxr/base/plug/registry.h"

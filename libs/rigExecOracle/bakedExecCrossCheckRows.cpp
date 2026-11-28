@@ -1,12 +1,12 @@
 #include "rigExecSchema/schemaTokens.h"
 #include "rigExecSchema/schemaNames.h"
-#include "rigExec/bakedExecCrossCheckRows.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/goldenPose.h"
-#include "rigExec/solverKernels.h"
-#include "rigExec/weightPackets.h"
-#include "rigExec/independentConstraintCheck.h"
+#include "rigExec/internal/bakedExecCrossCheckRows.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/api/goldenPose.h"
+#include "rigExec/internal/solverKernels.h"
+#include "rigExec/internal/weightPackets.h"
+#include "rigExec/internal/independentConstraintCheck.h"
 #include "rigExecScene/startFrameDerivation.h"
 #include "pxr/base/vt/array.h"
 #include <algorithm>
@@ -852,13 +852,10 @@ RigExecBakedExecCheckRows::Add(RigExecExecCheckDescriptor d, Binding binding,
     Input initial = binding.capture(b);
     for (const auto &v : initial.overrides)
         d.requiredOverrides.push_back(Address(v));
-    if (!_check.Add(d, error))
+    if (_mode == RigExecExecCheckMode::Judge && !_check.Add(d, error))
         return false;
     const size_t row = _bindings.size();
     _byStep[binding.step].push_back(row);
-    if (binding.perSlot)
-        _bySlot[{uint32_t(b.steps[binding.step].kind), binding.slot}].push_back(
-            row);
     _descriptors.push_back(std::move(d));
     _bindings.push_back(std::move(binding));
     // A constraint result callback reads its row-local candidate storage.
@@ -877,12 +874,16 @@ RigExecBakedExecCheckRows::Add(RigExecExecCheckDescriptor d, Binding binding,
 RigExecBakedExecCheckRows::~RigExecBakedExecCheckRows() = default;
 
 std::shared_ptr<RigExecBakedExecCheckRows>
-RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
+RigExecBakedExecCheckRows::Build(const B &b, std::string *error,
+                                 RigExecExecCheckMode mode)
 {
     auto rows = std::make_shared<RigExecBakedExecCheckRows>(_Tag(0), b.stage);
+    rows->_mode = mode;
     rows->_byStep.resize(b.steps.size());
     for (size_t i = 0; i < b.steps.size(); ++i) {
-        const auto &step = b.steps[i];
+        const auto &bakedStep = b.steps[i];
+        const RigExecBakedStepIdentity step =
+            RigExecBakedIdentityOf(b, bakedStep);
         const auto add =
             [&](const SdfPath &path, const char *key, int slot, bool perSlot,
                 std::function<Input(const B &)> capture,
@@ -893,7 +894,7 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
                 RigExecExecCheckDescriptor d;
                 d.key = std::string(KindName(step.kind)) + " " +
                         path.GetString() + ":" + key;
-                d.key += " op " + step.descriptorKey;
+                d.key += " op " + bakedStep.descriptorKey;
                 if (step.kind == Kind::ProviderMatrix ||
                     step.kind == Kind::VolumePlacements)
                     d.key +=
@@ -933,7 +934,7 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
                 if (step.kind == Kind::ComposeSubtree) {
                     if (!add(
                             b.paths[size_t(s)],
-                            SchemaComputationText::computePointFrame, s, true,
+                            SchemaComputationText::computePointFrame, s, false,
                             [s](const B &p) { return ComposeInputs(p, s); },
                             [s](const B &p) {
                                 return VtValue(p.base[size_t(s)]);
@@ -942,7 +943,8 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
                 } else if (step.kind == Kind::RestCompose) {
                     if (!add(
                             b.paths[size_t(s)],
-                            SchemaComputationText::computeRestFrame, s, true,
+                            SchemaComputationText::computeRestFrame, s,
+                            bakedStep.kind != Kind::OpNode,
                             [s](const B &p) { return RestInputs(p, s); },
                             [s](const B &p) {
                                 return VtValue(p.restFrames[size_t(s)]);
@@ -952,7 +954,7 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
                     if (!add(
                             b.paths[size_t(s)],
                             SchemaComputationText::computedDefaultSpace, s,
-                            true,
+                            bakedStep.kind != Kind::OpNode,
                             [s](const B &p) { return LadderInputs(p, s); },
                             [s](const B &p) {
                                 return VtValue(p.selfD[size_t(s)]);
@@ -1038,7 +1040,7 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
                                            volumeWeightsPath);
                     }))
                 return {};
-        } else if (step.kind == Kind::Constraint) {
+        } else if (step.kind == Kind::Constraint && step.part < 0) {
             const int walk = step.object;
             const auto &c =
                 b.constraints[size_t(b.walkSteps[size_t(walk)].index)];
@@ -1055,7 +1057,7 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
             d.key = std::string(supported
                                     ? "OriginalConstraint "
                                     : RigExecExecCheckSkipText::noEquivalent) +
-                    c.path.GetString() + " op " + step.descriptorKey;
+                    c.path.GetString() + " op " + bakedStep.descriptorKey;
             d.kind = uint32_t(step.kind);
             if (supported) {
                 const auto binding = ConstraintReferenceBinding(b, walk);
@@ -1138,8 +1140,8 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
             size_t composeRow = rows->_bindings.size();
             for (size_t r = 0; r < rows->_bindings.size(); ++r)
                 if (rows->_bindings[r].slot == s &&
-                    b.steps[rows->_bindings[r].step].kind ==
-                        Kind::ComposeSubtree)
+                    RigExecBakedIdentityOf(b, b.steps[rows->_bindings[r].step])
+                            .kind == Kind::ComposeSubtree)
                     composeRow = r;
             const auto *owner = rows.get();
             if (!add(
@@ -1175,11 +1177,12 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
         } else {
             RigExecExecCheckDescriptor d;
             d.key = std::string(RigExecExecCheckSkipText::noEquivalent) + " " +
-                    step.label;
-            if (step.kind == Kind::PropertyRevision)
-                d.key +=
-                    " target " +
-                    b.propertyChains[size_t(step.object)].target.GetString();
+                    bakedStep.label;
+            size_t propertyChain = 0;
+            if (RigExecBakedPropertyPartOf(b, bakedStep, &propertyChain,
+                                           nullptr))
+                d.key += " target " +
+                         b.propertyChains[propertyChain].target.GetString();
             if (step.kind == Kind::RevisionStatic ||
                 step.kind == Kind::RevisionChunk ||
                 step.kind == Kind::RevisionFuse ||
@@ -1189,10 +1192,10 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error)
                     " target " + b.chains[size_t(id.first)].target.GetString();
             }
             d.key += " part " + std::to_string(step.part);
-            d.key += " op " + step.descriptorKey;
+            d.key += " op " + bakedStep.descriptorKey;
             // The compiled label is the authored identity. Some mechanical
             // rows carry no label, so state their stable graph identity.
-            if (step.label.empty())
+            if (bakedStep.label.empty())
                 d.key += std::to_string(uint32_t(step.kind)) + ":" +
                          std::to_string(step.object) + ":" +
                          std::to_string(step.part);
@@ -1275,35 +1278,37 @@ RigExecBakedExecCheckRows::BeforeStep(const B &b, size_t step)
     }
 }
 void
-RigExecBakedExecCheckRows::BeforeSlot(const B &b, Kind kind, int groupBegin,
-                                      int slot)
-{
-    (void)groupBegin;
-    const auto found = _bySlot.find({uint32_t(kind), slot});
-    if (found != _bySlot.end())
-        for (const size_t row : found->second) {
-            _inputs[row] = _bindings[row].capture(b);
-            _captured[row] = 1;
-        }
-}
-void
 RigExecBakedExecCheckRows::AfterStep(const B &b, size_t step)
 {
+    const RigExecBakedStepIdentity id =
+        RigExecBakedIdentityOf(b, b.steps[step]);
     for (const size_t row : _byStep.at(step)) {
         _inputs[row].expected = _bindings[row].result(b);
         RigExecExecCheckApplyAfterStep(
             _inputs[row],
-            b.steps[step].kind == Kind::FrameMatrix &&
-                !b.frameMatrixValid[size_t(b.steps[step].object)],
-            b.steps[step].kind == Kind::Solve &&
-                b.aggregates[size_t(b.steps[step].object)].frames.empty());
+            id.kind == Kind::FrameMatrix &&
+                !b.frameMatrixValid[size_t(id.object)],
+            id.kind == Kind::Solve &&
+                b.aggregates[size_t(id.object)].frames.empty());
+    }
+    // A constraint's row publishes what its commit wrote back and the delta
+    // its geometry target's node measured, both after the constraint step.
+    const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(b, b.steps[step]);
+    const bool delta = origin &&
+                       origin->family == RigExecBakedOpFamily::Constraint &&
+                       origin->part >= 0;
+    if (origin &&
+        (origin->family == RigExecBakedOpFamily::PoseCommit || delta)) {
+        const auto found = _constraintRows.find(origin->object);
+        if (found != _constraintRows.end())
+            _inputs[found->second].expected =
+                _bindings[found->second].result(b);
     }
 }
-RigExecExecCrossCheckReport
-RigExecBakedExecCheckRows::Evaluate(UsdTimeCode time)
+std::vector<RigExecExecCheckInput>
+RigExecBakedExecCheckRows::_Verified(UsdTimeCode time) const
 {
     auto verified = _inputs;
-    _lastChecked.assign(verified.size(), 0);
     for (size_t row = 0; row < verified.size(); ++row) {
         if (verified[row].skip != RigExecExecCheckSkip::None)
             continue;
@@ -1336,6 +1341,119 @@ RigExecBakedExecCheckRows::Evaluate(UsdTimeCode time)
             }
         }
     }
+    return verified;
+}
+
+std::vector<char>
+RigExecBakedExecCheckRows::Judged(UsdTimeCode time) const
+{
+    const auto verified = _Verified(time);
+    std::vector<char> judged(verified.size(), 0);
+    for (size_t row = 0; row < verified.size(); ++row)
+        judged[row] = verified[row].skip == RigExecExecCheckSkip::None &&
+                      _captured[row] && !_descriptors[row].skipOnly;
+    return judged;
+}
+
+// A visit that judges more rows than this is stored as one digest per step
+// kind; the digest covers each row's key, input digest and value bits.
+constexpr size_t kGoldenRowsPerVisit = 512;
+
+std::string
+RigExecBakedExecCheckRows::GoldenVisit(size_t ordinal, UsdTimeCode time,
+                                       const std::vector<char> &judged) const
+{
+    std::string text = "visit \"frame\" " + std::to_string(ordinal) +
+                       " time=" + RigExecGoldenDouble(time.GetValue()) + "\n";
+    std::vector<std::pair<std::string, std::string>> rows;
+    for (size_t row = 0; row < _inputs.size() && row < judged.size(); ++row) {
+        if (!judged[row])
+            continue;
+        const auto &input = _inputs[row];
+        std::string inputs, bits;
+        for (const auto &value : input.overrides) {
+            if (!RigExecEncodeGoldenValue(value.value, &bits))
+                bits = "unencodable " + value.value.GetTypeName();
+            inputs += value.prim.GetString() + " " +
+                      value.computation.GetString() + " " +
+                      value.attribute.GetString() + " " + bits + "\n";
+        }
+        if (!RigExecEncodeGoldenValue(input.expected, &bits))
+            bits = "unencodable " + input.expected.GetTypeName();
+        const std::string &key = _descriptors[row].key;
+        rows.emplace_back(key.substr(0, key.find(' ')),
+                          "v " + RigExecGoldenEscape(key) + " in=" +
+                              RigExecGoldenHex(RigExecGoldenDigest(inputs)) +
+                              " " + bits + "\n");
+    }
+    if (rows.size() <= kGoldenRowsPerVisit) {
+        for (const auto &row : rows)
+            text += row.second;
+        return text;
+    }
+    std::vector<std::pair<std::string, std::pair<size_t, std::string>>> kinds;
+    for (const auto &[kind, line] : rows) {
+        auto found =
+            std::find_if(kinds.begin(), kinds.end(),
+                         [&](const auto &k) { return k.first == kind; });
+        if (found == kinds.end())
+            found = kinds.insert(kinds.end(), {kind, {0, std::string()}});
+        ++found->second.first;
+        found->second.second += line;
+    }
+    for (const auto &[kind, group] : kinds)
+        text += "g " + RigExecGoldenEscape(kind) + " " +
+                std::to_string(group.first) + " " +
+                RigExecGoldenHex(RigExecGoldenDigest(group.second)) + "\n";
+    return text;
+}
+
+std::string
+RigExecExecRowsReference()
+{
+#if defined(_WIN32)
+    std::string reference = "windows";
+#elif defined(__APPLE__)
+    std::string reference = "macos";
+#elif defined(__linux__)
+    std::string reference = "linux";
+#else
+    std::string reference = "unknown";
+#endif
+#if defined(_M_X64) || defined(__x86_64__)
+    reference += "-x86_64";
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    reference += "-arm64";
+#else
+    reference += "-unknown";
+#endif
+#if defined(__clang__)
+    reference += "-clang" + std::to_string(__clang_major__);
+#elif defined(_MSC_VER)
+    reference += "-msvc" + std::to_string(_MSC_VER);
+#elif defined(__GNUC__)
+    reference += "-gcc" + std::to_string(__GNUC__);
+#else
+    reference += "-unknown";
+#endif
+    return reference;
+}
+
+std::string
+RigExecExecRowsGoldenHeader(const std::string &fixture, const SdfPath &rig,
+                            bool simd)
+{
+    return "rigexec-golden 2\nfixture " + RigExecGoldenEscape(fixture) +
+           " rig " + RigExecGoldenEscape(rig.GetString()) +
+           "\nprotocol exec-rows reference=" + RigExecExecRowsReference() +
+           " simd=" + (simd ? "1" : "0") + "\n";
+}
+
+RigExecExecCrossCheckReport
+RigExecBakedExecCheckRows::Evaluate(UsdTimeCode time)
+{
+    const auto verified = _Verified(time);
+    _lastChecked.assign(verified.size(), 0);
     for (size_t row = 0; row < verified.size(); ++row)
         _lastChecked[row] = verified[row].skip == RigExecExecCheckSkip::None;
     auto report = _check.Evaluate(time, verified);
@@ -1354,6 +1472,14 @@ RigExecBakedProgramTesting::EnableExecCrossCheck(
 {
     program._impl->execCheckRows =
         RigExecBakedExecCheckRows::Build(*program._impl, error);
+    return bool(program._impl->execCheckRows);
+}
+bool
+RigExecBakedProgramTesting::EnableExecRowCapture(
+    const RigExecBakedProgram &program, std::string *error)
+{
+    program._impl->execCheckRows = RigExecBakedExecCheckRows::Build(
+        *program._impl, error, RigExecExecCheckMode::Capture);
     return bool(program._impl->execCheckRows);
 }
 std::shared_ptr<RigExecBakedExecCheckRows>

@@ -20,8 +20,8 @@
 //    Step.head_input_reads bindings,
 //    PropertyChain.target, PhasedConsumer.consumer, PhasedConsumer.hops,
 //    Chain.base_slot, Revision.joint_indices_slot and joint_weights_slot,
-//    and WeightObject.values_slot, indices_slot, oracle_samples_slot and
-//    oracle_curve_slot hold them.
+//    and WeightObject.values_slot, indices_slot, field_samples_slot and
+//    field_curve_slot hold them.
 //    Provider slots index slot_meta.paths: SpaceSwitch.slot,
 //    AncestorRead.slot, FrameRecord.slot, FrameVersion.anchor and
 //    recompose, Commit.slots, every other *_slot and *_slots field, and
@@ -111,15 +111,55 @@ enum SlotDomain : ubyte { Avars = 0, PoseBase, PoseFin, PosedM, FinalMatrix,
   BaseMatrix, Aggregate, SolverPoints, Candidates, CommitTable, CommitDelta,
   CommitStaging, ConstraintDelta, PropertyResult, ChainBase, RevisionPacket,
   RevisionTransforms, RevisionOut, RevisionDone, ChainDirty, ChainPoints,
-  DerivedOut, WeightPacket, WeightFrames, PoseWeight, Snapshots, FrameMatrix, Rest, Ladder, SkinTopology, WeightField, WeightFramesBase, SpaceValue, SpaceLeaf, DerivedBase, ChainInput, ConstraintInputs, SwitchFrame, RequiredStageFramesAdmission }
+  DerivedOut, WeightPacket, WeightFrames, PoseWeight, Snapshots, FrameMatrix, Rest, Ladder, SkinTopology, WeightField, WeightFramesBase, SpaceValue, SpaceLeaf, DerivedBase, ChainInput, ConstraintInputs, SwitchFrame, RequiredStageFramesAdmission,
+  /// Format 36: an op value or a range chain's plan, and one vertex group
+  /// of an op value a range chain member writes.
+  OpValue, OpGroupValue }
 
 /// RigExecBakedStepKind, in the same order. SnapshotFinals (8) is reserved:
 /// never written, and Open refuses a file that holds one.
-enum StepKind : ubyte { ComposeSubtree = 0, Solve, SolverCommit, Constraint,
-  CommitDelta, PropagateChunk, CommitApply, ProviderMatrix, SnapshotFinals,
-  PoseInterpolator, VolumePlacements, WeightPacket, InfluenceFold,
+enum StepKind : ubyte {
+  /// Reserved. Open refuses it.
+  ReservedSolve = 1,
+  /// Reserved. Open refuses it.
+  ReservedSolverCommit,
+  /// Reserved. Open refuses it.
+  ReservedConstraint,
+  /// Reserved. Open refuses them.
+  ReservedCommitDelta, ReservedPropagateChunk, ReservedCommitApply,
+  /// Reserved. Open refuses it.
+  ReservedProviderMatrix, SnapshotFinals,
+  /// Reserved. Open refuses it.
+  ReservedPoseInterpolator,
+  /// Reserved. Open refuses it.
+  ReservedVolumePlacements,
+  /// Reserved. Open refuses it.
+  ReservedWeightPacket, InfluenceFold,
   RevisionStatic, RevisionChunk, RevisionFuse, ChainStatus, Derived,
-  FrameMatrix, PropertyRevision, RestCompose, LadderCompose, SkinTopology, WeightField, SpaceExpression, ChainInputs, AvarInputs, SpaceCheckpoint, ProviderRefresh }
+  /// Reserved. Open refuses it.
+  ReservedFrameMatrix,
+  /// Reserved. Open refuses it.
+  ReservedPropertyRevision,
+  /// Reserved. Open refuses it.
+  ReservedRestCompose,
+  /// Reserved. Open refuses it.
+  ReservedLadderCompose, SkinTopology,
+  /// Reserved. Open refuses it.
+  ReservedWeightField,
+  /// Reserved. Open refuses it.
+  ReservedSpaceExpression, ChainInputs,
+  /// Reserved. Open refuses it.
+  ReservedAvarInputs,
+  /// Reserved. Open refuses it.
+  ReservedSpaceCheckpoint,
+  /// Reserved. Open refuses it.
+  ReservedProviderRefresh,
+  /// Reserved. Open refuses it.
+  ReservedOpGraph,
+  /// Format 36: File.op_graph's nodes as steps: one node that does not run
+  /// in ranges, a range chain's head, and one (segment, vertex group) of
+  /// a range chain (part = segment * groups + group).
+  OpNode, OpChainHead, OpChainRange }
 
 /// RigExecBakedSlotKind.
 enum SlotKind : ubyte { FirstFramePose = 0, XformDerived = 1 }
@@ -181,7 +221,10 @@ enum ConstraintFlags : ubyte (bit_flags) {
   /// rigExec:worldUpRotationOnly on an Aim constraint.
   WorldUpRotationOnly,
   /// rigExec:weightBlend = "radial" on a transform-domain matrix mover.
-  RadialBlend
+  RadialBlend,
+  /// rigExec:orientationMode = "preserve" on a SingleChainIK constraint
+  /// (format 34).
+  PreserveJointOrientation
 }
 
 // ------------------------------------------------ structs (stored verbatim)
@@ -240,8 +283,7 @@ struct PropertyInputCandidate (native_type: "::rigExec::RigExecWirePropertyInput
 struct SlotRange { domain: SlotDomain; begin: uint; end: uint; }
 /// One provider frame as one writer of its stack (a constraint or a solver
 /// commit) left it, for an AtPrim read phase on rigExec:transform. Its
-/// FrameMatrix step (object = this record's index) writes the matrix and a
-/// valid byte on every run.
+/// FrameMatrix op step writes the matrix and a valid byte on every run.
 struct FrameRecord {
   /// The provider slot.
   slot: uint;
@@ -427,15 +469,13 @@ table Constants {
 /// One step: identity, declared ranges, edges, dirtiness, schedule. Labels
 /// are rebuilt from the tables (RigExecFormatStepLabel).
 table Step {
-  kind: StepKind;
+  kind: StepKind = OpNode;
   /// What the step works on, by kind: a compose group, a solver, a commit,
-  /// a provider slot (ProviderMatrix; VolumePlacements, the volume's slot),
-  /// a pose interpolator, a weight object, a revision id, a chain, a
-  /// derived id, or a pose.frame_records index (FrameMatrix).
+  /// a pose interpolator, a revision id, a chain, or a
+  /// derived id.
   object: int = -1;
   /// The part of it: a RevisionChunk's vertex chunk, a PropagateChunk's
-  /// pair chunk, a ProviderMatrix's phase (1 final, 0 base), 1 for the
-  /// per-volume VolumePlacements step; -1 where unused.
+  /// pair chunk; -1 where unused.
   part: int = -1;
   reads: [SlotRange];
   writes: [SlotRange];
@@ -610,29 +650,34 @@ table PoseInterpolator {
   weight_end: int;
   pose_slots: [int];
   disabled_slots: [int];
-  solver: Rbf (required);
+  /// Deprecated in format 56: the PoseInterpolator op node's payload
+  /// carries the solve and its tables.
+  solver: Rbf (deprecated);
   /// Whether the solve measures the driver's translation as well.
   enable_translation: bool;
   /// A numeric driver's dials, one per axis, at most three.
   value_inputs: [Input] (native_inline);
-  /// Present for a RigLogic solve, which replaces `solver`'s pose solve.
-  method: RbfMethod;
+  /// Deprecated in format 56, as `solver`.
+  method: RbfMethod (deprecated);
   /// A RigLogic solve's frame drivers after the first, and each one's
   /// measuring ancestor (-1 for none), parallel. Provider slots.
   extra_driver_slots: [int];
   extra_parent_slots: [int];
-  /// Present for a RigExecMlMover, whose network replaces every solve: its
-  /// row is the frame drivers' rotations, then every value input.
-  network: MlNetwork;
+  /// Deprecated in format 56, as `solver`.
+  network: MlNetwork (deprecated);
   /// The ML mover's inputs:mask; registered after the value inputs.
   mask: Input;
-  /// Present for a RigExecAnimatedMaps node: its value inputs are its
-  /// rows' inputs and pose_slots its maps' outputs:value.
-  maps: AnimatedMaps;
+  /// Deprecated in format 56, as `solver`.
+  maps: AnimatedMaps (deprecated);
   /// Animated maps: pose weight slots republishing a map as a mesh
   /// primvar, and the map (an index into pose_slots) each one copies.
   primvar_slots: [int];
   primvar_sources: [int];
+  /// Format 56: the solve its op node runs: 0 an RBF over the driver's
+  /// frame or dials, 1 a RigLogic RBF method, 2 an ML network (reads
+  /// `mask`), 3 animated maps (its value inputs are the rows' inputs and
+  /// pose_slots its maps' outputs:value).
+  solve: ubyte;
 }
 /// Format 31. RigExecSkeleton2d: structural setup per bone in solve order
 /// (parents first). Rests come from the Solver's rest_slots / joint_rests
@@ -702,7 +747,10 @@ table JointGroup {
   member_count: uint;
   enabled: bool = true;
 }
-/// One solver's epoch description. *_read fields are fin versions.
+/// One solver's epoch description. *_read fields are fin versions. The
+/// deprecated fields (format 55) were the rest copies and parameters the
+/// retired Solve step read; its op nodes read their rests through lookups
+/// and keep their parameters in their payloads.
 table Solver {
   path: uint;
   /// Token.
@@ -717,18 +765,18 @@ table Solver {
   rests_vary: bool;
   /// Override numbers.
   rest_overrides: [int];
-  spline_rest_weights: [double];
+  spline_rest_weights: [double] (deprecated);
   /// SplineIkRestLength.
-  spline_rest_mode: ubyte;
+  spline_rest_mode: ubyte (deprecated);
   degenerate: bool;
   // FkChain controls; a Skeleton2d's outside parent spaces
   controls: [int];
   parent_relative: bool;
-  control_rests: [Landmarks];
+  control_rests: [Landmarks] (deprecated);
   /// rigExec:startFrame provider slot (-1: absolute), its rest landmarks
   /// and the bound fin version (FkChain, Skeleton2d).
   start: int = -1;
-  start_rest: Landmarks (native_inline);
+  start_rest: Landmarks (deprecated);
   start_read: uint;
   // IK and spline controls
   root: int = -1;
@@ -737,14 +785,14 @@ table Solver {
   pole: int = -1;
   /// Exactly 3.
   ik_rests: [Landmarks];
-  ik_params: TwoBoneIkParams (native_inline);
+  ik_params: TwoBoneIkParams (deprecated);
   bend: Input (required);
   upper_offset: Input (required);
   lower_offset: Input (required);
   stretch: Input (required);
   softness: Input (required);
-  upper_length_base: F64 (native_inline);
-  lower_length_base: F64 (native_inline);
+  upper_length_base: F64 (deprecated);
+  lower_length_base: F64 (deprecated);
   /// rigExec:spaceMatrix: the explicit factor of the space a TwoBoneIk
   /// measures its chain in.
   ik_space: Input (required);
@@ -752,7 +800,7 @@ table Solver {
   /// ahead of the space (-1: none), its rest landmarks and the bound fin
   /// version.
   space_slot: int = -1;
-  space_rest: Landmarks (native_inline);
+  space_rest: Landmarks (deprecated);
   space_read: uint;
   // BlendPointFrames
   in_a: int = -1;
@@ -762,7 +810,7 @@ table Solver {
   scale_mode: ubyte;
   blend_rotation_rejected: bool;
   // SplineIk
-  spline_rest: SplineIkRest (required);
+  spline_rest: SplineIkRest (deprecated);
   spline_params: SplineIkParams (native_inline);
   spline_joint_rests: [Landmarks];
   spline_count: ulong;
@@ -773,13 +821,13 @@ table Solver {
   min_length_ratio: Input (required);
   spline_params_vary: bool;
   // TwistDistribution
-  twist_start_rest: Landmarks (native_inline);
-  twist_end_rest: Landmarks (native_inline);
-  twist_weights: [double];
+  twist_start_rest: Landmarks (deprecated);
+  twist_end_rest: Landmarks (deprecated);
+  twist_weights: [double] (deprecated);
   twist_turns: Input (required);
   // Ribbon
   ribbon_points_path: uint;
-  ribbon_rest_points: [Vec3f];
+  ribbon_rest_points: [Vec3f] (deprecated);
   /// The driver points at bake_time.
   ribbon_constant_points: [Vec3f];
   ribbon_sample_count: Input (required);
@@ -928,8 +976,6 @@ table Commit {
   slots: [int];
   propagate: [IntPair];
   closest_pos: [int];
-  split: bool;
-  staging_base: int;
   sources: [ConstraintSource];
   slot_reads: [uint];
   slot_writes: [uint];
@@ -1427,6 +1473,12 @@ table Revision {
   /// Declaration-order owning consumer leaves; sampled raw fallback and exact typed route.
   leaf_sites: [ExternalDeclaredInput] (native_inline);
   layout_leaf_sites: [ExternalDeclaredInput] (native_inline);
+  // A Range revision whatever its chunk count, so a chain of one vertex
+  // group is still a range chain.
+  range_role: bool;
+  // A Range revision whose op member runs once over every vertex group
+  // (format 68), reading per frame what its range form pins.
+  whole_role: bool;
 }
 table Derived {
   target: uint;
@@ -1448,7 +1500,7 @@ table Chain {
   base_slot: int = -1;
 }
 /// One weight object: its composition by value, its scalar reads, and the
-/// facts the runtime's port of the weight oracle needs. `base` and `inputs`
+/// facts the runtime's weight field needs. `base` and `inputs`
 /// index lower entries of the same table (dependency order).
 table WeightObject {
   path: uint;
@@ -1493,8 +1545,8 @@ table WeightObject {
   plane_axis: uint;
   /// Token.
   plane_bounds: uint;
-  /// Oracle objects retain the full authored weightTarget cardinality.
-  /// Canonical prim targets have valid=0: raw oracle fallback reads them,
+  /// Field-resolved objects retain the full authored weightTarget cardinality.
+  /// Canonical prim targets have valid=0: raw field fallback reads them,
   /// while packet gathering skips them, preserving native gather semantics.
   target_points: [uint];
   target_valid: [ubyte];
@@ -1503,41 +1555,41 @@ table WeightObject {
   curve_points: [uint];
   curve_valid: [ubyte];
   falloff_curve: [float];
-  // The oracle facts (RigExecRigEvaluator::_ResolveWeights).
+  // The weight field facts.
   /// Appended for a constraint or property-mover envelope; no WeightPacket
   /// step builds it.
   envelope_only: bool;
   /// A volume whose rigExec:weightTarget reads `preceding`: it samples the
   /// points entering the revision that binds it.
   samples_in_flight: bool;
-  /// Replaced by oracle_samples_slot and oracle_curve_slot.
-  oracle_samples: int = -1 (deprecated);
-  oracle_curve: int = -1 (deprecated);
+  /// Replaced by field_samples_slot and field_curve_slot.
+  field_samples: int = -1 (deprecated);
+  field_curve: int = -1 (deprecated);
   /// A plane volume's rigExec:planeAxis and rigExec:planeBounds as the
-  /// oracle reads them (the fallback only when the attribute is absent);
+  /// weight field reads them (the fallback only when the attribute is absent);
   /// Token path ids, 0 for every other type.
-  oracle_plane_axis: uint;
-  oracle_plane_bounds: uint;
-  /// The oracle's error text when the read-phase check fails, else empty.
-  oracle_phase_error: string;
-  /// The oracle's error text for the object's first structural failure,
+  field_plane_axis: uint;
+  field_plane_bounds: uint;
+  /// The field's error text when the read-phase check fails, else empty.
+  field_phase_error: string;
+  /// The field's error text for the object's first structural failure,
   /// which precedes every per-run read of it; else empty.
-  oracle_static_error: string;
+  field_static_error: string;
   /// Input slots, -1 for none: the painted rigExec:values (FloatArray)
   /// and rigExec:indices (IntArray), whose defaults are their values at
-  /// Default; and, for an object the oracle resolves, the points a volume
+  /// Default; and, for an object the weight field resolves, the points a volume
   /// not in flight samples (rigExec:sampleSource, else
   /// rigExec:weightTarget) and a curve volume's rigExec:curve points
-  /// (Vec3fArray, each at the attribute the oracle resolves its
+  /// (Vec3fArray, each at the attribute the weight field resolves its
   /// relationship to), read at the time.
   values_slot: int = -1;
   indices_slot: int = -1;
-  oracle_samples_slot: int = -1;
-  oracle_curve_slot: int = -1;
+  field_samples_slot: int = -1;
+  field_curve_slot: int = -1;
   /// Raw token transport; -1 distinguishes an absent attribute's default
   /// from an existing attribute whose sampled Get fails.
-  oracle_plane_axis_slot: int = -1;
-  oracle_plane_bounds_slot: int = -1;
+  field_plane_axis_slot: int = -1;
+  field_plane_bounds_slot: int = -1;
 }
 enum WeightFieldScalarMember : ubyte {
   DefaultWeight = 0, Driver, Scale, Bias, Strength, Invert, FalloffMin, FalloffMax,
@@ -1546,7 +1598,7 @@ enum WeightFieldScalarMember : ubyte {
 }
 enum WeightFieldForm : ubyte { EnvelopeProperty = 0, EnvelopeConstraint, Revision }
 enum WeightFieldPlacementPhase : ubyte { Final = 0, Base }
-/// One actual native per-consumer oracle context; never shared by object alone.
+/// One per-consumer weight field context; never shared by object alone.
 table WeightFieldPointRead { object: int; leaf: int; binding: PointsBinding (required); }
 table WeightField {
   form: WeightFieldForm;
@@ -1812,6 +1864,253 @@ table ProviderProgram {
 /// common_graph (RigExecSettleWindowLayout).
 table WindowedOp { step: int = -1; frames: uint; }
 
+// ---------------------------------------------------------------- manifest
+
+/// Format 33: a stable id, (name_space, name, version).
+table ManifestEntry {
+  name_space: string (required);
+  name: string (required);
+  version: uint = 1;
+}
+/// Format 33: what the file's op and value-type ordinals stand for. Entry i
+/// of each list is the stable id of wire ordinal i in this file. Open maps
+/// each id to the reader's own ordinal (rigExecBinary/manifest.h), rewrites
+/// the op fields through that map and refuses an id it does not know.
+/// Older files get the format-32 table.
+table Manifest {
+  /// Revision.op.
+  revision_ops: [ManifestEntry];
+  /// PropertyRevision.op.
+  property_ops: [ManifestEntry];
+  /// ProviderOp.kind.
+  provider_ops: [ManifestEntry];
+  /// InputTag. Must match the reader's in order.
+  value_types: [ManifestEntry];
+  /// Format 35: OpNode.op, the ops of the reader's op registry.
+  core_ops: [ManifestEntry];
+  /// Format 35: OpGraphOutput.type, the types of the reader's op registry.
+  core_types: [ManifestEntry];
+}
+
+// ---------------------------------------------------------------- op graph
+
+/// What feeds one input port of an op node: another node's output port,
+/// or (format 36) a value of the rig or a constant. Exactly one source is
+/// set.
+table OpNodeInput {
+  /// The fed port: its index in the op's port list. A port taking many
+  /// values has one entry per value, in order.
+  port: uint;
+  /// The feeding node, or -1.
+  node: int = -1;
+  /// The feeding node's output port index.
+  output: uint;
+  /// Format 36, what else feeds the port, or -1: 0 a point chain's final
+  /// points (object: its chains[] index), 1 and 2 a joint's or control's
+  /// final and base matrix (object: its slot), 3 the constant `constant`
+  /// holds, 4 (format 37) OpGraph.lookups[object].
+  host: byte = -1;
+  object: uint;
+  /// For a constant: the value's bytes, an array's elements one after
+  /// another.
+  constant: [ubyte];
+}
+/// Format 35: one op instance. Its op and ports are named by index only;
+/// the names live in Manifest.core_ops.
+table OpNode {
+  /// Manifest.core_ops index.
+  op: uint;
+  /// The op's settings as its payload encode wrote them; empty for an op
+  /// without settings.
+  payload: [ubyte];
+  inputs: [OpNodeInput];
+}
+/// Format 35: an op node output published under a name.
+table OpGraphOutput {
+  node: uint;
+  /// The output port's index in the op's port list.
+  port: uint;
+  /// Manifest.core_types index of the port's type.
+  type: uint;
+  name: string (required);
+}
+/// Format 36: one range chain of the op nodes, in the order the op core
+/// compiles them: the point chain whose vertex groups it runs in and their
+/// bounds.
+table OpChain {
+  point_chain: uint;
+  bounds: [int];
+  /// Format 42: the member nodes in chain order, and per member and group
+  /// (member-major) whether the member writes that group; empty when every
+  /// member writes every group.
+  members: [uint];
+  writes: [ubyte];
+}
+/// Format 37: a value of the rig an op input (OpNodeInput.host 4) reads
+/// each time its node runs, found by the runtime as the evaluator finds it.
+table OpLookup {
+  /// 0: a read of property chain `object` (property_chains index):
+  /// `read` 0 its base, else of revision `part`: 1 enabled, 2 the
+  /// weight, 3 value, 4 min, 5 max, 6 keys, 7 tangents, 8 path points.
+  /// 1 (format 38): the pose frame of fin (`part` 0) or base (`part` 1)
+  /// version `object`.
+  /// 2 (format 39): input `read` of weight object `object`
+  /// (geometry.weight_objects index; `part` -1): 0 defaultWeight, 1
+  /// driver, 2 scale, 3 bias, 4 strength, 5 invert, 6 falloffMin, 7
+  /// falloffMax, 8 the x, y, z scales, 9 the positive and 10 the negative
+  /// scales, 11 extentU, 12 extentV, 13 values, 14 indices, 15 sample, 16
+  /// target and 17 curve points, 18 the falloff samples, 19 the combine
+  /// target point count.
+  /// 3 (format 40): the points entering revision `part` of point chain
+  /// `object` (geometry.chains index), as one array.
+  /// 4 (format 40): input `read` of weight object `part` as weight field
+  /// `object` (geometry.weight_fields index) reads it: 0 defaultWeight, 1
+  /// driver, 2 scale, 3 bias, 4 strength, 5 invert, 6 falloffMin, 7
+  /// falloffMax, 8-10 the x, y, z scales, 11-13 the positive and 14-16 the
+  /// negative scales, 17 extentU, 18 extentV (floats); 19 the scales, 20
+  /// the positive and 21 the negative scales (Vec3f); 22 the sampled
+  /// points, 23 the curve points, 24 the falloff samples, 25 the placement,
+  /// 26 the field's point count, 27 values, 28 indices, 29 the plane axis
+  /// and 30 whether the plane is bounded (uint).
+  /// 20 (format 41): the rest frame of slot `object`. 21 (format 41): the
+  /// record gates of pose commit `object`: `read` 0 its present bytes, 1
+  /// record-after, 2 record-every-target, 3 whether it committed output
+  /// `part`.
+  /// 5: an array of `part` elements, element i what lookup `object` + i
+  /// answers. 6: the final (`part` 0) or base (`part` 1) matrix of
+  /// provider slot `object`. 7: frame record `object`, present when valid
+  /// this frame. 8: the delta geometry-domain constraint `object`
+  /// measured, present when it measured one. 9: the first present of the
+  /// `part` lookups from `object`, each a 6, 7 or 8 (Mat4d). 10 (format
+  /// 42): input `read` of revision `object` (geometry.revision_index): 0
+  /// inputs:enabled (Bool), 1 inputs:defaultWeight (Float), 2 (format 44)
+  /// whether rigExec:weightBlend is radial (Bool), 3-13 (format 48) a delta
+  /// mush's inputs and its chain's base points, 14-15 (format 50) a lattice's
+  /// rest and live cages, 16 (format 54) the weight of a blend shape's
+  /// channel `part`, 31-34 (format 68) the activation, dense points,
+  /// sparse offsets and indices of its sample `part` (OpRevisionRead,
+  /// rigExecEvalCore/opSteps.h).
+  /// 22 (format 45): provider refresh `object`'s re-evaluated base
+  /// (`read` 0) or current (1) frame. 23 (format 45): the raw parent space
+  /// of slot `object`. 24 (format 45): typed input list `read`
+  /// (ProviderRead, rigExecEvalCore/spaces.h) of provider operation
+  /// `object` (provider_program.ops index), filled from the provider values
+  /// its inputs name. 25 (format 49): flag `read` (ProviderCandidateRead,
+  /// rigExecGraph/providerInputs.h: 0 present, 1 authoritative, 2 blocked)
+  /// of each candidate that can answer provider value producer `object`
+  /// (ProviderProducers numbering: provider_program.ops, sampled,
+  /// external_inputs, routed_inputs, then pose.provider_frame_inputs).
+  /// 30 (format 43): the frames of pose commit `object` at version list
+  /// `part`: 0 entering, 1 carry, 2 base carry, 3 current descendants, 4
+  /// closest, 5 descendant carry, 6 descendant base carry. 31 (formats
+  /// 43 to 63), a commit's candidates, is retired: they arrive from op
+  /// nodes (format 64).
+  /// 32 to 37 and 39 (format 47) read constraint commit `object`
+  /// (OpConstraintRead, rigExecEvalCore/opSteps.h, in `read`): 32 its
+  /// sources, `part` -1 all of them, else source `part`'s frame (`read`
+  /// 0) or rest frame (1); 33 a per-source table; 34 an input of its mover;
+  /// 35 its envelope: the weight it solves at, its delta weight or which
+  /// of its commit's candidates are present; 36 its rigExec:space carry;
+  /// 37 the world-up direction its aim reads, `part` the world-up mode
+  /// (OpConstraintWorldUp); 39 its geometry target's authored transform
+  /// (`read` 0) or whether it was read (1).
+  /// 38, 70 and 71 (format 51) read an input of harmonics, single-chain IK
+  /// and IK/FK match constraint commit `object`, `read` an
+  /// OpHarmonicsRead, OpSingleChainIkRead or OpIkFkMatchRead
+  /// (rigExecEvalCore/opSteps.h).
+  /// 40 (format 52): the values of provider slot `object`'s avar
+  /// bindings, its varying ones then its constant ones. 41 (format 52):
+  /// input `read` (OpCheckpointRead, rigExecEvalCore/opSteps.h) of space
+  /// checkpoint `object` over the slots it recomposes, outermost first: 0
+  /// their avars, 1 rotation orders, 2 rotation signs, 3 posed defaults, 4
+  /// parent default inverses, 5 parent expressions and 6 whether each was
+  /// authored, 7 whether the posed matrix was authored and 8 that matrix,
+  /// 9 its anchor's posed matrix.
+  /// 42 (format 52): input `read` (OpInterpolatorRead,
+  /// rigExecEvalCore/opSteps.h) of pose interpolator `object`: 0
+  /// inputs:enabled, 1 its numeric driver values, 2 inputs:mask, 3 and 4
+  /// its driver's last fin and rest frames, 5 and 6 its parent's, 7 to 10
+  /// its extra drivers' and their parents' (lists).
+  /// 43 (format 56): input `read` (OpRestRead) of compose group
+  /// `object`'s RestCompose node: 0 its slot's rest avars, 1 rest space, 2
+  /// intervening space, 3 its parent's rest round trip.
+  /// 44 (format 68): input `read` (OpLadderRead) of compose group
+  /// `object`'s LadderCompose node: 0 its ladder channels 1 to 6, 1 their
+  /// authored flags, 2 the parent space leaf, 3 the rotation sign, 4 the
+  /// default avars, 5 its slot's rest round trip, 6 and 7 its parent's rest
+  /// and default round trips.
+  /// 60 (format 55): input `part` (OpSolverRead, rigExecEvalCore/opSteps.h)
+  /// of solver `object` (pose.solvers index), read by one of its op nodes.
+  source: ubyte;
+  object: uint;
+  part: int = -1;
+  read: ubyte;
+}
+/// Format 37: a node port's value the runtime stores in its own slot after
+/// the node runs: an output, or an input a lookup feeds.
+table OpHostOutput {
+  node: uint;
+  port: uint;
+  /// 0: property version `object`; 1 and 2 (format 38): the final and
+  /// the base placement of volume slot `object`; 3 (format 39): the
+  /// packet of weight object `object`; 5 (format 40): the weights of weight
+  /// field `object`; 20 and 21 (format 41): the final and the base matrix
+  /// of slot `object`; 22 and 23 (format 41): the matrix and the valid byte
+  /// of frame record `object`; 24 to 27 (format 45): provider refresh `object`'s base
+  /// and final frames and its carried descendants' base and final frames;
+  /// 28 and 29 (format 45): provider operation `object`'s matrix or frame into its
+  /// provider value, published after 50, its authority, and 51, the input
+  /// that left it unavailable (-1 when available); 52 (format 49): the candidate that
+  /// answers provider value producer `object` (-1 when it holds no value),
+  /// published into that producer's value after 53, its authority, and 54,
+  /// its blocked flag;
+  /// 30 to 33 (format 43): the final candidate,
+  /// final descendant, base candidate and base descendant versions pose
+  /// commit `object` writes; 34 (format 43): which of its candidates are
+  /// present; 35 (format 47): the frame constraint commit `object`'s mover
+  /// solved; 36 and 37 (format 47): the delta it measured against its
+  /// geometry target's authored transform and whether it measured one;
+  /// 70 (format 51): what constraint commit `object`'s Harmonics,
+  /// SingleChainIk or IkFkMatch node made of its frames; 71 (format 51):
+  /// the chain its single-chain IK solved; 72 to 74 (format 51): the IK and
+  /// FK values its IK/FK match matched and the controls it presents.
+  /// 40 (format 52): an AvarInputs node's values into provider slot
+  /// `object`'s bound avars, in ascending channel order; 41 (format 52):
+  /// space checkpoint `object`'s switch frame;
+  /// 42 (format 52): pose interpolator `object`'s weights, one per pose in
+  /// its solve's order; the rest of its weight range publishes zero.
+  /// 43 (format 56): RestCompose output `port` (OpRestOutput: 4 the rest
+  /// matrix, 5 the rest frame, 6 the rest round trip) into compose group
+  /// `object`'s slot.
+  /// 44 (format 68): LadderCompose output `port` (OpLadderOutput, 8 to 16)
+  /// into compose group `object`'s slot's ladder tables.
+  /// 45 (format 68): pose interpolator `object`'s status
+  /// (RigExecPoseInterpolatorStatus); an unusable driver gives its node's
+  /// step one line.
+  /// 60 (format 55): solver `object`'s frames, from its last op node, as
+  /// its aggregate and its commit's outputs; 61 (format 55): whether 2D
+  /// skeleton solver `object` solved in its plane.
+  /// 4 (format 42): a range chain member's output, group by group, into
+  /// the vertex groups of revision `object` (geometry.revision_index), the
+  /// groups its OpChain.writes names. 6 (format 44): the looked-up
+  /// inputs:enabled of revision `object`, whose groups the same node
+  /// stores.
+  target: ubyte;
+  object: uint;
+}
+/// Format 36: op nodes the common graph runs as OpNode, OpChainHead and
+/// OpChainRange steps, ordered by their declared reads like any other.
+table OpGraph {
+  nodes: [OpNode];
+  /// (first, second) node pairs: first runs before second.
+  order: [IntPair];
+  outputs: [OpGraphOutput];
+  chains: [OpChain];
+  /// Format 37.
+  lookups: [OpLookup];
+  host_outputs: [OpHostOutput];
+}
+
 // -------------------------------------------------------------------- root
 
 table File {
@@ -1861,6 +2160,10 @@ table File {
   /// float or double primvars:* result is published as a constant primvar,
   /// sorted by target path.
   scalar_primvar_chains: [uint];
+  /// Format 33: the stable ids of the file's ordinals. Required from 33.
+  manifest: Manifest;
+  /// Format 35: op nodes run through the op core.
+  op_graph: OpGraph;
 }
 
 root_type File;

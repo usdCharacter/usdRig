@@ -1,7 +1,7 @@
 // Common producer graph tests: independent geometry branches, exact serial/parallel
 // values, stable held results and causal phased reads.
-#include "rigExec/parallel.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/parallel.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecGraphDependencyCheck.h"
 
 #include "pxr/base/plug/registry.h"
@@ -19,8 +19,13 @@
 using namespace rigExec;
 
 static int failures = 0;
-#define CHECK(condition) do { if (!(condition)) { ++failures; \
-    std::printf("FAIL %d: %s\n", __LINE__, #condition); } } while (0)
+#define CHECK(condition)                                                       \
+    do {                                                                       \
+        if (!(condition)) {                                                    \
+            ++failures;                                                        \
+            std::printf("FAIL %d: %s\n", __LINE__, #condition);                \
+        }                                                                      \
+    } while (0)
 
 namespace {
 
@@ -59,8 +64,7 @@ BasePoints(size_t mesh)
 {
     VtVec3fArray points(kPointCount);
     for (size_t i = 0; i < kPointCount; ++i) {
-        points[i] = GfVec3f(float(i) * 0.5f + float(mesh),
-                            float(i) * -0.25f,
+        points[i] = GfVec3f(float(i) * 0.5f + float(mesh), float(i) * -0.25f,
                             float(mesh) * 3.0f - float(i) * 0.125f);
     }
     return points;
@@ -68,8 +72,16 @@ BasePoints(size_t mesh)
 
 // Per-mesh influence weights, also distinct: mesh m moves by
 // (0.1 + 0.05 m) * (10, 0, 0) + (0.9 - 0.05 m) * (0, 20, 0).
-float AlongX(size_t mesh) { return 0.1f + 0.05f * float(mesh); }
-float AlongY(size_t mesh) { return 0.9f - 0.05f * float(mesh); }
+float
+AlongX(size_t mesh)
+{
+    return 0.1f + 0.05f * float(mesh);
+}
+float
+AlongY(size_t mesh)
+{
+    return 0.9f - 0.05f * float(mesh);
+}
 
 // \p meshCount skinned meshes over two shared controls. Every mesh is
 // authored the same way whatever meshCount is, so the same mesh in a rig of
@@ -81,11 +93,11 @@ MakeMultiMeshRig(size_t meshCount)
     UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const UsdPrim alongX = stage->DefinePrim(
-        SdfPath("/Asset/Rig/AlongX"), TfToken("RigExecControl"));
+    const UsdPrim alongX = stage->DefinePrim(SdfPath("/Asset/Rig/AlongX"),
+                                             TfToken("RigExecControl"));
     alongX.GetAttribute(TfToken("avars:tx")).Set(10.0);
-    const UsdPrim alongY = stage->DefinePrim(
-        SdfPath("/Asset/Rig/AlongY"), TfToken("RigExecControl"));
+    const UsdPrim alongY = stage->DefinePrim(SdfPath("/Asset/Rig/AlongY"),
+                                             TfToken("RigExecControl"));
     alongY.GetAttribute(TfToken("avars:ty")).Set(20.0);
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
 
@@ -95,8 +107,7 @@ MakeMultiMeshRig(size_t meshCount)
         indices[i * 2 + 1] = 1;
     }
     for (size_t mesh = 0; mesh < meshCount; ++mesh) {
-        const UsdPrim prim =
-            stage->DefinePrim(MeshPath(mesh), TfToken("Mesh"));
+        const UsdPrim prim = stage->DefinePrim(MeshPath(mesh), TfToken("Mesh"));
         prim.GetAttribute(TfToken("points")).Set(BasePoints(mesh));
 
         const UsdPrim skin =
@@ -110,32 +121,37 @@ MakeMultiMeshRig(size_t meshCount)
         skin.CreateRelationship(TfToken("rigExec:influences"))
             .SetTargets({alongX.GetPath(), alongY.GetPath()});
         skin.CreateAttribute(TfToken("rigExec:elementSize"),
-                             SdfValueTypeNames->Int).Set(2);
+                             SdfValueTypeNames->Int)
+            .Set(2);
         skin.CreateAttribute(TfToken("rigExec:jointIndices"),
-                             SdfValueTypeNames->IntArray).Set(indices);
+                             SdfValueTypeNames->IntArray)
+            .Set(indices);
         VtFloatArray weights(kPointCount * 2);
         for (size_t i = 0; i < kPointCount; ++i) {
             weights[i * 2] = AlongX(mesh);
             weights[i * 2 + 1] = AlongY(mesh);
         }
         skin.CreateAttribute(TfToken("rigExec:jointWeights"),
-                             SdfValueTypeNames->FloatArray).Set(weights);
+                             SdfValueTypeNames->FloatArray)
+            .Set(weights);
     }
     return stage;
 }
 
 bool
 CompileOrReport(RigExecRigEvaluator *evaluator, const char *what,
-                RigExecRigPose *firstPose=nullptr)
+                RigExecRigPose *firstPose = nullptr)
 {
     std::vector<std::string> errors;
     if (evaluator->Compile(&errors)) {
-        auto pose=evaluator->Evaluate(UsdTimeCode::Default());
-        if(pose.valid && evaluator->GetBakedProgram()) {
-            if(firstPose)*firstPose=std::move(pose);
+        auto pose = evaluator->Evaluate(UsdTimeCode::Default());
+        if (pose.valid && evaluator->GetBakedProgram()) {
+            if (firstPose)
+                *firstPose = std::move(pose);
             return true;
         }
-        errors.insert(errors.end(),pose.diagnostics.begin(),pose.diagnostics.end());
+        errors.insert(errors.end(), pose.diagnostics.begin(),
+                      pose.diagnostics.end());
     }
     ++failures;
     std::printf("FAIL: %s has no executable compiled program\n", what);
@@ -169,9 +185,10 @@ Identical(const VtVec3fArray &a, const VtVec3fArray &b, const char *what)
         if (a[i][0] != b[i][0] || a[i][1] != b[i][1] || a[i][2] != b[i][2]) {
             ++failures;
             std::printf("FAIL: %s: point %zu (%.9g %.9g %.9g) vs "
-                        "(%.9g %.9g %.9g)\n", what, i,
-                        double(a[i][0]), double(a[i][1]), double(a[i][2]),
-                        double(b[i][0]), double(b[i][1]), double(b[i][2]));
+                        "(%.9g %.9g %.9g)\n",
+                        what, i, double(a[i][0]), double(a[i][1]),
+                        double(a[i][2]), double(b[i][0]), double(b[i][1]),
+                        double(b[i][2]));
             return false;
         }
     }
@@ -212,17 +229,16 @@ CheckExpectedDeformation(const RigExecRigPose &pose, size_t mesh,
                                       AlongY(mesh) * 20.0f, 0.0f);
         // Four float ulps of the point's distance from the origin,
         // never below the absolute floor a point near it needs.
-        const double magnitude =
-            std::max(GfVec3d(expected).GetLength(), 1.0);
+        const double magnitude = std::max(GfVec3d(expected).GetLength(), 1.0);
         const double tolerance = std::max(1e-4, magnitude * 5e-7);
-        if ((GfVec3d(points[i]) - GfVec3d(expected)).GetLength() >=
-                tolerance) {
+        if ((GfVec3d(points[i]) - GfVec3d(expected)).GetLength() >= tolerance) {
             ++failures;
             std::printf("FAIL: %s: mesh %zu point %zu is (%.9g %.9g %.9g), "
-                        "expected (%.9g %.9g %.9g)\n", what, mesh, i,
-                        double(points[i][0]), double(points[i][1]),
-                        double(points[i][2]), double(expected[0]),
-                        double(expected[1]), double(expected[2]));
+                        "expected (%.9g %.9g %.9g)\n",
+                        what, mesh, i, double(points[i][0]),
+                        double(points[i][1]), double(points[i][2]),
+                        double(expected[0]), double(expected[1]),
+                        double(expected[2]));
             return;
         }
     }
@@ -237,16 +253,21 @@ TestIndependentChainsHaveNoCausalEdges()
     if (!CompileOrReport(&evaluator, "six independent meshes")) {
         return;
     }
-    const auto graph=evaluator.GetOpGraph();
+    const auto graph = evaluator.GetOpGraph();
     std::vector<size_t> outputs;
-    for(size_t mesh=0;mesh<6;++mesh) {
-        const auto id=rigExecTest::FindOperation(graph,TargetPath(mesh),"ChainStatus");
-        CHECK(id<graph.size());outputs.push_back(id);
+    for (size_t mesh = 0; mesh < 6; ++mesh) {
+        const auto id =
+            rigExecTest::FindOperation(graph, TargetPath(mesh), "ChainStatus");
+        CHECK(id < graph.size());
+        outputs.push_back(id);
     }
-    for(size_t a=0;a<outputs.size();++a)for(size_t b=a+1;b<outputs.size();++b) {
-        CHECK(!rigExecTest::HasDependencyPath(graph,outputs[a],outputs[b]));
-        CHECK(!rigExecTest::HasDependencyPath(graph,outputs[b],outputs[a]));
-    }
+    for (size_t a = 0; a < outputs.size(); ++a)
+        for (size_t b = a + 1; b < outputs.size(); ++b) {
+            CHECK(
+                !rigExecTest::HasDependencyPath(graph, outputs[a], outputs[b]));
+            CHECK(
+                !rigExecTest::HasDependencyPath(graph, outputs[b], outputs[a]));
+        }
 }
 
 // Two chains are not enough work to be worth a dispatch, and a rig that holds
@@ -329,10 +350,8 @@ TestRepeatedWalksAreIdentical()
     }
     CHECK(failureOrder.size() >= 2);
     if (failureOrder.size() >= 2) {
-        const std::string firstMover =
-            MoverPath(kFailingMesh[0]).GetString();
-        const std::string secondMover =
-            MoverPath(kFailingMesh[1]).GetString();
+        const std::string firstMover = MoverPath(kFailingMesh[0]).GetString();
+        const std::string secondMover = MoverPath(kFailingMesh[1]).GetString();
         CHECK(failureOrder.front().find(firstMover) != std::string::npos);
         CHECK(failureOrder.back().find(secondMover) != std::string::npos);
     }
@@ -349,13 +368,12 @@ TestRepeatedWalksAreIdentical()
         CHECK(again.valid);
         CHECK(again.diagnostics == first.diagnostics);
         CHECK(again.movedProperties.size() == first.movedProperties.size());
-        CHECK(again.executedOpCount ==
-              first.executedOpCount);
+        CHECK(again.executedOpCount == first.executedOpCount);
         CHECK(evaluator.GetOpGraph().size() == graphNodes);
         for (size_t mesh = 0; mesh < 6; ++mesh) {
             if (!Identical(MovedPoints(again, mesh), MovedPoints(first, mesh),
                            "repeated walk")) {
-                return;  // one report is enough
+                return; // one report is enough
             }
         }
     }
@@ -375,9 +393,10 @@ TestHeldExecutionKeepsCompiledGraph()
     const size_t nodes = evaluator.GetOpGraph().size();
     CHECK(nodes >= 6);
     for (int run = 0; run < 8; ++run) {
-        const auto pose=evaluator.Evaluate(UsdTimeCode::Default());
+        const auto pose = evaluator.Evaluate(UsdTimeCode::Default());
         CHECK(pose.valid);
-        if(run>0)CHECK(pose.executedOpCount==0);
+        if (run > 0)
+            CHECK(pose.executedOpCount == 0);
         CHECK(evaluator.GetOpGraph().size() == nodes);
     }
 }
@@ -391,21 +410,21 @@ TestOneThreadAndManyAgree()
     UsdStageRefPtr stage = MakeMultiMeshRig(6);
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
     RigExecRigPose many;
-    if (!CompileOrReport(&evaluator, "six independent meshes",&many)) {
+    if (!CompileOrReport(&evaluator, "six independent meshes", &many)) {
         return;
     }
     CHECK(many.valid);
-    CHECK(many.executedOpCount>0);
+    CHECK(many.executedOpCount > 0);
 
     const unsigned limit = WorkGetConcurrencyLimit();
     WorkSetConcurrencyLimit(1);
-    RigExecRigEvaluator single(stage,SdfPath("/Asset/Rig"));
+    RigExecRigEvaluator single(stage, SdfPath("/Asset/Rig"));
     CHECK(single.Compile());
     const RigExecRigPose one = single.Evaluate(UsdTimeCode::Default());
     WorkSetConcurrencyLimit(limit);
 
     CHECK(one.valid);
-    CHECK(one.executedOpCount>0);
+    CHECK(one.executedOpCount > 0);
     CHECK(one.diagnostics == many.diagnostics);
     for (size_t mesh = 0; mesh < 6; ++mesh) {
         Identical(MovedPoints(one, mesh), MovedPoints(many, mesh),
@@ -456,9 +475,9 @@ TestWeightObjectsInAParallelLevel()
         const VtVec3fArray base = BasePoints(mesh);
         CHECK(points.size() == kPointCount);
         if (points.size() == kPointCount) {
-            const GfVec3f half =
-                base[0] + GfVec3f(AlongX(mesh) * 10.0f,
-                                  AlongY(mesh) * 20.0f, 0.0f) * 0.5f;
+            const GfVec3f half = base[0] + GfVec3f(AlongX(mesh) * 10.0f,
+                                                   AlongY(mesh) * 20.0f, 0.0f) *
+                                               0.5f;
             CHECK((GfVec3d(points[0]) - GfVec3d(half)).GetLength() < 1e-3);
         }
     }
@@ -476,8 +495,7 @@ TestPhasedReadHasOnlyCausalDependencies()
     // Mesh_5 is also deformed by a lattice whose cage is Mesh_0 as Mesh_0's
     // own chain leaves it.
     const UsdPrim lattice = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Lattice_5"),
-        TfToken("RigExecLatticeMover"));
+        SdfPath("/Asset/Rig/Movers/Lattice_5"), TfToken("RigExecLatticeMover"));
     lattice.ApplyAPI(TfToken("RigExecMoverAPI"));
     lattice.GetRelationship(TfToken("rigExec:moves"))
         .SetTargets({TargetPath(5)});
@@ -490,23 +508,26 @@ TestPhasedReadHasOnlyCausalDependencies()
     if (!CompileOrReport(&evaluator, "phased cage read")) {
         return;
     }
-    const auto graph=evaluator.GetOpGraph();
-    const size_t source=rigExecTest::FindOperation(graph,TargetPath(0),"ChainStatus");
-    const size_t consumer=rigExecTest::FindOperation(graph,SdfPath("/Asset/Rig/Movers/Lattice_5"),"RevisionStatic");
-    CHECK(source<graph.size() && consumer<graph.size());
-    CHECK(rigExecTest::HasDependencyPath(graph,source,consumer));
-    for(size_t mesh=1;mesh<5;++mesh) {
-        const size_t unrelated=rigExecTest::FindOperation(graph,TargetPath(mesh),"ChainStatus");
-        CHECK(unrelated<graph.size());
-        CHECK(!rigExecTest::HasDependencyPath(graph,unrelated,consumer));
-        CHECK(!rigExecTest::HasDependencyPath(graph,consumer,unrelated));
+    const auto graph = evaluator.GetOpGraph();
+    const size_t source =
+        rigExecTest::FindOperation(graph, TargetPath(0), "ChainStatus");
+    const size_t consumer = rigExecTest::FindOperation(
+        graph, SdfPath("/Asset/Rig/Movers/Lattice_5"), "RevisionStatic");
+    CHECK(source < graph.size() && consumer < graph.size());
+    CHECK(rigExecTest::HasDependencyPath(graph, source, consumer));
+    for (size_t mesh = 1; mesh < 5; ++mesh) {
+        const size_t unrelated =
+            rigExecTest::FindOperation(graph, TargetPath(mesh), "ChainStatus");
+        CHECK(unrelated < graph.size());
+        CHECK(!rigExecTest::HasDependencyPath(graph, unrelated, consumer));
+        CHECK(!rigExecTest::HasDependencyPath(graph, consumer, unrelated));
     }
     const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
     CHECK(pose.valid);
     CHECK(MovedPoints(pose, 0).size() == kPointCount);
 }
 
-}  // namespace
+} // namespace
 
 // argv[1], optional: run every case this many times.
 // The two guards that make the level-parallel walk memory-safe fail

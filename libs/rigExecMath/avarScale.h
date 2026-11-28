@@ -5,6 +5,8 @@
 #define RIGEXEC_MATH_AVAR_SCALE_H
 
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 
 namespace rigExec {
 
@@ -35,8 +37,8 @@ RigExecNormalizeAvarScale(double value)
         return 1.0;
     }
     return std::abs(value) < RigExecAvarScaleFloor
-        ? std::copysign(RigExecAvarScaleFloor, value)
-        : value;
+               ? std::copysign(RigExecAvarScaleFloor, value)
+               : value;
 }
 
 /// Apply the runtime avars:rotationSign contract to one axis.
@@ -60,10 +62,9 @@ RigExecNormalizeRotationSign(double value)
 inline unsigned char
 RigExecRotationSignMask(double x, double y, double z)
 {
-    return (unsigned char)(
-        (RigExecNormalizeRotationSign(x) < 0.0 ? 1u : 0u) |
-        (RigExecNormalizeRotationSign(y) < 0.0 ? 2u : 0u) |
-        (RigExecNormalizeRotationSign(z) < 0.0 ? 4u : 0u));
+    return (unsigned char)((RigExecNormalizeRotationSign(x) < 0.0 ? 1u : 0u) |
+                           (RigExecNormalizeRotationSign(y) < 0.0 ? 2u : 0u) |
+                           (RigExecNormalizeRotationSign(z) < 0.0 ? 4u : 0u));
 }
 
 /// The sign one packed axis selects: -1 when its bit is set, +1 otherwise.
@@ -73,6 +74,56 @@ RigExecRotationSignFromMask(unsigned mask, int axis)
     return (mask & (1u << axis)) ? -1.0 : 1.0;
 }
 
-}  // namespace rigExec
+/// Writes \p count bound avar values in order: binding k writes value(k) to
+/// slot(k), so a later binding for the same slot wins.
+template <class Slot, class Value, class Write>
+void
+RigExecWriteAvarBindings(size_t count, const Slot &slot, const Value &value,
+                         const Write &write)
+{
+    for (size_t k = 0; k < count; ++k) {
+        write(slot(k), value(k));
+    }
+}
 
-#endif  // RIGEXEC_MATH_AVAR_SCALE_H
+/// The avars of one provider slot: avar slot provider * 11 + channel.
+inline constexpr size_t kRigExecSlotAvars = 11;
+
+/// The channels \p count bindings of one provider write, bit c for channel
+/// c, \p slot(k) binding k's avar slot.
+template <class Slot>
+unsigned
+RigExecBoundAvarChannels(size_t count, const Slot &slot)
+{
+    unsigned mask = 0;
+    for (size_t k = 0; k < count; ++k)
+        mask |= 1u << (size_t(slot(k)) % kRigExecSlotAvars);
+    return mask;
+}
+
+/// Channel \p channel's element in an AvarInputs output over the channels
+/// \p mask holds: its rank among them.
+inline uint32_t
+RigExecAvarElement(unsigned mask, size_t channel)
+{
+    uint32_t element = 0;
+    for (size_t c = 0; c < channel; ++c)
+        element += (mask >> c) & 1u;
+    return element;
+}
+
+/// A rotation order's code as the pose ops read it: its three axis letters
+/// in the low three bytes, or 0 (the default order) unless it has three
+/// letters.
+inline uint32_t
+RigExecRotOrderCode(const char *text, size_t size)
+{
+    if (size != 3)
+        return 0;
+    return uint32_t(uint8_t(text[0])) | uint32_t(uint8_t(text[1])) << 8 |
+           uint32_t(uint8_t(text[2])) << 16;
+}
+
+} // namespace rigExec
+
+#endif // RIGEXEC_MATH_AVAR_SCALE_H

@@ -6,9 +6,10 @@
 
 #include "bridgeGuideGeometry.h"
 
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/frameReader.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBinary/clothPlayback.h"
-#include "rigExec/movers/clothInputs.h"
+#include "rigExec/internal/movers/clothInputs.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/quatd.h"
@@ -188,22 +189,20 @@ RigExecBridgeGuides::_ReadOpacityRule(_GuideInputs &inputs, UsdTimeCode time)
 // (\p fallback where it holds none).
 float
 RigExecBridgeGuides::_HeldOpacity(const _GuideInputs &inputs,
-                                  const RigExecRigPose &pose, float fallback)
+                                  const RigExecFrameReader &reader,
+                                  float fallback)
 {
     VtValue held;
     bool read = false;
-    const auto phased = pose.movedProperties.find(inputs.opacityAttr.GetPath());
-    if (phased != pose.movedProperties.end() && !phased->second.IsEmpty()) {
-        held = phased->second;
+    if (reader.FindMovedValue(inputs.opacityAttr.GetPath(), &held) &&
+        !held.IsEmpty()) {
         read = true;
     } else if (inputs.opacitySource) {
-        const auto moved =
-            pose.movedProperties.find(inputs.opacitySource.GetPath());
-        if (moved != pose.movedProperties.end() && !moved->second.IsEmpty()) {
-            held = moved->second;
+        if (reader.FindMovedValue(inputs.opacitySource.GetPath(), &held) &&
+            !held.IsEmpty()) {
             read = true;
         } else {
-            read = inputs.opacitySource.Get(&held, pose.time);
+            read = inputs.opacitySource.Get(&held, reader.GetTime());
         }
     }
     double driven = 0.0;
@@ -213,20 +212,20 @@ RigExecBridgeGuides::_HeldOpacity(const _GuideInputs &inputs,
             std::min(1.0, std::max(inputs.opacityFloor, opacity)));
     }
     float opacity = fallback;
-    inputs.opacityAttr.Get(&opacity, pose.time);
+    inputs.opacityAttr.Get(&opacity, reader.GetTime());
     return opacity;
 }
 
 void
 RigExecBridgeGuides::_ReadGuideStyleCached(_GuideInputs &inputs,
-                                           const RigExecRigPose &pose,
+                                           const RigExecFrameReader &reader,
                                            RigExecPublishedPrim *published)
 {
     const UsdPrim &prim = inputs.prim;
     if (!prim) {
         return;
     }
-    const UsdTimeCode time = pose.time;
+    const UsdTimeCode time = reader.GetTime();
     if (!inputs.styleReady) {
         inputs.styleReady = true;
         inputs.purpose = _ReadGuidePurpose(prim);
@@ -245,7 +244,7 @@ RigExecBridgeGuides::_ReadGuideStyleCached(_GuideInputs &inputs,
     if (inputs.colorAttr) {
         if (inputs.colorLive) {
             VtValue held;
-            if (_ReadConnectedValue(inputs.colorAttr, pose, &held) &&
+            if (_ReadConnectedValue(inputs.colorAttr, reader, &held) &&
                 held.IsHolding<GfVec3f>()) {
                 published->guideColor = held.UncheckedGet<GfVec3f>();
             } else {
@@ -263,12 +262,10 @@ RigExecBridgeGuides::_ReadGuideStyleCached(_GuideInputs &inputs,
             if (inputs.opacityRuleHeld) {
                 // A fresh prim's opacity, as _ReadGuideStyle's scratch.
                 static const float unread = RigExecPublishedPrim().guideOpacity;
-                published->guideOpacity = _HeldOpacity(inputs, pose, unread);
+                published->guideOpacity = _HeldOpacity(inputs, reader, unread);
             } else {
-                // _ReadGuideStyle's opacity rule verbatim (connected dial,
-                // invert, floor), every part of it read again.
                 RigExecPublishedPrim scratch;
-                _ReadGuideStyle(prim, pose, &scratch);
+                _ReadGuideStyle(prim, reader, &scratch);
                 published->guideOpacity = scratch.guideOpacity;
             }
         } else if (inputs.hasOpacity) {
@@ -279,22 +276,27 @@ RigExecBridgeGuides::_ReadGuideStyleCached(_GuideInputs &inputs,
 
 const std::map<SdfPath, std::vector<SdfPath>> &
 RigExecBridgeGuides::_JointChildren(const RigExecGuideCall &call,
-                                    const RigExecRigPose &pose)
+                                    const RigExecFrameReader &reader)
 {
     // Namespace nesting is joint hierarchy, which only a recompile can
     // change -- so the map is rebuilt when the compiled rig or the joint
     // count moves, not on every generation.
     const size_t key = call.compiledRigSignature ^
-                       (pose.jointFramesFinal.size() * 0x9E3779B97F4A7C15ull);
+                       (reader.GetCount(RigExecFrameDomain::JointFrameFinal) *
+                        0x9E3779B97F4A7C15ull);
     if (_jointChildrenValid && key == _jointChildrenKey) {
         return _jointChildren;
     }
     _jointChildren.clear();
-    for (const auto &[childPath, childFrame] : pose.jointFramesFinal) {
+    const size_t jointCount =
+        reader.GetCount(RigExecFrameDomain::JointFrameFinal);
+    for (size_t joint = 0; joint < jointCount; ++joint) {
+        const SdfPath &childPath =
+            reader.GetPath(RigExecFrameDomain::JointFrameFinal, joint);
         for (SdfPath ancestor = childPath.GetParentPath();
              !ancestor.IsEmpty() && ancestor != _rigPath;
              ancestor = ancestor.GetParentPath()) {
-            if (pose.jointFramesFinal.count(ancestor)) {
+            if (reader.Has(RigExecFrameDomain::JointFrameFinal, ancestor)) {
                 _jointChildren[ancestor].push_back(childPath);
                 break;
             }
@@ -307,7 +309,7 @@ RigExecBridgeGuides::_JointChildren(const RigExecGuideCall &call,
 
 void
 RigExecBridgeGuides::_FillClothConstraintGuides(
-    const RigExecGuideCall &call, const RigExecRigPose &pose,
+    const RigExecGuideCall &call, const RigExecFrameReader &reader,
     RigExecImagingSnapshot *snapshot)
 {
     // Resolve the same weighted samples as the mover, through its own
@@ -376,7 +378,7 @@ RigExecBridgeGuides::_FillClothConstraintGuides(
     if (_clothGuideBindings.empty())
         return;
 
-    UsdGeomXformCache xforms(pose.time);
+    UsdGeomXformCache xforms(reader.GetTime());
     const SdfPath asset = _rigPath.GetParentPath();
     const GfMatrix4d worldToAsset =
         xforms.GetLocalToWorldTransform(call.stage->GetPrimAtPath(asset))
@@ -389,15 +391,11 @@ RigExecBridgeGuides::_FillClothConstraintGuides(
             return true;
         }
         const SdfPath path = mesh.AppendProperty(_tPoints);
-        const auto moved = pose.movedProperties.find(path);
-        if (moved != pose.movedProperties.end()) {
-            if (!moved->second.IsHolding<VtVec3fArray>())
-                return false;
-            *result = moved->second.UncheckedGet<VtVec3fArray>();
-            return true;
-        }
+        size_t moved = 0;
+        if (reader.FindIndex(RigExecFrameDomain::MovedProperty, path, &moved))
+            return reader.GetMovedValue(moved, result);
         const auto attr = call.stage->GetAttributeAtPath(path);
-        return attr && attr.Get(result, pose.time);
+        return attr && attr.Get(result, reader.GetTime());
     };
     const auto placement = [&](const SdfPath &mesh) {
         const GfMatrix4d base =
@@ -406,13 +404,14 @@ RigExecBridgeGuides::_FillClothConstraintGuides(
         // Apply the nearest driven ancestor, respecting resetXformStack.
         for (SdfPath path = mesh; !path.IsAbsoluteRootPath();
              path = path.GetParentPath()) {
-            const auto driven = pose.providerXforms.find(path);
-            if (driven != pose.providerXforms.end()) {
+            GfMatrix4d driven;
+            if (reader.FindMatrix(RigExecFrameDomain::ProviderTransform, path,
+                                  &driven)) {
                 const GfMatrix4d ancestor =
                     xforms.GetLocalToWorldTransform(
                         call.stage->GetPrimAtPath(path)) *
                     worldToAsset;
-                return base * ancestor.GetInverse() * driven->second;
+                return base * ancestor.GetInverse() * driven;
             }
             const UsdGeomXformable xform(call.stage->GetPrimAtPath(path));
             if (xform && xform.GetResetXformStack())
@@ -452,12 +451,12 @@ RigExecBridgeGuides::_FillClothConstraintGuides(
         published.controlGuideShape = TfToken(SchemaValueText::custom);
         published.controlGuideDrawMode = _tWire;
         published.controlGuidePlaneNormal = _tY;
-        _ReadGuideStyleCached(_GuideInputsFor(call, guide.constraint), pose,
+        _ReadGuideStyleCached(_GuideInputsFor(call, guide.constraint), reader,
                               &published);
         const auto width = call.stage->GetPrimAtPath(guide.constraint)
                                .GetAttribute(_tGuideWireWidth);
         if (width)
-            width.Get(&published.controlGuideWireWidth, pose.time);
+            width.Get(&published.controlGuideWireWidth, reader.GetTime());
         for (size_t i = 0; i < guide.source.size(); ++i) {
             GfVec3f a, b;
             if (!sample(guide.source[i], source, sourceFrame, &a) ||
@@ -473,7 +472,7 @@ RigExecBridgeGuides::_FillClothConstraintGuides(
 
 void
 RigExecBridgeGuides::_FillGuides(const RigExecGuideCall &call,
-                                 const RigExecRigPose &pose,
+                                 const RigExecFrameReader &reader,
                                  RigExecImagingSnapshot *snapshot)
 {
     _SyncGuideCaches(call);
@@ -486,24 +485,30 @@ RigExecBridgeGuides::_FillGuides(const RigExecGuideCall &call,
     // interrupt the same NamespaceAncestor relationship evaluation uses.
     // Cached per compiled rig (see _JointChildren).
     const std::map<SdfPath, std::vector<SdfPath>> &jointChildren =
-        _JointChildren(call, pose);
+        _JointChildren(call, reader);
 
-    for (const auto &[jointPath, frame] : pose.jointFramesFinal) {
+    const size_t jointCount =
+        reader.GetCount(RigExecFrameDomain::JointFrameFinal);
+    for (size_t joint = 0; joint < jointCount; ++joint) {
+        const SdfPath &jointPath =
+            reader.GetPath(RigExecFrameDomain::JointFrameFinal, joint);
+        const RigExecPointFrame frame =
+            reader.GetPointFrame(RigExecFrameDomain::JointFrameFinal, joint);
         _GuideInputs &inputs = _GuideInputsFor(call, jointPath);
-        const double authoredRadius = _GuideRadius(inputs, pose.time);
+        const double authoredRadius = _GuideRadius(inputs, reader.GetTime());
         RigExecPublishedPrim &published = snapshot->prims[jointPath];
         bool any = false;
         const auto children = jointChildren.find(jointPath);
         if (children != jointChildren.end()) {
             for (const SdfPath &childPath : children->second) {
-                const auto child = pose.jointFramesFinal.find(childPath);
-                if (child == pose.jointFramesFinal.end()) {
+                RigExecPointFrame child;
+                if (!reader.FindPointFrame(RigExecFrameDomain::JointFrameFinal,
+                                           childPath, &child)) {
                     continue;
                 }
                 GfMatrix4d linkMatrix(1.0);
                 double linkLength = 0.0;
-                if (!_JointLinkFrame(frame, child->second, &linkMatrix,
-                                     &linkLength)) {
+                if (!_JointLinkFrame(frame, child, &linkMatrix, &linkLength)) {
                     continue;
                 }
                 RigExecPointFrame linkFrame;
@@ -529,10 +534,16 @@ RigExecBridgeGuides::_FillGuides(const RigExecGuideCall &call,
         if (any) {
             published.assetRoot = _rigPath.GetParentPath();
             published.hasGuides = true;
-            _ReadGuideStyleCached(inputs, pose, &published);
+            _ReadGuideStyleCached(inputs, reader, &published);
         }
     }
-    for (const auto &[solverPath, frames] : pose.solverFrames) {
+    const size_t solverCount =
+        reader.GetCount(RigExecFrameDomain::SolverFrames);
+    for (size_t solver = 0; solver < solverCount; ++solver) {
+        const SdfPath &solverPath =
+            reader.GetPath(RigExecFrameDomain::SolverFrames, solver);
+        const TfSpan<const RigExecPointFrame> frames =
+            reader.GetSolverFrames(solver);
         RigExecPublishedPrim &published = snapshot->prims[solverPath];
         // An element has no prim of its own, but the SOLVER does, and it
         // is already where the guide colour and opacity are read from --
@@ -540,7 +551,8 @@ RigExecBridgeGuides::_FillGuides(const RigExecGuideCall &call,
         // schema default is 1.0, so a rig that authors nothing draws what
         // it always drew.
         _GuideInputs &solverInputs = _GuideInputsFor(call, solverPath);
-        const double authoredRadius = _GuideRadius(solverInputs, pose.time);
+        const double authoredRadius =
+            _GuideRadius(solverInputs, reader.GetTime());
         bool any = false;
         for (const RigExecPointFrame &frame : frames) {
             any = _AppendGuideFrame(frame, 0.0, authoredRadius,
@@ -551,7 +563,7 @@ RigExecBridgeGuides::_FillGuides(const RigExecGuideCall &call,
         if (any) {
             published.assetRoot = _rigPath.GetParentPath();
             published.hasGuides = true;
-            _ReadGuideStyleCached(solverInputs, pose, &published);
+            _ReadGuideStyleCached(solverInputs, reader, &published);
         } else if (!published.hasPoints && !published.hasNormals &&
                    !published.hasExtent && !published.hasXform) {
             snapshot->prims.erase(solverPath);
@@ -566,7 +578,7 @@ RigExecBridgeGuides::_FillGuides(const RigExecGuideCall &call,
 // with the rigidized frame.
 void
 RigExecBridgeGuides::_FillControlGuides(const RigExecGuideCall &call,
-                                        const RigExecRigPose &pose,
+                                        const RigExecFrameReader &reader,
                                         RigExecImagingSnapshot *snapshot)
 {
     _SyncGuideCaches(call);
@@ -576,7 +588,13 @@ RigExecBridgeGuides::_FillControlGuides(const RigExecGuideCall &call,
     // only place the anchor gets recorded.
     snapshot->assetRoot = _rigPath.GetParentPath();
 
-    for (const auto &[controlPath, frame] : pose.controlFrames) {
+    const size_t controlCount =
+        reader.GetCount(RigExecFrameDomain::ControlFrame);
+    for (size_t control = 0; control < controlCount; ++control) {
+        const SdfPath &controlPath =
+            reader.GetPath(RigExecFrameDomain::ControlFrame, control);
+        const RigExecPointFrame frame =
+            reader.GetPointFrame(RigExecFrameDomain::ControlFrame, control);
         GfMatrix4d evaluated(1.0);
         const RigExecPointFrame identity;
         if (frame.IsValid() && !frame.IsDegenerate() &&
@@ -611,47 +629,47 @@ RigExecBridgeGuides::_FillControlGuides(const RigExecGuideCall &call,
             bool live = false;
             if (prim) {
                 if (UsdAttribute a = prim.GetAttribute(_tGuideShape)) {
-                    a.Get(&inputs.shape, pose.time);
+                    a.Get(&inputs.shape, reader.GetTime());
                     live = live || _GuideAttrIsLive(a);
                 }
                 if (UsdAttribute a = prim.GetAttribute(_tGuideDrawMode)) {
-                    a.Get(&inputs.drawMode, pose.time);
+                    a.Get(&inputs.drawMode, reader.GetTime());
                     live = live || _GuideAttrIsLive(a);
                 }
                 if (UsdAttribute a = prim.GetAttribute(_tGuidePlaneNormal)) {
-                    a.Get(&inputs.planeNormal, pose.time);
+                    a.Get(&inputs.planeNormal, reader.GetTime());
                     live = live || _GuideAttrIsLive(a);
                 }
                 const TfToken scaleAttrs[3] = {_tGuideScaleX, _tGuideScaleY,
                                                _tGuideScaleZ};
                 for (int axis = 0; axis < 3; ++axis) {
                     if (UsdAttribute a = prim.GetAttribute(scaleAttrs[axis])) {
-                        a.Get(&inputs.scale[axis], pose.time);
+                        a.Get(&inputs.scale[axis], reader.GetTime());
                         live = live || _GuideAttrIsLive(a);
                     }
                 }
                 if (UsdAttribute a = prim.GetAttribute(_tGuideWireWidth)) {
-                    a.Get(&inputs.wireWidth, pose.time);
+                    a.Get(&inputs.wireWidth, reader.GetTime());
                     live = live || _GuideAttrIsLive(a);
                 }
                 if (UsdAttribute a = prim.GetAttribute(_tGuideOffset)) {
-                    a.Get(&inputs.offset, pose.time);
+                    a.Get(&inputs.offset, reader.GetTime());
                     live = live || _GuideAttrIsLive(a);
                 }
                 if (UsdAttribute a = prim.GetAttribute(
                         TfToken(SchemaAttrText::guideOrient))) {
-                    a.Get(&inputs.orient, pose.time);
+                    a.Get(&inputs.orient, reader.GetTime());
                     live = live || _GuideAttrIsLive(a);
                 }
                 if (inputs.shape == TfToken(SchemaValueText::custom)) {
                     if (UsdAttribute a = prim.GetAttribute(
                             TfToken(SchemaAttrText::guidePoints))) {
-                        a.Get(&inputs.customPoints, pose.time);
+                        a.Get(&inputs.customPoints, reader.GetTime());
                         live = live || _GuideAttrIsLive(a);
                     }
                     if (UsdAttribute a = prim.GetAttribute(
                             TfToken(SchemaAttrText::guideCurveVertexCounts))) {
-                        a.Get(&inputs.customCounts, pose.time);
+                        a.Get(&inputs.customCounts, reader.GetTime());
                         live = live || _GuideAttrIsLive(a);
                     }
                 }
@@ -667,17 +685,16 @@ RigExecBridgeGuides::_FillControlGuides(const RigExecGuideCall &call,
             inputs.controlReady = true;
         }
         if (!inputs.guideSource.IsEmpty()) {
-            const RigExecPointFrame *source = nullptr;
-            const auto control = pose.controlFrames.find(inputs.guideSource);
-            const auto joint = pose.jointFramesFinal.find(inputs.guideSource);
-            if (control != pose.controlFrames.end())
-                source = &control->second;
-            else if (joint != pose.jointFramesFinal.end())
-                source = &joint->second;
-            if (!source ||
-                !RigExecPointsToMatrix(identity.points, source->points,
+            RigExecPointFrame source;
+            const bool found =
+                reader.FindPointFrame(RigExecFrameDomain::ControlFrame,
+                                      inputs.guideSource, &source) ||
+                reader.FindPointFrame(RigExecFrameDomain::JointFrameFinal,
+                                      inputs.guideSource, &source);
+            if (!found ||
+                !RigExecPointsToMatrix(identity.points, source.points,
                                        &evaluated) ||
-                !_RigidGuideMatrix(*source, &placement, &evaluatedScale))
+                !_RigidGuideMatrix(source, &placement, &evaluatedScale))
                 continue;
         }
         TfToken shape = inputs.shape;
@@ -771,7 +788,7 @@ RigExecBridgeGuides::_FillControlGuides(const RigExecGuideCall &call,
         published.controlGuidePlaneNormal = inputs.planeNormal;
         published.controlGuideScale = effectiveScale;
         published.controlGuideWireWidth = wireWidth;
-        _ReadGuideStyleCached(inputs, pose, &published);
+        _ReadGuideStyleCached(inputs, reader, &published);
         // Static hidden helpers need no synthetic geometry. Keep live opacity
         // guides present so an animated/connected fade can update in place.
         published.hasControlGuide =
@@ -781,14 +798,19 @@ RigExecBridgeGuides::_FillControlGuides(const RigExecGuideCall &call,
     // Pose readers and manipulators consume final joint frames wherever the
     // joint sits. Preserve full evaluated matrices before guide rigidization.
     const RigExecPointFrame identityFrame;
-    for (const auto &[jointPath, frame] : pose.jointFramesFinal) {
+    const size_t jointCount =
+        reader.GetCount(RigExecFrameDomain::JointFrameFinal);
+    for (size_t joint = 0; joint < jointCount; ++joint) {
+        const RigExecPointFrame frame =
+            reader.GetPointFrame(RigExecFrameDomain::JointFrameFinal, joint);
         if (!frame.IsValid() || frame.IsDegenerate()) {
             continue;
         }
         GfMatrix4d evaluated(1.0);
         if (RigExecPointsToMatrix(identityFrame.points, frame.points,
                                   &evaluated)) {
-            auto &published = snapshot->prims[jointPath];
+            auto &published = snapshot->prims[reader.GetPath(
+                RigExecFrameDomain::JointFrameFinal, joint)];
             published.assetRoot = _rigPath.GetParentPath();
             published.hasControlFrame = true;
             published.controlFrame = evaluated;

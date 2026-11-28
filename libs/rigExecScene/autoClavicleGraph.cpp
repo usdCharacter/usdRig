@@ -1,7 +1,8 @@
 #include "rigExecSchema/schemaNames.h"
 #include "autoClavicleGraph.h"
-#include "rigExec/frameExtraction.h"
-#include "rigExec/pathText.h"
+#include "poseOps.h"
+#include "rigExec/internal/frameExtraction.h"
+#include "rigExec/internal/pathText.h"
 #include "rigExecMath/rbf.h"
 #include "rigExecMath/pointFrame.h"
 #include "pxr/base/gf/quatf.h"
@@ -294,7 +295,7 @@ RigExecRunAutoClavicle(const RigExecBoundAutoClavicle &op,
                  RigExecPointsToMatrix(RigExecIdentityLandmarks(),
                                        frame->points, &matrices[i]);
     }
-    if (!usable) {
+    const auto passThrough = [&] {
         const auto &source = values->values[size_t(op.frames[0])];
         const auto *frame = std::get_if<RigExecPointFrame>(&source.value);
         if (frame)
@@ -304,7 +305,9 @@ RigExecRunAutoClavicle(const RigExecBoundAutoClavicle &op,
             values->Publish(op.output, std::monostate(), true, false, 0,
                             op.unavailable);
         return true;
-    }
+    };
+    if (!usable)
+        return passThrough();
     const auto scalar = [&](size_t index, double fallback) {
         VtValue value;
         if (!RigExecReadGraphTypedRead(op.scalars[index], *values, &value,
@@ -316,6 +319,26 @@ RigExecRunAutoClavicle(const RigExecBoundAutoClavicle &op,
             return double(value.UncheckedGet<float>());
         return fallback;
     };
+    RigExecAutoClavicleOpInputs in;
+    for (size_t i = 0; i < op.frames.size(); ++i)
+        if (op.frames[i] != UINT64_MAX)
+            in.frames[i] = &matrices[i];
+    in.ikBlend = scalar(0, 1 - op.constants.ikValue);
+    in.amount = scalar(1, 1);
+    in.hasLimb = op.hasLimb;
+    if (op.hasLimb) {
+        in.stretch = scalar(2, 1);
+        in.pin = scalar(3, 0);
+        in.upperScale = scalar(4, 1);
+        in.lowerScale = scalar(5, 1);
+        in.softDistance = scalar(6, 0);
+        in.scaleCalibration = scalar(7, 0);
+        in.twistDegrees = scalar(8, 0);
+        in.upperOffset = scalar(9, 0);
+        in.lowerOffset = scalar(10, 0);
+    }
+    double delta[3];
+    GfMatrix4d shifted = matrices[0];
     RigExecAutoClavicleFrames frames;
     frames.targetPosed = matrices[0].data();
     frames.pivotPosed = matrices[1].data();
@@ -328,36 +351,33 @@ RigExecRunAutoClavicle(const RigExecBoundAutoClavicle &op,
         frames.ikTargetPosed = matrices[8].data();
     if (op.frames[9] != UINT64_MAX)
         frames.polePosed = matrices[9].data();
-    frames.ikBlend = scalar(0, 1 - op.constants.ikValue);
-    frames.amount = scalar(1, 1);
+    frames.ikBlend = in.ikBlend;
+    frames.amount = in.amount;
     frames.hasLimb = op.hasLimb;
     if (op.hasLimb) {
-        frames.limb.stretch = scalar(2, 1);
-        frames.limb.pin = scalar(3, 0);
-        frames.limb.upperScale = scalar(4, 1);
-        frames.limb.lowerScale = scalar(5, 1);
-        frames.limb.softDistance = scalar(6, 0);
-        frames.limb.scaleCalibration = scalar(7, 0);
-        frames.twistRadians = scalar(8, 0) * std::acos(-1.0) / 180;
+        frames.limb.stretch = in.stretch;
+        frames.limb.pin = in.pin;
+        frames.limb.upperScale = in.upperScale;
+        frames.limb.lowerScale = in.lowerScale;
+        frames.limb.softDistance = in.softDistance;
+        frames.limb.scaleCalibration = in.scaleCalibration;
+        frames.twistRadians = in.twistDegrees * std::acos(-1.0) / 180;
         frames.limbRestUpper = (matrices[11].ExtractTranslation() -
                                 matrices[10].ExtractTranslation())
                                    .GetLength() +
-                               scalar(9, 0);
+                               in.upperOffset;
         frames.limbRestLower = (matrices[12].ExtractTranslation() -
                                 matrices[11].ExtractTranslation())
                                    .GetLength() +
-                               scalar(10, 0);
+                               in.lowerOffset;
     }
-    double delta[3];
     RigExecAutoClavicleShift(op.constants, frames, delta);
+    shifted.SetTranslateOnly(shifted.ExtractTranslation() +
+                             GfVec3d(delta[0], delta[1], delta[2]));
     if (delta[0] == 0 && delta[1] == 0 && delta[2] == 0)
         values->Copy(op.output, op.frames[0], false);
-    else {
-        auto shifted = matrices[0];
-        shifted.SetTranslateOnly(shifted.ExtractTranslation() +
-                                 GfVec3d(delta[0], delta[1], delta[2]));
+    else
         values->Publish(op.output, RigExecFrameFromMatrix(shifted));
-    }
     return true;
 }
 } // namespace rigExec

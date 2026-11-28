@@ -6,8 +6,8 @@
 #include "registry.h"
 #include "registryInternal.h"
 
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/frameCache.h"
+#include "rigExecPlayback/backgroundScheduler.h"
+#include "rigExec/api/frameCache.h"
 #include "rigExecSchema/schemaTokens.h"
 
 #include "warmIndex.h"
@@ -52,10 +52,7 @@ RigExecImagingRegistry::ClearFrameCache(const SdfPath &rig)
         std::lock_guard<std::mutex> lock(_mutex);
         scheduler = _scheduler;
     }
-    std::unique_lock<std::mutex> fenceLock;
-    if (scheduler) {
-        fenceLock = std::unique_lock<std::mutex>(scheduler->FenceMutex());
-    }
+    RigExecPublishFence fence(scheduler.get());
     // Cancel in its own scope BEFORE locking for the clear: the registry
     // mutex is non-recursive, so cancel-under-clear-lock self-deadlocks.
     CancelFrameGeneration(rig);

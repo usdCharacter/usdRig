@@ -5,6 +5,7 @@
 #include "rigExecGraph/providerRecords.h"
 #include "pxr/base/vt/array.h"
 #include <limits>
+#include <optional>
 #include <set>
 #include <string_view>
 
@@ -81,11 +82,11 @@ std::string RigExecProviderRawKey(const SdfPath &attribute);
 std::string RigExecProviderAttributeKey(const SdfPath &attribute);
 std::string RigExecProviderRoutedKey(const SdfPath &consumer,
                                      const TfToken &phase);
-/// With composeFrames=false, native rest/posed frames are explicit leaves;
-/// each expression kernel can enter the native graph as one ordinary op.
+/// Native rest and posed frames and intervening spaces are external leaves;
+/// each expression kernel enters the native graph as one ordinary op.
 bool RigExecBuildProviderProgram(
-    const RigExecSceneDescriptors &scene, bool composeFrames,
-    RigExecProviderProgram *program, std::string *error = nullptr,
+    const RigExecSceneDescriptors &scene, RigExecProviderProgram *program,
+    std::string *error = nullptr,
     const std::set<SdfPath> *selectedProviders = nullptr);
 /// Clone one connected expression closure into a consumer's selected frame
 /// context. Explicit replacements are typed SSA IDs; computation name remaps
@@ -127,88 +128,10 @@ bool RigExecComposeLocalXform(const VtTokenArray &order,
                               bool missingIsIdentity, GfMatrix4d *local,
                               bool *resets, std::string *error,
                               TfToken *failedOp = nullptr);
-/// The typed store behind RigExecRunProviderArithmetic: present unblocked
-/// values read by type, missing inputs invalidate the output, results carry
-/// their change, count and error state. Shared by the program runner here
-/// and the baked space-step host.
-struct GfProviderStore {
-    RigExecTypedValueStore &store;
-    const GfMatrix4d *ReadMatrix(uint64_t id) const
-    {
-        return store.Read<GfMatrix4d>(id);
-    }
-    const RigExecPointFrame *ReadFrame(uint64_t id) const
-    {
-        return store.Read<RigExecPointFrame>(id);
-    }
-    const double *ReadScalar(uint64_t id) const
-    {
-        return store.Read<double>(id);
-    }
-    const GfVec3d *ReadVector(uint64_t id) const
-    {
-        return store.Read<GfVec3d>(id);
-    }
-    std::string_view ReadToken(uint64_t id) const
-    {
-        // A field read: GetString() on an empty token reads a function-local static.
-        const auto *token = store.Read<TfToken>(id);
-        return token ? std::string_view(token->GetText(), token->size())
-                     : std::string_view();
-    }
-    bool ResetXformStack(uint64_t id) const
-    {
-        if (id >= store.values.size() ||
-            !store.values[size_t(id)].initialized ||
-            store.values[size_t(id)].blocked)
-            return false;
-        const auto &value = store.values[size_t(id)].raw;
-        if (!value.IsHolding<VtTokenArray>())
-            return false;
-        for (const auto &token : value.UncheckedGet<VtTokenArray>())
-            if (token == "!resetXformStack!")
-                return true;
-        return false;
-    }
-    bool Present(uint64_t id) const
-    {
-        return id < store.values.size() && store.values[size_t(id)].initialized;
-    }
-    bool Authoritative(uint64_t id) const
-    {
-        return id < store.values.size() &&
-               store.values[size_t(id)].authoritative;
-    }
-    void Copy(uint64_t to, uint64_t from, bool authoritative)
-    {
-        store.Copy(to, from, authoritative);
-    }
-    void Invalidate(uint64_t to, uint64_t from)
-    {
-        const bool blocked =
-            from < store.values.size() && store.values[size_t(from)].blocked;
-        store.values.at(size_t(to)).raw = VtValue();
-        store.Publish(to, std::monostate(), blocked, false, 0,
-                      "provider input unavailable");
-    }
-    void PublishMatrix(uint64_t id, const GfMatrix4d &value, bool authoritative)
-    {
-        store.Publish(id, value, false, authoritative);
-    }
-    void PublishFrame(uint64_t id, const RigExecPointFrame &value)
-    {
-        store.Publish(id, value);
-    }
-};
-bool RigExecRunProviderOp(const RigExecProviderProgram &program,
-                          uint32_t originalIndex, RigExecTypedValueStore *store,
-                          std::string *error = nullptr);
 /// Whether op \p index of \p program can run at all: it exists, its output
-/// is inside the typed layout, its kind is one the kernels handle, and a
-/// LocalXform or InterveningXform owner was spelled at build. The per-op
-/// half of RigExecRunProviderOp's failures (the other half is the store
-/// binding); on false, \p error gets the message RigExecRunProviderOp
-/// fails with. A provider op that fails here is a pruning root.
+/// is inside the typed layout and its kind is one the kernels handle. On
+/// false, \p error gets the reason. A provider op that fails here is a
+/// pruning root.
 bool RigExecProviderOpStructurallyValid(const RigExecProviderProgram &program,
                                         uint32_t index, std::string *error);
 /// Sampling/overlays publish raw slots before entering the readiness loop.

@@ -4,15 +4,57 @@
 #ifndef RIGEXEC_TEST_FROZEN_PARITY_H
 #define RIGEXEC_TEST_FROZEN_PARITY_H
 
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/cancellation.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include <memory>
 #include <string>
 
-/// Freezes \p evaluator's program, samples \p time's inputs, runs one
+/// What the production runner answered inside RigExecEvaluateFrozen, which
+/// hands back an empty invalid pose whenever the runner declines.
+struct RigExecFrozenRunnerVerdict {
+    bool called = false;
+    bool ran = false;
+    rigExec::RigExecRigPose pose;
+};
+
+/// The production step runner, recording its answer in \p verdict.
+inline rigExec::RigExecFrozenStepRunner
+RigExecRecordingStepRunner(RigExecFrozenRunnerVerdict *verdict)
+{
+    using namespace rigExec;
+    return [verdict, inner = RigExecMakeProductionStepRunner()](
+               const RigExecFrozenEvalContext &context,
+               const RigExecFrameInputs &inputs, RigExecFrozenArena &arena,
+               RigExecRigPose *pose) {
+        verdict->called = true;
+        verdict->ran = inner(context, inputs, arena, pose);
+        if (pose)
+            verdict->pose = *pose;
+        return verdict->ran;
+    };
+}
+
+/// Whether a frozen job at a frame \p live fails stopped as live did:
+/// admitted, the runner ran the frame, its graph failed, and the job answers
+/// an invalid pose with exactly live's lines and nothing published.
+inline bool
+RigExecFrozenFailedInTheWorker(const rigExec::RigExecRigPose &frozen,
+                               const RigExecFrozenRunnerVerdict &verdict,
+                               const rigExec::RigExecRigPose &live)
+{
+    return !live.valid && !live.diagnostics.empty() && !frozen.valid &&
+           verdict.called && verdict.ran && !verdict.pose.valid &&
+           frozen.diagnostics == live.diagnostics &&
+           verdict.pose.diagnostics == live.diagnostics &&
+           frozen.movedProperties.empty() && frozen.jointFramesFinal.empty() &&
+           frozen.weightFields.empty();
+}
+
+/// Freezes \p evaluator's program, samples \p time's inputs at its
+/// interactive overrides, runs one
 /// warming job and compares its pose with a live evaluation at \p time.
 /// False with the reason: a refused freeze or sample, a declined job, or
 /// the first parity mismatches.
@@ -33,14 +75,16 @@ RigExecFrozenMatchesLive(rigExec::RigExecRigEvaluator *evaluator,
         return false;
     }
     RigExecFrameInputs inputs;
-    if (!RigExecSampleFrameInputs(*evaluator, time, {}, &inputs, &error)) {
+    if (!RigExecSampleFrameInputs(*evaluator, time,
+                                  evaluator->GetInteractiveOverrides(), &inputs,
+                                  &error)) {
         *why = "sampling refused: " + error;
         return false;
     }
-    RigExecBackgroundScheduler scheduler(0);
+    RigExecCancellationSource cancellation;
     RigExecFrozenEvalContext context;
     context.compiledRigSignature = evaluator->GetCompiledRigSignature();
-    context.generation = scheduler.CurrentGeneration(rig);
+    context.generation = cancellation.Serial();
     context.slotCount = evaluator->GetBakedProgram()->GetProviderCount();
     context.varyingInputCount = inputs.values.size();
     if (evaluator->GetPublishWeightFields()) {
@@ -51,7 +95,8 @@ RigExecFrozenMatchesLive(rigExec::RigExecRigEvaluator *evaluator,
     }
     context.frozen = frozen.get();
     const RigExecRigPose warmed = RigExecEvaluateFrozen(
-        context, inputs, RigExecMakeProductionStepRunner(), &scheduler, rig);
+        context, inputs, RigExecMakeProductionStepRunner(),
+        cancellation.Token(context.generation));
     if (!warmed.valid) {
         *why = "the warming job was declined";
         return false;
@@ -62,6 +107,58 @@ RigExecFrozenMatchesLive(rigExec::RigExecRigEvaluator *evaluator,
     if (diff.comparisonMismatches != 0 || !diff.diagnostics.empty()) {
         *why = std::to_string(diff.comparisonMismatches) + " mismatch(es)";
         for (const std::string &line : diff.diagnostics) {
+            *why += "; " + line;
+        }
+        return false;
+    }
+    return true;
+}
+
+/// As RigExecFrozenMatchesLive at a time live fails: one warming job fails
+/// in the worker exactly as live did (RigExecFrozenFailedInTheWorker).
+inline bool
+RigExecFrozenFailsAsLive(rigExec::RigExecRigEvaluator *evaluator,
+                         PXR_NS::UsdTimeCode time, std::string *why)
+{
+    using namespace rigExec;
+    std::string error;
+    const RigExecRigPose live = evaluator->Evaluate(time);
+    if (live.valid) {
+        *why = "the live evaluation is valid";
+        return false;
+    }
+    std::shared_ptr<const RigExecFrozenProgram> frozen;
+    if (!RigExecFreezeProgram(*evaluator, &frozen, &error) || !frozen) {
+        *why = "freeze refused: " + error;
+        return false;
+    }
+    RigExecFrameInputs inputs;
+    if (!RigExecSampleFrameInputs(*evaluator, time,
+                                  evaluator->GetInteractiveOverrides(), &inputs,
+                                  &error)) {
+        *why = "sampling refused: " + error;
+        return false;
+    }
+    RigExecCancellationSource cancellation;
+    RigExecFrozenEvalContext context;
+    context.compiledRigSignature = evaluator->GetCompiledRigSignature();
+    context.generation = cancellation.Serial();
+    context.slotCount = evaluator->GetBakedProgram()->GetProviderCount();
+    context.varyingInputCount = inputs.values.size();
+    if (evaluator->GetPublishWeightFields()) {
+        context.flags |= kRigExecFrozenPublishWeightFields;
+    }
+    if (evaluator->GetSolverGuidesEnabled()) {
+        context.flags |= kRigExecFrozenSolverGuidesEnabled;
+    }
+    context.frozen = frozen.get();
+    RigExecFrozenRunnerVerdict verdict;
+    const RigExecRigPose warmed = RigExecEvaluateFrozen(
+        context, inputs, RigExecRecordingStepRunner(&verdict),
+        cancellation.Token(context.generation));
+    if (!RigExecFrozenFailedInTheWorker(warmed, verdict, live)) {
+        *why = "the warming job did not fail as live did";
+        for (const std::string &line : warmed.diagnostics) {
             *why += "; " + line;
         }
         return false;

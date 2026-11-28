@@ -1,10 +1,9 @@
-// RigExecClothMover's compiled rig, per-tick packet and windowed solve, shared by
-// the native mover (libs/rigExec/movers/clothMover.cpp) and the zero-USD
-// runtime, which installs RigExecClothPlaybackKernel for the type itself, so
-// a .rigexec cloth plays wherever the runtime runs. Header-only and
-// USD-free: both sides build the same compiled rig, pack the same packets and run
-// the same solve (rigExecMath/clothKernel.h), so their points agree bit for
-// bit.
+// RigExecClothMover's compiled rig, per-tick packet and windowed solve, shared
+// by the native mover (libs/rigExec/internal/movers/clothMover.cpp) and the
+// runtime, which installs RigExecClothPlaybackKernel for the type itself, so a
+// .rigexec cloth plays wherever the runtime runs. Header-only: both sides build
+// the same compiled rig, pack the same packets and run the same solve
+// (rigExecMath/clothKernel.h), so their points agree bit for bit.
 //
 // The compiled rig is what a compile fixes: the cloth's topology, rest points and
 // pins, the solver settings, the time between frames, and each collider's
@@ -464,6 +463,34 @@ RigExecClothPacket(const RigExecClothCompiledData &compiledRig,
                     double(p.attract),           double(p.thickness),
                     double(p.collisionDepth),    double(p.friction)};
     return true;
+}
+
+/// What a windowed cloth records for one tick: the \p enteringCount
+/// entering points, then each of the \p colliderCount colliders' points in
+/// order, and the RigExecClothParameterCount \p parameters widened to
+/// double. The counts are not checked here: a tick of another shape ends
+/// the history at RigExecClothTicksFromPackets.
+inline void
+RigExecClothCapturePacket(const float *entering, size_t enteringCount,
+                          const float *const *colliders,
+                          const size_t *colliderCounts, size_t colliderCount,
+                          const float *parameters, RigExecWindowPacket *packet)
+{
+    size_t total = 3 * enteringCount;
+    for (size_t k = 0; k < colliderCount; ++k)
+        total += 3 * colliderCounts[k];
+    packet->points.resize(total);
+    float *at = packet->points.data();
+    if (enteringCount)
+        std::memcpy(at, entering, 3 * enteringCount * sizeof(float));
+    at += 3 * enteringCount;
+    for (size_t k = 0; k < colliderCount; ++k) {
+        if (colliderCounts[k])
+            std::memcpy(at, colliders[k],
+                        3 * colliderCounts[k] * sizeof(float));
+        at += 3 * colliderCounts[k];
+    }
+    packet->scalars.assign(parameters, parameters + RigExecClothParameterCount);
 }
 
 /// The window a solve reads from packets \p ticks (oldest first, the last

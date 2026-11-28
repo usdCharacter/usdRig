@@ -9,19 +9,19 @@
 // paths would still move points, just not the same points.
 // argv[1] = path to the examples directory; the codeless schema plugin is
 // expected at <examples>/../plugin/rigExecSchema/resources.
-#include "rigExec/inputReplay.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedTrace.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/types.h"
-#include "rigExec/weightPackets.h"
-#include "rigExec/frameExtraction.h"
-#include "rigExec/frozenContext.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/weightField.h"
+#include "rigExec/internal/bakedTrace.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/api/types.h"
+#include "rigExec/internal/weightPackets.h"
+#include "rigExec/internal/frameExtraction.h"
+#include "rigExec/api/frozenContext.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecPoseCompare.h"
 #include "rigExecFrozenParity.h"
 #include "rigExecRuntimeDrive.h"
-#include "rigExecSceneProgramDrive.h"
 #include "pxr/usd/sdf/layer.h"
 #include <limits>
 #include <algorithm>
@@ -290,10 +290,10 @@ TestSphereWeight()
 }
 
 // Native, frozen and .rigexec agree bit for bit at \p times and the points
-// move; with \p sceneProgram the detached scene program agrees too.
+// move.
 static void
 CheckThreeEvaluators(const UsdStageRefPtr &stage, const std::string &what,
-                     const std::vector<double> &times, bool sceneProgram = true)
+                     const std::vector<double> &times)
 {
     const SdfPath rig("/Asset/Rig");
     RigExecRigEvaluator evaluator(stage, rig);
@@ -351,50 +351,6 @@ CheckThreeEvaluators(const UsdStageRefPtr &stage, const std::string &what,
         }
         CHECK(same);
         CHECK(!player.Reader().GetPoints().empty());
-    }
-    // And the detached scene program, at the integral times, point for point.
-    if (!sceneProgram)
-        return;
-    int first = 0, last = 0;
-    bool integral = false;
-    for (const double time : times) {
-        if (time != std::floor(time))
-            continue;
-        first = integral ? std::min(first, int(time)) : int(time);
-        last = integral ? std::max(last, int(time)) : int(time);
-        integral = true;
-    }
-    if (!integral)
-        return;
-    rigExecSceneProgramDrive::SceneRun scene(stage, rig, first, last);
-    CHECK(scene.ok);
-    if (!scene.ok)
-        return;
-    for (const double time : times) {
-        if (time != std::floor(time))
-            continue;
-        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(time));
-        CHECK(scene.Evaluate(int(time)));
-        for (const auto &[path, value] : pose.movedProperties) {
-            if (!value.IsHolding<VtVec3fArray>())
-                continue;
-            const VtValue got =
-                scene.Final(path, RigExecSceneValueDomain::Points);
-            CHECK(got.IsHolding<VtVec3fArray>());
-            if (!got.IsHolding<VtVec3fArray>())
-                continue;
-            const VtVec3fArray &want = value.UncheckedGet<VtVec3fArray>();
-            const VtVec3fArray &have = got.UncheckedGet<VtVec3fArray>();
-            CHECK(want.size() == have.size());
-            for (size_t i = 0; i < want.size() && i < have.size(); ++i) {
-                if (want[i] != have[i]) {
-                    std::printf("%s scene program at %g: %s[%zu] differs\n",
-                                what.c_str(), time, path.GetText(), i);
-                    ++failures;
-                    break;
-                }
-            }
-        }
     }
 }
 
@@ -792,6 +748,62 @@ TestPlaneWeight()
     }
 }
 
+// An unauthored rigExec:planeAxis falls back to the schema's y whether the
+// plane is read as a packet (base points) or as a field (preceding points),
+// in native, frozen and .rigexec evaluation alike.
+static void
+TestUnauthoredPlaneAxis()
+{
+    const VtVec3fArray base{GfVec3f(0, -1, 0), GfVec3f(0, 0, 0),
+                            GfVec3f(0, 1, 0), GfVec3f(9, -5, 9)};
+    const float expected[4] = {1.0f, 0.5f, 0.0f, 1.0f};
+    std::vector<VtVec3fArray> results;
+    for (const bool field : {false, true}) {
+        Fixture f(base, GfVec3d(0, 2, 0));
+        UsdPrim v = f.MakeVolume("Plane", TfToken("RigExecPlaneWeight"),
+                                 GfVec3d(0, 0, 0), -1.0f, 1.0f);
+        CHECK(!v.GetAttribute(TfToken("rigExec:planeAxis")).HasAuthoredValue());
+        v.GetRelationship(TfToken("rigExec:weightTarget"))
+            .SetMetadata(TfToken("rigExecReadPhase"),
+                         std::string(field ? "preceding" : "base"));
+        f.MakeMover(SdfPath("/Asset/Rig/Movers/M"), v.GetPath());
+        const std::string what = std::string("unauthored planeAxis as a ") +
+                                 (field ? "field" : "packet");
+
+        RigExecRigEvaluator evaluator(f.stage, SdfPath("/Asset/Rig"));
+        std::vector<std::string> errors;
+        CHECK(evaluator.Compile(&errors));
+        const auto *program = evaluator.GetBakedProgram();
+        CHECK(program != nullptr);
+        if (!program)
+            continue;
+        size_t revisions = 0;
+        for (const auto &w :
+             rigExec::RigExecBakedProgramAccess::StepGraph(*program)
+                 .weightFields)
+            revisions +=
+                w.form == RigExecBakedProgramImpl::WeightField::Form::Revision;
+        CHECK(revisions == (field ? 1u : 0u));
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(1));
+        CHECK(pose.valid);
+        const auto it = pose.movedProperties.find(Fixture::Target());
+        CHECK(it != pose.movedProperties.end());
+        if (it == pose.movedProperties.end())
+            continue;
+        const VtVec3fArray points = it->second.Get<VtVec3fArray>();
+        CHECK(points.size() == 4);
+        if (points.size() != 4)
+            continue;
+        for (size_t i = 0; i < 4; ++i)
+            CHECK(Near(points[i], Moved(base[i], expected[i])));
+        results.push_back(points);
+        CheckThreeEvaluators(f.stage, what, {1.0, 2.0});
+    }
+    CHECK(results.size() == 2);
+    if (results.size() == 2)
+        CHECK(results[0] == results[1]);
+}
+
 // rigExec:planeBounds = `bounded` clips the field to the in-plane
 // rectangle, and does nothing else: the same points inside it keep exactly
 // the weights the infinite plane gave them.
@@ -974,14 +986,8 @@ TestPlaneBoundsCompiledRigSplit()
     }
 }
 
-// A bounded plane whose extents are not a rectangle.
-// Both paths reject it -- the exec kernel returns an invalid packet and
-// the CPU oracle reports an error -- and the two rejections have to mean
-// the SAME THING downstream, or the parity harness is comparing a
-// pass-through against a deformation. The failure mode this rules out is
-// the quiet one: a kernel that treated a negative extent as "unbounded"
-// would move points the oracle leaves alone, and nothing but parity
-// would notice.
+// A bounded plane whose extents are not a rectangle stops the frame with the
+// extent's error; it is never read as unbounded or as weight zero.
 static void
 TestPlaneBoundedInvalidExtents()
 {
@@ -1013,21 +1019,14 @@ TestPlaneBoundedInvalidExtents()
         return;
     }
     const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
-    CHECK(pose.valid);
-    // The rejection has to be the EXTENT, not a rig that never built a
-    // revision: without this the case passes on any failure at all.
-    CheckTheHarnessRan("plane-bad-extent", pose);
-    // Rejected means PASS-THROUGH, not "weight zero" and not "unbounded":
-    // the points come out exactly as authored.
-    const auto it = pose.movedProperties.find(Fixture::Target());
-    CHECK(it != pose.movedProperties.end());
-    if (it != pose.movedProperties.end()) {
-        const VtVec3fArray points = it->second.Get<VtVec3fArray>();
-        CHECK(points.size() == 4);
-        for (size_t i = 0; i < points.size() && i < 4; ++i) {
-            CHECK(Near(points[i], f.base[i]));
-        }
-    }
+    CHECK(!pose.valid);
+    CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                      [](const std::string &line) {
+                          return line.find("/Asset/Rig/Weights/Plane: ") == 0 &&
+                                 line.find("VolumeWeights: extents must be "
+                                           "finite and positive") !=
+                                     std::string::npos;
+                      }));
 
     // ...and a valid extent on the same rig recovers, which is what says
     // the rejection was the extent and not a broken compiled rig.
@@ -1136,6 +1135,7 @@ TestCombineMultiply()
         const float w = (1.0f - expected[i]) * 0.5f;
         CHECK(Near(shaped[i], Moved(f.base[i], w)));
     }
+    CheckThreeEvaluators(f.stage, "combine-invert-strength", {0.0, 1.0});
 }
 
 // `max` unions two volumes, which is the composition a rigger reaches for
@@ -1175,6 +1175,7 @@ TestCombineMaxOfTwoSpheres()
     for (size_t i = 0; i < 4; ++i) {
         CHECK(Near(points[i], Moved(f.base[i], expected[i])));
     }
+    CheckThreeEvaluators(f.stage, "combine-max", {0.0, 1.0});
 }
 
 // `subtract` is the order-DEPENDENT mode, and it is the one that proves
@@ -1222,6 +1223,7 @@ TestCombineSubtractOrder()
     for (size_t i = 0; i < 4; ++i) {
         CHECK(Near(points[i], Moved(f.base[i], 0.75f)));
     }
+    CheckThreeEvaluators(f.stage, "combine-subtract", {0.0, 1.0});
 
     // Reverse the authored order and the fold goes NEGATIVE: 0.25 - 1 =
     // -0.75, which rigExec:rangePolicy = "clamp" pulls to zero. This
@@ -1231,6 +1233,10 @@ TestCombineSubtractOrder()
     // they do in two different functions.
     combine.GetRelationship(TfToken("rigExec:inputWeights"))
         .SetTargets({a.GetPath(), b.GetPath()});
+    combine
+        .CreateAttribute(TfToken("rigExec:rangePolicy"),
+                         SdfValueTypeNames->Token)
+        .Set(TfToken("clamp"));
     const VtVec3fArray reversed = f.Resolve("combine-subtract-reversed");
     CHECK(reversed.size() == 4);
     if (reversed.size() != 4)
@@ -1238,6 +1244,7 @@ TestCombineSubtractOrder()
     for (size_t i = 0; i < 4; ++i) {
         CHECK(Near(reversed[i], f.base[i]));
     }
+    CheckThreeEvaluators(f.stage, "combine-subtract-reversed", {0.0, 1.0});
 }
 
 // A combine whose inputs are ALL constant-representation. Nothing among
@@ -1293,6 +1300,7 @@ TestCombineOfConstantInputs()
     for (size_t i = 0; i < 4; ++i) {
         CHECK(Near(points[i], Moved(f.base[i], 0.25f)));
     }
+    CheckThreeEvaluators(f.stage, "combine-all-constant", {0.0, 1.0});
 }
 
 // inputs:invert exchanges the ends of the band, continuously.
@@ -1558,10 +1566,9 @@ TestCurrentPhaseThroughCombine()
     }
 }
 
-// Only the composition SCC is excluded. Its geometry consumer receives an
-// invalid packet and keeps the authored base; an unrelated property still runs.
+// A weight composition cycle refuses the rig at compile, naming the cycle.
 static void
-TestCombineCycleSetsAsideMembers()
+TestCombineCycleRefusesTheRig()
 {
     const VtVec3fArray base{GfVec3f(0, 0, 0), GfVec3f(1, 0, 0)};
     Fixture f(base, GfVec3d(0, 2, 0));
@@ -1571,6 +1578,9 @@ TestCombineCycleSetsAsideMembers()
             TfToken("RigExecCombineWeight"));
         c.CreateRelationship(TfToken("rigExec:weightTarget"))
             .SetTargets({Fixture::Target()});
+        c.CreateAttribute(TfToken("rigExec:representation"),
+                          SdfValueTypeNames->Token)
+            .Set(TfToken("dense"));
         return c;
     };
     const UsdPrim a = makeCombine("CycleA"), b = makeCombine("CycleB");
@@ -1578,77 +1588,20 @@ TestCombineCycleSetsAsideMembers()
         .SetTargets({b.GetPath()});
     b.CreateRelationship(TfToken("rigExec:inputWeights"))
         .SetTargets({a.GetPath()});
-    const SdfPath moverPath("/Asset/Rig/Movers/M");
-    f.MakeMover(moverPath, a.GetPath());
-    const auto channel =
-        f.stage->DefinePrim(SdfPath("/Asset/Rig/Channels/Independent"));
-    const auto scalar =
-        channel.CreateAttribute(TfToken("value"), SdfValueTypeNames->Float);
-    scalar.Set(0.0f);
-    const auto sibling =
-        f.stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Independent"),
-                            TfToken("RigExecFloatMathMover"));
-    sibling.ApplyAPI(TfToken("RigExecMoverAPI"));
-    sibling.CreateRelationship(TfToken("rigExec:moves"))
-        .SetTargets({scalar.GetPath()});
-    sibling
-        .CreateAttribute(TfToken("rigExec:operation"), SdfValueTypeNames->Token)
-        .Set(TfToken("add"));
-    sibling.CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float)
-        .Set(7.0f);
+    f.MakeMover(SdfPath("/Asset/Rig/Movers/M"), a.GetPath());
 
     RigExecRigEvaluator evaluator(f.stage, SdfPath("/Asset/Rig"));
     std::vector<std::string> errors;
-    CHECK(evaluator.Compile(&errors));
-    CHECK(evaluator.GetSkippedOperations().count(moverPath) == 0);
-    CHECK(evaluator.GetBakedProgram());
-    if (!evaluator.GetBakedProgram())
-        return;
-    const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(
-        *evaluator.GetBakedProgram());
-    CHECK(B.opGraph.cycles.size() == 1);
-    bool namedA = false, namedB = false;
-    for (const auto &loop : B.opGraph.cycles)
-        for (const auto &key : loop) {
-            namedA |= key.find(a.GetPath().GetString()) != std::string::npos;
-            namedB |= key.find(b.GetPath().GetString()) != std::string::npos;
-        }
-    CHECK(namedA && namedB);
-    CHECK(B.excludedSteps.size() == 2);
-    for (const auto &step : B.excludedSteps) {
-        CHECK(step.kind == RigExecBakedStepKind::WeightPacket);
-        if (step.kind == RigExecBakedStepKind::WeightPacket) {
-            const auto &path = B.weightObjects[size_t(step.object)].path;
-            CHECK(path == a.GetPath() || path == b.GetPath());
-        }
-    }
-    const auto builds = evaluator.GetBakedProgramBuildCount();
-    const auto check = [&](const RigExecRigPose &pose) {
-        CHECK(pose.valid);
-        const auto points = pose.movedProperties.find(Fixture::Target());
-        CHECK(points != pose.movedProperties.end());
-        if (points != pose.movedProperties.end())
-            CHECK(points->second.IsHolding<VtVec3fArray>() &&
-                  points->second.UncheckedGet<VtVec3fArray>() == base);
-        const auto value = pose.movedProperties.find(scalar.GetPath());
-        CHECK(value != pose.movedProperties.end());
-        if (value != pose.movedProperties.end())
-            CHECK(value->second.IsHolding<float>() &&
-                  value->second.UncheckedGet<float>() == 7.0f);
-        for (const auto &step : B.excludedSteps)
-            if (step.kind == RigExecBakedStepKind::WeightPacket)
-                CHECK(!B.weightPackets[size_t(step.object)].valid);
-    };
-    check(evaluator.Evaluate(UsdTimeCode::Default()));
-    const auto held = evaluator.Evaluate(UsdTimeCode::Default());
-    check(held);
-    CHECK(held.executedOpCount == 0);
-    f.joint.GetAttribute(TfToken("avars:ty")).Set(4.0);
-    check(evaluator.Evaluate(UsdTimeCode::Default()));
-    CHECK(evaluator.GetBakedProgramBuildCount() == builds);
+    evaluator.Compile(&errors);
+    CHECK(!evaluator.GetBakedProgram());
+    const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
+    CHECK(!pose.valid);
     bool diagnosed = false;
-    for (const auto &error : errors)
-        diagnosed |= error.find("operation cycle") != std::string::npos;
+    for (const auto &error : pose.diagnostics)
+        diagnosed |=
+            error.find("operation cycle: ") != std::string::npos &&
+            (error.find(a.GetPath().GetString()) != std::string::npos ||
+             error.find(b.GetPath().GetString()) != std::string::npos);
     CHECK(diagnosed);
 }
 
@@ -1891,10 +1844,13 @@ TestTheOracleReadsTheProgramsPlacements()
     CHECK(E.GetBakedGenerationCount() == 2);
     CHECK(second.comparisonMismatches == 0);
     size_t placements = 0, assembles = 0, fields = 0;
+    const auto fieldStep = [](const RigExecOpTraceEntry &entry) {
+        return entry.kind == "OpNode" && entry.domain == "weight";
+    };
     for (const RigExecOpTraceEntry &entry : E.GetLastOpTrace()) {
         placements += entry.kind == "VolumePlacements";
         assembles += entry.kind == "RevisionStatic";
-        fields += entry.kind == "WeightField";
+        fields += fieldStep(entry);
     }
     // Animated incoming points rerun the field and consumer without replacing placement.
     CHECK(placements == 0);
@@ -1905,7 +1861,7 @@ TestTheOracleReadsTheProgramsPlacements()
     const auto held = E.Evaluate(UsdTimeCode(2));
     CHECK(held.valid && held.movedProperties == second.movedProperties);
     for (const auto &entry : E.GetLastOpTrace()) {
-        CHECK(entry.kind != "WeightField");
+        CHECK(!fieldStep(entry));
         CHECK(entry.kind != "RevisionStatic");
     }
 
@@ -2128,7 +2084,7 @@ CheckPlacementReads(const UsdStageRefPtr &stage, const std::string &label,
     CHECK(expected.size() == 2);
     size_t fieldStep = SIZE_MAX;
     for (size_t pred : graph[smoothStatic].preds) {
-        if (graph[pred].kind != "WeightField")
+        if (graph[pred].kind != "OpNode" || graph[pred].domain != "weight")
             continue;
         CHECK(fieldStep == SIZE_MAX);
         fieldStep = pred;
@@ -2159,6 +2115,68 @@ CheckPlacementReads(const UsdStageRefPtr &stage, const std::string &label,
         }
         CHECK(!preds.count(place));
     }
+}
+
+// A frozen job reads a weight object's point arrays at its own time: the
+// tube's curve is animated, the snapshot is frozen at frame 1 and the job
+// runs frame 10.
+static void
+TestFrozenCurvePointsFollowTheJobTime(const std::string &examplesDir)
+{
+    const UsdStageRefPtr stage =
+        UsdStage::Open(examplesDir + "/11_VolumeWeights.usda");
+    CHECK(stage);
+    if (!stage)
+        return;
+    stage->SetEditTarget(stage->GetSessionLayer());
+    const UsdAttribute curve = stage->GetAttributeAtPath(
+        SdfPath("/VolumeAsset/Drivers/TipCurve.points"));
+    VtVec3fArray points;
+    CHECK(curve && curve.Get(&points));
+    VtVec3fArray moved = points;
+    for (GfVec3f &p : moved)
+        p += GfVec3f(0, -3, 0);
+    CHECK(curve.Set(points, UsdTimeCode(1)));
+    CHECK(curve.Set(moved, UsdTimeCode(10)));
+    const SdfPath rig("/VolumeAsset/Rig");
+    RigExecRigEvaluator evaluator(stage, rig);
+    std::vector<std::string> errors;
+    CHECK(evaluator.Compile(&errors));
+    CHECK(evaluator.Evaluate(UsdTimeCode(1)).valid);
+    std::shared_ptr<const RigExecFrozenProgram> snapshot;
+    std::string error;
+    CHECK(RigExecFreezeProgram(evaluator, &snapshot, &error));
+    RigExecFrameInputs inputs;
+    CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(10), {}, &inputs,
+                                   &error));
+    if (!snapshot)
+        return;
+    RigExecCancellationSource cancellation;
+    RigExecFrozenEvalContext context;
+    context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+    context.generation = cancellation.Serial();
+    context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+    context.varyingInputCount = inputs.values.size();
+    if (evaluator.GetPublishWeightFields())
+        context.flags |= kRigExecFrozenPublishWeightFields;
+    context.frozen = snapshot.get();
+    const RigExecRigPose warmed = RigExecEvaluateFrozen(
+        context, inputs, RigExecMakeProductionStepRunner(),
+        cancellation.Token(context.generation));
+    CHECK(warmed.valid);
+    const RigExecRigPose first = evaluator.Evaluate(UsdTimeCode(1));
+    const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(10));
+    RigExecRigPose unmoved;
+    RigExecComparePoses(first, live, &unmoved);
+    CHECK(unmoved.comparisonMismatches != 0);
+    RigExecRigPose diff;
+    RigExecComparePoses(live, warmed, &diff);
+    if (diff.comparisonMismatches != 0) {
+        int mismatches = 0;
+        rigExecTest::ComparePose(&mismatches, "frozen curve points", live,
+                                 warmed);
+    }
+    CHECK(diff.comparisonMismatches == 0);
 }
 
 // tests/fixtures/volume_placements.usda: two volumes with one placement step
@@ -2616,7 +2634,8 @@ TestResolveAllVtFloatArrayParity()
 }
 
 // A real current-phase producer samples an animated private Token leaf.
-// Unknown authored tokens invalidate the field; recovery must not reuse it.
+// An unknown authored token stops the frame in live and the frozen job
+// declines it; recovery must not reuse the failed field.
 static void
 TestWeightFieldTokenProducer()
 {
@@ -2644,10 +2663,10 @@ TestWeightFieldTokenProducer()
     for (const auto &object :
          rigExec::RigExecBakedProgramAccess::StepGraph(*baked.GetBakedProgram())
              .weightObjects) {
-        CHECK(object.oracleFrozenKeys.size() ==
-              object.oracleLeaves.decl.keys.size());
+        CHECK(object.fieldFrozenKeys.size() ==
+              object.fieldLeaves.decl.keys.size());
         std::set<SdfPath> keys;
-        for (const auto &key : object.oracleFrozenKeys) {
+        for (const auto &key : object.fieldFrozenKeys) {
             CHECK(!key.IsEmpty());
             CHECK(keys.insert(key).second);
         }
@@ -2663,18 +2682,21 @@ TestWeightFieldTokenProducer()
         CHECK(got.diagnostics == want.diagnostics);
         const auto a = got.movedProperties.find(Fixture::Target());
         const auto b = want.movedProperties.find(Fixture::Target());
-        CHECK(a != got.movedProperties.end());
-        CHECK(b != want.movedProperties.end());
-        if (a == got.movedProperties.end() || b == want.movedProperties.end())
-            continue;
-        const auto points = a->second.Get<VtVec3fArray>();
-        CHECK(points == b->second.Get<VtVec3fArray>());
-        if (frame == 1)
-            first = points;
-        if (frame == 2)
-            CHECK(points != first);
-        if (frame == 3)
-            CHECK(points == base);
+        if (frame == 3) {
+            CHECK(!got.valid);
+            CHECK(a == got.movedProperties.end());
+        } else {
+            CHECK(a != got.movedProperties.end());
+            CHECK(b != want.movedProperties.end());
+        }
+        if (a != got.movedProperties.end() && b != want.movedProperties.end()) {
+            const auto points = a->second.Get<VtVec3fArray>();
+            CHECK(points == b->second.Get<VtVec3fArray>());
+            if (frame == 1)
+                first = points;
+            if (frame == 2)
+                CHECK(points != first);
+        }
         std::shared_ptr<const RigExecFrozenProgram> snapshot;
         std::string frozenError;
         CHECK(RigExecFreezeProgram(baked, &snapshot, &frozenError));
@@ -2696,15 +2718,28 @@ TestWeightFieldTokenProducer()
             auto workspace = RigExecCreateFrozenWorkspace(snapshot);
             context.workspace = workspace.get();
             RigExecFrozenRunReport report;
+            RigExecFrozenRunnerVerdict verdict;
             const auto frozen = RigExecEvaluateFrozen(
-                context, inputs, RigExecMakeProductionStepRunner(), nullptr,
-                SdfPath(), &report);
-            CHECK(report.ran);
-            CHECK(frozen.valid == got.valid);
-            CHECK(frozen.diagnostics == got.diagnostics);
-            CHECK(frozen.movedProperties == got.movedProperties);
-            for (const auto &entry : report.region)
-                CHECK(entry.kind != "WeightField");
+                context, inputs, RigExecRecordingStepRunner(&verdict),
+                RigExecCancellationToken(), &report);
+            CHECK(verdict.called);
+            if (frame == 3) {
+                CHECK(report.ran);
+                CHECK(RigExecFrozenFailedInTheWorker(frozen, verdict, got));
+            } else {
+                CHECK(report.ran && frozen.valid);
+                CHECK(frozen.diagnostics == got.diagnostics);
+                CHECK(frozen.movedProperties == got.movedProperties);
+                size_t fieldNodes = 0;
+                for (const auto &entry : report.region)
+                    fieldNodes +=
+                        entry.kind == "OpNode" && entry.domain == "weight";
+                if (fieldNodes)
+                    std::printf("FAIL frame %d: the job frozen at its own "
+                                "frame reran %zu weight node(s)\n",
+                                frame, fieldNodes);
+                CHECK(fieldNodes == 0);
+            }
         }
         const auto *program = baked.GetBakedProgram();
         CHECK(program != nullptr);
@@ -2719,15 +2754,18 @@ TestWeightFieldTokenProducer()
               RigExecBakedProgramImpl::WeightField::Form::Revision);
         CHECK(field.placementPhase ==
               RigExecBakedProgramImpl::WeightField::PlacementPhase::Base);
-        CHECK(field.ok == (frame != 3));
-        if (frame == 3) {
-            CHECK(field.values.empty());
-            CHECK(field.error.find("unknown rigExec:planeAxis invalidAxis") !=
-                  std::string::npos);
-        }
+        if (frame == 3)
+            CHECK(got.diagnostics ==
+                  std::vector<std::string>(
+                      {"/Asset/Rig/Weights/FieldPlane: "
+                       "/Asset/Rig/Weights/FieldPlane: unknown "
+                       "rigExec:planeAxis invalidAxis",
+                       "native program did not complete generation"}));
+        else
+            CHECK(field.ok);
         size_t producers = 0;
         for (const auto &step : B.steps) {
-            if (step.kind != RigExecBakedStepKind::WeightField)
+            if (rigExec::RigExecBakedWeightFieldOf(B, step) < 0)
                 continue;
             ++producers;
             CHECK(!step.externalReads);
@@ -2745,6 +2783,45 @@ TestWeightFieldTokenProducer()
                                       field.volumes[0])) != step.reads.end());
         }
         CHECK(producers == 1);
+    }
+    // A job frozen at frame 4 reruns the field node for frame 1's axis.
+    {
+        std::shared_ptr<const RigExecFrozenProgram> snapshot;
+        std::string frozenError;
+        CHECK(RigExecFreezeProgram(baked, &snapshot, &frozenError));
+        RigExecFrameInputs inputs;
+        CHECK(RigExecSampleFrameInputs(baked, UsdTimeCode(1), {}, {}, &inputs,
+                                       &frozenError));
+        if (snapshot) {
+            RigExecFrozenEvalContext context;
+            context.compiledRigSignature = baked.GetCompiledRigSignature();
+            context.slotCount = baked.GetBakedProgram()->GetProviderCount();
+            context.varyingInputCount = inputs.values.size();
+            context.flags = (baked.GetPublishWeightFields()
+                                 ? kRigExecFrozenPublishWeightFields
+                                 : 0) |
+                            (baked.GetSolverGuidesEnabled()
+                                 ? kRigExecFrozenSolverGuidesEnabled
+                                 : 0);
+            context.frozen = snapshot.get();
+            auto workspace = RigExecCreateFrozenWorkspace(snapshot);
+            context.workspace = workspace.get();
+            RigExecFrozenRunReport report;
+            const auto frozen = RigExecEvaluateFrozen(
+                context, inputs, RigExecMakeProductionStepRunner(),
+                RigExecCancellationToken(), &report);
+            CHECK(report.ran && frozen.valid);
+            size_t fieldNodes = 0;
+            for (const auto &entry : report.region)
+                fieldNodes +=
+                    entry.kind == "OpNode" && entry.domain == "weight";
+            CHECK(fieldNodes > 0);
+            const auto live = baked.Evaluate(UsdTimeCode(1));
+            CHECK(live.valid && frozen.movedProperties == live.movedProperties);
+            const auto moved = frozen.movedProperties.find(Fixture::Target());
+            CHECK(moved != frozen.movedProperties.end() &&
+                  moved->second.Get<VtVec3fArray>() == first);
+        }
     }
     (void)mover;
 }
@@ -2913,6 +2990,7 @@ main(int argc, char **argv)
     TestWeightFieldTokenProducer();
     TestVolumeIgnoresTransformScaleAvars();
     TestPlaneWeight();
+    TestUnauthoredPlaneAxis();
     TestPlaneBounded();
     TestPlaneBoundsCompiledRigSplit();
     TestPlaneBoundedInvalidExtents();
@@ -2923,7 +3001,7 @@ main(int argc, char **argv)
     TestCombineOfConstantInputs();
     TestDefaultCombineNeedsNoRepresentation();
     TestCurrentPhaseThroughCombine();
-    TestCombineCycleSetsAsideMembers();
+    TestCombineCycleRefusesTheRig();
     TestInvert();
     TestAuthoredFalloffCurve();
     TestSamplePhase(/* current */ false);
@@ -2937,6 +3015,7 @@ main(int argc, char **argv)
     TestReleasedOverridePublishesTheProgramsPlacements();
     if (argc > 1) {
         TestVolumePlacementsAreIndependent(argv[1]);
+        TestFrozenCurvePointsFollowTheJobTime(argv[1]);
     }
 
     if (failures) {

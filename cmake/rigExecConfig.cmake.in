@@ -5,11 +5,15 @@
 # overwrite it (CMake <= 3.29 does not save and restore it around
 # find_dependency) -- which would silently re-root these three at the USD
 # prefix instead of ours.
+set(rigExec_WITH_USD @RIGEXEC_WITH_USD@)
+if (rigExec_WITH_USD)
 set_and_check(rigExec_PLUGIN_DIR "@PACKAGE_RIGEXEC_INSTALL_PLUGINDIR@")
 set_and_check(rigExec_PYTHON_DIR "@PACKAGE_RIGEXEC_INSTALL_PYTHONDIR@")
+endif()
 set_and_check(rigExec_LIBRARY_DIR "@PACKAGE_RIGEXEC_INSTALL_LIBDIR@")
 set_and_check(rigExec_DATA_DIR "@PACKAGE_RIGEXEC_INSTALL_DATADIR@")
 
+if (rigExec_WITH_USD)
 # Plugin locations, so a consuming build can compose PXR_PLUGINPATH_NAME
 # without hardcoding the layout.
 set(rigExec_PLUGINPATHS
@@ -19,7 +23,7 @@ set(rigExec_PLUGINPATHS
     "${rigExec_PYTHON_DIR}/rigExecUsdview")
 
 # RigExec's public link interface exposes OpenUSD imported targets (usd, sdf,
-# exec, vdf, ...), so consumers need the same pxr package this was built
+# ...), so consumers need the same pxr package this was built
 # against. The build-time prefix is recorded as a default; override it with
 # rigExec_USD_INSTALL_DIR or the usual CMAKE_PREFIX_PATH / pxr_DIR.
 set(rigExec_USD_INSTALL_DIR "@USD_INSTALL_DIR@"
@@ -48,12 +52,14 @@ else()
     set(CMAKE_PREFIX_PATH "${_rigExec_saved_prefix_path}")
     unset(_rigExec_saved_prefix_path)
 endif()
+endif()  # rigExec_WITH_USD
 
 include("${CMAKE_CURRENT_LIST_DIR}/rigExecTargets.cmake")
 
 include("${CMAKE_CURRENT_LIST_DIR}/rigExecMoverPlugin.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/rigexec_flags.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/rigExecMover.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/rigExecOpPlugin.cmake")
 
 # The USD-free file lists and the exact-FP flags this SDK was built with,
 # for a host that compiles those sources with its own build tool instead of
@@ -73,5 +79,6 @@ set(rigExec_RUNTIME_SOURCES "${rigExec_DATA_DIR}/runtimeSources.txt")
 set(rigExec_RUNTIME_INCLUDES "${rigExec_DATA_DIR}/runtimeIncludes.txt")
 set(rigExec_EVALCORE_SOURCES "${rigExec_DATA_DIR}/evalCoreSources.txt")
 set(rigExec_EVALCORE_INCLUDES "${rigExec_DATA_DIR}/evalCoreIncludes.txt")
+set(rigExec_OPCORE_SOURCES "${rigExec_DATA_DIR}/opCoreSources.txt")
 
 check_required_components(rigExec)

@@ -37,11 +37,11 @@ git -C thirdparty/godot-cpp submodule update --init --recursive
 python demo/setup_rolling.py --build
 The SConstruct takes its exact-FP flags and its USD-free source and include
 lists from one directory of the installed SDK: exactFpFlags.txt with
-runtimeSources.txt, evalCoreSources.txt, runtimeIncludes.txt and
-evalCoreIncludes.txt, in the data directory the SDK names as rigExec_DATA_DIR
+runtimeSources.txt, evalCoreSources.txt, opCoreSources.txt, runtimeIncludes.txt
+and evalCoreIncludes.txt, in the data directory the SDK names as rigExec_DATA_DIR
 in its installed package file. A manifest entry starting
 runtime-generated/ resolves beside the manifests; every other entry
-resolves under the usdRig checkout. With no installed SDK the same five
+resolves under the usdRig checkout. With no installed SDK the same six
 files are read from a configured usdRig build tree. Pass
 sdk_root=<usd-install>, usdrig_root=<usdRig> or manifest_dir=<that
 directory> when those siblings are not the right pair.

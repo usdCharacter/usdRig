@@ -1,12 +1,14 @@
-// USD-free playback of the checked-in minimal program.
-// The bytes are the smallest file the format validator accepts: empty
-// tables, rig path /Rig, no steps. This test rebuilds that file and
-// compares it to the fixture, opens and executes the fixture, and checks
-// that malformed buffers are refused.
+// Playback of the checked-in minimal program. With RIGEXEC_UPDATE_FIXTURES=1 it
+// rewrites minimal.rigexec instead. The bytes are the smallest file the format
+// validator accepts: empty tables, rig path /Rig, no steps. This test rebuilds
+// that file and compares it to the fixture, opens and executes the fixture, and
+// checks that malformed buffers are refused.
 #include "rigExecBinary/format.h"
+#include "rigExecBinary/manifest.h"
 #include "rigExecRuntime/runtime.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -34,6 +36,7 @@ MinimalFile()
     using namespace rigExec::fb;
     RigExecWireFile file;
     file.formatVersion = RigExecFormatVersion;
+    file.manifest = RigExecManifestBuild(RigExecManifestCurrent());
     file.names = {"", "Rig"};
     file.paths = {PathNode(0, 0, PathKind::None),
                   PathNode(0, 1, PathKind::Prim)};
@@ -80,6 +83,15 @@ main(int argc, char **argv)
                                        {}};
     std::vector<uint8_t> rebuilt;
     std::string error;
+    const char *update = std::getenv("RIGEXEC_UPDATE_FIXTURES");
+    if (update && *update == '1' &&
+        rigExec::RigExecFormatWrite(MinimalFile(), &rebuilt, &error)) {
+        std::ofstream(argv[1], std::ios::binary)
+            .write(reinterpret_cast<const char *>(rebuilt.data()),
+                   std::streamsize(rebuilt.size()));
+        std::cerr << "rewrote " << argv[1] << "\n";
+        return 0;
+    }
     if (!rigExec::RigExecFormatWrite(MinimalFile(), &rebuilt, &error) ||
         rebuilt != fixture) {
         std::cerr << "fixture is not the minimal program: " << error << "\n";
@@ -94,6 +106,23 @@ main(int argc, char **argv)
     if (!reader->GetPoints().empty() || !reader->GetJointMatrices().empty()) {
         std::cerr << "minimal program published outputs\n";
         return 1;
+    }
+    // The same program at the format before this one is refused: Open reads
+    // only the current format.
+    {
+        rigExec::fb::RigExecWireFile older = MinimalFile();
+        older.formatVersion = rigExec::RigExecFormatVersion - 1;
+        flatbuffers::FlatBufferBuilder builder;
+        rigExec::fb::FinishFileBuffer(builder,
+                                      rigExec::fb::File::Pack(builder, &older));
+        error.clear();
+        if (rigExec::RigExecRuntimeReader::Open(builder.GetBufferPointer(),
+                                                builder.GetSize(), &error) ||
+            error.find("unsupported .rigexec format version") ==
+                std::string::npos) {
+            std::cerr << "an older format was not refused: " << error << "\n";
+            return 1;
+        }
     }
     const std::vector<uint8_t> foreign{'R', 'I', 'G', 'X', 'n', 'o', 't', ' ',
                                        'a', ' ', 'r', 'i', 'g', 'e', 'x', 'e',

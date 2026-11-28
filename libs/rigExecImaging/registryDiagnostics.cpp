@@ -8,9 +8,9 @@
 
 #include "registryInternal.h"
 
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/frameCache.h"
-#include "rigExec/profiler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
+#include "rigExec/api/frameCache.h"
+#include "rigExec/api/profiler.h"
 
 #include "pxr/base/tf/token.h"
 #include "pxr/usd/sdf/path.h"

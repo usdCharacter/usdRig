@@ -6,16 +6,18 @@
 // evaluator with the same value authored in the session layer.
 #include "rigExecBake/bake.h"
 #include "rigExecBake/staticReport.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/moverGraph.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/moverGraph.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBinary/format.h"
 #include "rigExecRuntime/runtime.h"
 #include "rigExecRuntime/store.h"
 #include "rigExecRuntime/stageArrayInputs.h"
 #include "rigExecSampler/inputSampler.h"
 #include "rigExecExampleFixtures.h"
+#include "rigExecFrozenParity.h"
 
 #include "pxr/base/gf/math.h"
 #include "pxr/base/gf/quatf.h"
@@ -130,19 +132,55 @@ _NativeRevisionSteps(const RigExecRigEvaluator &evaluator)
             continue;
         }
         const RigExecBakedStep &step = B.steps[B.opGraph.ops[c].originalIndex];
-        const bool fuse = step.kind == RigExecBakedStepKind::RevisionFuse;
-        if ((!fuse && step.kind != RigExecBakedStepKind::RevisionChunk) ||
-            step.object < 0 || size_t(step.object) >= B.revisionIndex.size()) {
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        const bool fuse = id.kind == RigExecBakedStepKind::RevisionFuse;
+        if ((!fuse && id.kind != RigExecBakedStepKind::RevisionChunk) ||
+            id.object < 0 || size_t(id.object) >= B.revisionIndex.size()) {
             continue;
         }
-        const auto &at = B.revisionIndex[size_t(step.object)];
+        const auto &at = B.revisionIndex[size_t(id.object)];
         steps.emplace(fuse,
                       B.chains[size_t(at.first)]
                           .revisions[size_t(at.second)]
                           .moverPath.GetString(),
-                      fuse ? 0 : int(step.part));
+                      fuse ? 0 : int(id.part));
     }
     return steps;
+}
+
+// A revision's group step: its RevisionChunk, or the op range step that
+// stores the group; false for any other step.
+static bool
+_GroupStep(const fb::RigExecWireFile &file, const fb::RigExecWireStep &step,
+           int32_t *revision, int *part)
+{
+    const fb::RigExecWireDomainGeometry &geometry = *file.geometry;
+    if (step.kind == fb::StepKind::RevisionChunk) {
+        if (step.object < 0 ||
+            size_t(step.object) >= geometry.revisionIndex.size())
+            return false;
+        *revision = step.object;
+        *part = step.part;
+        return true;
+    }
+    if (step.kind != fb::StepKind::OpChainRange)
+        return false;
+    for (const fb::SlotRange &write : step.writes) {
+        if (write.domain() != fb::SlotDomain::RevisionOut ||
+            write.end() != write.begin() + 1)
+            continue;
+        for (size_t r = 0; r < geometry.revisionChunkBase.size(); ++r) {
+            const int32_t base = geometry.revisionChunkBase[r];
+            if (base >= 0 && write.begin() >= uint32_t(base) &&
+                write.begin() - uint32_t(base) <
+                    uint32_t(geometry.revisionChunkCount[r])) {
+                *revision = int32_t(r);
+                *part = int(write.begin() - uint32_t(base));
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 // The revision steps the runtime's last Execute ran.
@@ -158,19 +196,20 @@ _RuntimeRevisionSteps(const fb::RigExecWireFile &file,
     for (size_t s = 0; s < file.steps.size(); ++s) {
         const fb::RigExecWireStep &step = file.steps[s];
         const bool fuse = step.kind == fb::StepKind::RevisionFuse;
-        if ((!fuse && step.kind != fb::StepKind::RevisionChunk) ||
-            step.object < 0 ||
-            size_t(step.object) >= geometry.revisionIndex.size() ||
+        int32_t revision = step.object;
+        int part = 0;
+        if ((!fuse && !_GroupStep(file, step, &revision, &part)) ||
+            revision < 0 || size_t(revision) >= geometry.revisionIndex.size() ||
             !reader.GetStepRanForTesting(s)) {
             continue;
         }
-        const auto &at = geometry.revisionIndex[size_t(step.object)];
+        const auto &at = geometry.revisionIndex[size_t(revision)];
         steps.emplace(
             fuse,
             RigExecFormatPathText(file, geometry.chains[size_t(at.first)]
                                             .revisions[size_t(at.second)]
                                             .moverPath),
-            fuse ? 0 : int(step.part));
+            part);
     }
     return steps;
 }
@@ -188,7 +227,8 @@ static void
 _TestStage(const std::string &name, const UsdStageRefPtr &stage,
            const std::vector<double> &frames,
            std::vector<std::vector<RigExecRuntimePoints>> *played = nullptr,
-           bool staticClass = false, bool exportRoles = false)
+           bool staticClass = false, bool exportRoles = false,
+           const std::vector<double> &stops = {})
 {
     const SdfPath rigPath = _FindRig(stage);
     CHECK(!rigPath.IsEmpty() && !frames.empty());
@@ -228,6 +268,25 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
     int compared = 0;
     for (double frame : times) {
         const RigExecRigPose pose = evaluator.Evaluate(frame);
+        // A frame an op fails stops native and runtime with the same error.
+        if (std::find(stops.begin(), stops.end(), frame) != stops.end()) {
+            const bool played = player.Play(frame, &error);
+            const bool same = !pose.valid && !played &&
+                              !pose.diagnostics.empty() &&
+                              pose.diagnostics.front() == error;
+            if (!same) {
+                std::printf("%s frame %g: expected one error, native %s, "
+                            "runtime %s\n",
+                            name.c_str(), frame,
+                            pose.diagnostics.empty()
+                                ? "none"
+                                : pose.diagnostics.front().c_str(),
+                            played ? "played" : error.c_str());
+            }
+            CHECK(same);
+            failed = failed || !same;
+            continue;
+        }
         if (!pose.valid) {
             CHECK(false);
             failed = true;
@@ -1313,8 +1372,9 @@ TestChainPointVersions()
 {
     TfSetenv("RIGEXEC_VERIFY_CHAIN_VERSIONS", "1");
     TfSetenv("RIGEXEC_VERIFY_EPILOGUE_LISTS", "1");
-    _TestStage("chain revision passes through and recovers",
-               _StackedChainStage(1.0f, true), {1, 2, 3, 2, 1, 3});
+    _TestStage("chain revision stops and recovers",
+               _StackedChainStage(1.0f, true), {1, 2, 3, 2, 1, 3}, nullptr,
+               false, false, {2.0});
     _TestStage("chain revision keeps its unmoved points",
                _StackedChainStage(0.0f, false), {1, 2, 3, 3, 1});
     TfSetenv("RIGEXEC_VERIFY_CHAIN_VERSIONS", "0");
@@ -1626,7 +1686,7 @@ TestCurrentPhaseThroughCombine()
 static bool
 _RunDiagnostics(const UsdStageRefPtr &stage, const std::vector<double> &frames,
                 std::vector<std::vector<std::string>> *diagnostics,
-                std::string *error)
+                std::string *error, std::vector<std::string> *errors = nullptr)
 {
     std::vector<uint8_t> bytes;
     {
@@ -1640,10 +1700,19 @@ _RunDiagnostics(const UsdStageRefPtr &stage, const std::vector<double> &frames,
         return false;
     }
     for (double frame : frames) {
-        if (!player.Play(frame, error)) {
-            return false;
+        std::string why;
+        if (!player.Play(frame, &why)) {
+            if (!errors) {
+                *error = why;
+                return false;
+            }
+            diagnostics->emplace_back();
+            errors->push_back(why);
+            continue;
         }
         diagnostics->push_back(player->GetDiagnostics());
+        if (errors)
+            errors->emplace_back();
     }
     return true;
 }
@@ -1676,8 +1745,8 @@ struct _RangeChainOptions {
 // basis) move the \p count points of /Asset/Shape.points, a box inside the
 // 2 x 2 x 3 cage; above the default 4096 points a range
 // (RIGEXEC_BAKED_CHUNK_VERTS) all seven are cut into ranges, three for 10000
-// points. A matrix mover on the three points of /Asset/Small.points stays
-// whole. The points hold a default, which Build counts, and samples at
+// points. A matrix mover on the three points of /Asset/Small.points runs as
+// an op chain of one vertex group. The points hold a default, which Build counts, and samples at
 // frames 1 to 3 that equal it unless \p options.baseMovesInRangeZero.
 static UsdStageRefPtr
 _RangeChainStage(size_t count, const _RangeChainOptions &options)
@@ -1896,9 +1965,9 @@ _RangeChainStage(size_t count, const _RangeChainOptions &options)
 // ordered diagnostics and operation counts bit for bit -- with
 // RIGEXEC_VERIFY_CHAIN_VERSIONS on, read at Open, which fails any run whose
 // range or join versions and their points' bytes disagree on a change: a
-// revision that passes through at frame 2 and recovers, base points that
-// move in range 0 alone, and a sparse first mover whose other ranges pass
-// through.
+// revision whose default weight stops frame 2 with an error in both, then
+// recovers; base points that move in range 0 alone; and a sparse first
+// mover whose other ranges pass through.
 static void
 TestRangeChainPlays()
 {
@@ -1908,8 +1977,9 @@ TestRangeChainPlays()
     _RangeChainOptions failing;
     failing.failMiddle = true;
     const std::vector<double> frames = {1, 2, 3, 2, 1, 3};
-    _TestStage("range chain passes through and recovers",
-               _RangeChainStage(10000, failing), frames);
+    _TestStage("range chain stops and recovers",
+               _RangeChainStage(10000, failing), frames, nullptr, false, false,
+               {2.0});
     _RangeChainOptions base;
     base.baseMovesInRangeZero = true;
     _TestStage("range chain base moves in range 0",
@@ -1921,20 +1991,28 @@ TestRangeChainPlays()
     TfSetenv("RIGEXEC_VERIFY_CHAIN_VERSIONS", "0");
     _SetEnv("RIGEXEC_VERIFY_CHAIN_VERSIONS", verifyCrt);
 
-    // M1's refusal is reported at frame 2 and nowhere else; every other
-    // mover, the wires and the dense matrix among them, applies.
+    // M1's default weight stops frame 2 with its error and nothing else;
+    // every other mover, the wires and the dense matrix among them, applies.
     std::vector<std::vector<std::string>> diagnostics;
+    std::vector<std::string> errors;
     std::string error;
     CHECK(_RunDiagnostics(_RangeChainStage(10000, failing), frames,
-                          &diagnostics, &error));
+                          &diagnostics, &error, &errors));
     if (!error.empty()) {
         std::printf("range chain diagnostics: %s\n", error.c_str());
     }
-    const std::string failed = "MoverFailed /Asset/Rig/Movers/M1: execution "
-                               "rejected its inputs; revision passed through";
-    CHECK(diagnostics.size() == frames.size());
-    for (size_t i = 0; i < diagnostics.size() && i < frames.size(); ++i) {
-        CHECK(_HasLine(diagnostics[i], failed) == (frames[i] == 2.0));
+    const std::string stop = "/Asset/Rig/Movers/M1: ";
+    const std::string why =
+        "MatrixDeform: a default weight is not finite or outside [0, 1]";
+    CHECK(diagnostics.size() == frames.size() &&
+          errors.size() == frames.size());
+    for (size_t i = 0;
+         i < diagnostics.size() && i < errors.size() && i < frames.size();
+         ++i) {
+        const bool stopped = errors[i].rfind(stop, 0) == 0 &&
+                             errors[i].find(why) != std::string::npos;
+        CHECK(stopped == (frames[i] == 2.0));
+        CHECK(errors[i].empty() == (frames[i] != 2.0));
         for (const std::string &line : diagnostics[i]) {
             const bool other =
                 line.rfind("MoverFailed ", 0) == 0 &&
@@ -1949,8 +2027,9 @@ TestRangeChainPlays()
 }
 
 // Open sets the Range role on exactly the file's Range revisions (unchunked,
-// two or more chunks: the chain's vertex groups, ten for 10000 points at the
-// default 1024 per group), each its own point source; and the groups cut off
+// range_role, the chunks the chain's vertex groups: ten for 10000 points at
+// the default 1024 per group, one for Small's three), each its own point
+// source; and the groups cut off
 // apart. M0's static sparse weight names points in group 0 alone, so M0 is
 // gated to that group's one step, and WireSparse's (points 0 to 3783) to
 // groups 0 to 3. At frame 2 M0's step runs and every revision after it in
@@ -1982,18 +2061,19 @@ TestRangeChainRolesAndCutoff()
     const fb::RigExecWireDomainGeometry &geometry = *file->geometry;
     // Each cut revision's mover, by its position in its chain.
     std::map<std::string, size_t> position;
-    size_t ranges = 0, wholes = 0;
+    size_t ranges = 0, wholes = 0, oneGroup = 0;
     for (const fb::RigExecWireChain &chain : geometry.chains) {
         for (size_t r = 0; r < chain.revisions.size(); ++r) {
             const fb::RigExecWireRevision &revision = chain.revisions[r];
             const std::string mover =
                 RigExecFormatPathText(*file, revision.moverPath);
-            const bool expected =
-                !revision.chunked && revision.chunks.size() >= 2;
+            const bool expected = RigExecFormatIsRangeRevision(revision);
             bool role = !expected, own = !expected;
             CHECK(player->GetRangeRoleForTesting(mover, &role, &own));
             CHECK(role == expected && own == expected);
-            if (expected) {
+            if (expected && revision.chunks.size() == 1) {
+                ++oneGroup;
+            } else if (expected) {
                 ++ranges;
                 CHECK(revision.chunks.size() == 10);
                 position[mover] = r;
@@ -2003,27 +2083,30 @@ TestRangeChainRolesAndCutoff()
         }
     }
     // M0, M1, M2, the lattice, Half and the two wires are cut; Small's
-    // mover is whole.
-    CHECK(ranges == 7 && wholes == 1);
+    // matrix runs as an op chain over one group.
+    CHECK(ranges == 7 && wholes == 0 && oneGroup == 1);
     // The group steps each cut revision has: one per written group.
     std::map<std::string, std::set<int>> parts;
     for (size_t s = 0; s < file->steps.size(); ++s) {
         const fb::RigExecWireStep &step = file->steps[s];
-        if (step.kind != fb::StepKind::RevisionChunk || step.object < 0 ||
-            size_t(step.object) >= geometry.revisionIndex.size()) {
+        int32_t revision = 0;
+        int part = 0;
+        if (!_GroupStep(*file, step, &revision, &part)) {
             continue;
         }
-        const auto &at = geometry.revisionIndex[size_t(step.object)];
+        const auto &at = geometry.revisionIndex[size_t(revision)];
         parts[RigExecFormatPathText(*file, geometry.chains[size_t(at.first)]
                                                .revisions[size_t(at.second)]
                                                .moverPath)]
-            .insert(step.part);
+            .insert(part);
     }
     CHECK(parts["/Asset/Rig/Movers/M0"] == std::set<int>({0}));
     CHECK(parts["/Asset/Rig/Movers/WireSparse"] == std::set<int>({0, 1, 2, 3}));
-    for (const char *ungated : {"M1", "M2", "Lattice", "Half", "WireDense"}) {
+    for (const char *ungated : {"M1", "M2", "Half", "WireDense"}) {
         CHECK(parts[std::string("/Asset/Rig/Movers/") + ungated].size() == 10);
     }
+    // The lattice runs in M2's range steps: one segment of their op chain.
+    CHECK(parts["/Asset/Rig/Movers/Lattice"].empty());
     const auto first = position.find("/Asset/Rig/Movers/M0");
     CHECK(first != position.end());
     if (ranges != 7 || first == position.end()) {
@@ -2036,11 +2119,12 @@ TestRangeChainRolesAndCutoff()
     size_t checked = 0;
     for (size_t s = 0; s < file->steps.size(); ++s) {
         const fb::RigExecWireStep &step = file->steps[s];
-        if (step.kind != fb::StepKind::RevisionChunk || step.object < 0 ||
-            size_t(step.object) >= geometry.revisionIndex.size()) {
+        int32_t revision = 0;
+        int part = 0;
+        if (!_GroupStep(*file, step, &revision, &part)) {
             continue;
         }
-        const auto &at = geometry.revisionIndex[size_t(step.object)];
+        const auto &at = geometry.revisionIndex[size_t(revision)];
         const std::string mover =
             RigExecFormatPathText(*file, geometry.chains[size_t(at.first)]
                                              .revisions[size_t(at.second)]
@@ -2050,17 +2134,17 @@ TestRangeChainRolesAndCutoff()
             continue;
         }
         const bool want = found->second == first->second ||
-                          (found->second > first->second && step.part == 0);
+                          (found->second > first->second && part == 0);
         const bool ran = player->GetStepRanForTesting(s);
         CHECK(ran == want);
         if (ran != want) {
             std::printf("%s: %s range %d %s at frame 2\n", name, mover.c_str(),
-                        int(step.part), ran ? "ran" : "did not run");
+                        part, ran ? "ran" : "did not run");
         }
         ++checked;
     }
-    // 1 + 4 gated steps and 10 for each of the other five.
-    CHECK(checked == 55);
+    // 1 + 4 gated steps and 10 for each of the other four.
+    CHECK(checked == 45);
     std::printf("%s: %zu group step(s) checked\n", name, checked);
 }
 
@@ -2280,9 +2364,9 @@ TestGroupChainPlays()
     const _ScopedEnv verify("RIGEXEC_VERIFY_CHAIN_VERSIONS", "1");
     _GroupChainOptions failing;
     failing.failMiddle = true;
-    _TestStage("group chain passes through and recovers",
-               _GroupChainStage(failing), {1, 2, 3, 2, 1, 3}, nullptr,
-               /*staticClass=*/false, /*exportRoles=*/true);
+    _TestStage("group chain stops and recovers", _GroupChainStage(failing),
+               {1, 2, 3, 2, 1, 3}, nullptr,
+               /*staticClass=*/false, /*exportRoles=*/true, {2.0});
     _GroupChainOptions one;
     one.onlyJ3 = true;
     _TestStage("group chain moves one joint", _GroupChainStage(one),
@@ -2293,9 +2377,10 @@ TestGroupChainPlays()
 // A 12 x 12 grid of quads under Gated (a matrix mover on Moving, tx 1, 2, 3
 // at frames 1-3, weighted to row 0 alone), a Smooth mover, a second Smooth
 // or, with \p mush, a delta mush of three iterations, and After (a matrix
-// mover on Still), in that order.
+// mover on Still), in that order. With \p afterFails, After's default
+// weight is 2 at frame 2.
 static UsdStageRefPtr
-_SmoothChainStage(bool mush = false)
+_SmoothChainStage(bool mush = false, bool afterFails = false)
 {
     constexpr int kFrames = 3, kSide = 12;
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
@@ -2370,6 +2455,12 @@ _SmoothChainStage(bool mush = false)
     after.GetRelationship(TfToken("rigExec:transform"))
         .SetTargets({still.GetPath()});
     after.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
+    if (afterFails) {
+        for (int frame = 1; frame <= kFrames; ++frame) {
+            after.GetAttribute(TfToken("inputs:defaultWeight"))
+                .Set(frame == 2 ? 2.0f : 1.0f, UsdTimeCode(frame));
+        }
+    }
     if (mush) {
         mover("Mush", "RigExecDeltaMushMover")
             .CreateAttribute(TfToken("inputs:iterations"),
@@ -2403,6 +2494,41 @@ TestSmoothChainPlays()
     _TestStage("delta mush chain reads its region", _SmoothChainStage(true),
                {1, 2, 3, 2, 1, 3}, nullptr, /*staticClass=*/false,
                /*exportRoles=*/true);
+}
+
+// After shares the range chain segment of the Smooth or the delta mush
+// before it, which it reads point by point: its op error at frame 2 names
+// After, not the segment's first mover, in native, frozen and runtime
+// evaluation alike, and the next frame recovers.
+static void
+TestSharedSegmentErrorNamesItsMover()
+{
+    const _ScopedEnv chunks("RIGEXEC_BAKED_CHUNK_VERTS", "16");
+    const _ScopedEnv groups("RIGEXEC_BAKED_GROUP_VERTS", "8");
+    for (const bool mush : {false, true}) {
+        const UsdStageRefPtr stage = _SmoothChainStage(mush, true);
+        const std::string name =
+            mush ? "delta mush segment error" : "smooth segment error";
+        _TestStage(name, stage, {1, 2, 3}, nullptr, /*staticClass=*/false,
+                   /*exportRoles=*/true, {2.0});
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        evaluator.SetBakedRoleMode(RigExecBakedRoleMode::Export);
+        CHECK(evaluator.Evaluate(UsdTimeCode(1)).valid);
+        const RigExecRigPose failed = evaluator.Evaluate(UsdTimeCode(2));
+        const std::string first =
+            failed.diagnostics.empty() ? "" : failed.diagnostics.front();
+        const bool named = !failed.valid &&
+                           first.rfind("/Asset/Rig/Movers/After: ", 0) == 0 &&
+                           first.find("default weight") != std::string::npos;
+        if (!named)
+            std::printf("%s: native said '%s'\n", name.c_str(), first.c_str());
+        CHECK(named);
+        std::string why;
+        CHECK(RigExecFrozenFailsAsLive(&evaluator, UsdTimeCode(2), &why));
+        if (!why.empty())
+            std::printf("%s: frozen %s\n", name.c_str(), why.c_str());
+        CHECK(evaluator.Evaluate(UsdTimeCode(3)).valid);
+    }
 }
 
 // The file's format-20 roles as Open reads them, and the per-group cutoff.
@@ -2491,15 +2617,16 @@ TestGroupChainRolesAndCutoff()
     // One step per written group: Gated has group 0's alone.
     std::map<std::string, std::set<int>> parts;
     for (const fb::RigExecWireStep &step : file->steps) {
-        if (step.kind != fb::StepKind::RevisionChunk || step.object < 0 ||
-            size_t(step.object) >= geometry.revisionIndex.size()) {
+        int32_t revision = 0;
+        int part = 0;
+        if (!_GroupStep(*file, step, &revision, &part)) {
             continue;
         }
-        const auto &at = geometry.revisionIndex[size_t(step.object)];
+        const auto &at = geometry.revisionIndex[size_t(revision)];
         parts[RigExecFormatPathText(*file, geometry.chains[size_t(at.first)]
                                                .revisions[size_t(at.second)]
                                                .moverPath)]
-            .insert(step.part);
+            .insert(part);
     }
     CHECK(parts[movers + "Gated"] == std::set<int>({0}));
     for (const char *every : {"Blend", "Linear", "Middle", "Dual"}) {
@@ -2555,13 +2682,14 @@ TestGroupChainRolesAndCutoff()
     size_t checked = 0;
     for (size_t s = 0; s < file->steps.size(); ++s) {
         const fb::RigExecWireStep &step = file->steps[s];
-        if ((step.kind != fb::StepKind::RevisionChunk &&
-             step.kind != fb::StepKind::RevisionFuse) ||
-            step.object < 0 ||
-            size_t(step.object) >= geometry.revisionIndex.size()) {
+        int32_t revision = step.object;
+        int part = 0;
+        const bool group = _GroupStep(*file, step, &revision, &part);
+        if ((!group && step.kind != fb::StepKind::RevisionFuse) ||
+            revision < 0 || size_t(revision) >= geometry.revisionIndex.size()) {
             continue;
         }
-        const auto &at = geometry.revisionIndex[size_t(step.object)];
+        const auto &at = geometry.revisionIndex[size_t(revision)];
         const std::string mover =
             RigExecFormatPathText(*file, geometry.chains[size_t(at.first)]
                                              .revisions[size_t(at.second)]
@@ -2571,8 +2699,8 @@ TestGroupChainRolesAndCutoff()
             continue;
         }
         bool want = false;
-        if (step.kind == fb::StepKind::RevisionChunk) {
-            want = found->second >= linearAt && step.part == 3;
+        if (group) {
+            want = found->second >= linearAt && part == 3;
         } else if (mover == movers + "Dual") {
             want = found->second > linearAt;
         } else {
@@ -2584,7 +2712,7 @@ TestGroupChainRolesAndCutoff()
             std::printf("%s: %s %s %d %s at frame 2\n", name, mover.c_str(),
                         step.kind == fb::StepKind::RevisionFuse ? "fuse"
                                                                 : "group",
-                        int(step.part), ran ? "ran" : "did not run");
+                        part, ran ? "ran" : "did not run");
         }
         ++checked;
     }
@@ -2623,32 +2751,180 @@ TestEpilogueSharesPublications()
     CHECK(result.Read()[0] == RrVec3f(4, 5, 6));
 }
 
-// A current-phase field the oracle fails to resolve: the combine's
-// strength 2 lifts the rest-pose field past 1 under its strict range
-// policy at frame 4. The revision then holds an empty packet and the
-// generation the program's own diagnostic, compared verbatim by the parity
-// path.
+// The combine's strength 2 lifts its packet past 1 under its strict range
+// policy: the packet is a declared input of the current-phase revision, so
+// every frame stops with the packet's error and the rig does not bake. The
+// sphere's placement is a pose frame, so Build cannot fold the packet.
 static void
 TestCurrentPhaseFailure()
 {
     const char *const name = "current phase, failed resolve";
-    const std::vector<double> frames = {1, 2, 3, 4};
-    _TestStage(name, _CurrentPhaseThroughCombineStage(2.0f), frames);
-    std::vector<std::vector<std::string>> diagnostics;
-    std::string error;
-    CHECK(_RunDiagnostics(_CurrentPhaseThroughCombineStage(2.0f), frames,
-                          &diagnostics, &error));
-    if (!error.empty()) {
-        std::printf("%s: %s\n", name, error.c_str());
+    const UsdStageRefPtr stage = _CurrentPhaseThroughCombineStage(2.0f);
+    RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+    for (const double frame : {1.0, 4.0}) {
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(frame));
+        CHECK(!pose.valid);
+        CHECK(std::any_of(
+            pose.diagnostics.begin(), pose.diagnostics.end(),
+            [](const std::string &line) {
+                return line.rfind("/Asset/Rig/Weights/Wrapped: node ", 0) ==
+                           0 &&
+                       line.find("CombineWeights: a weight is "
+                                 "not finite or outside [0, 1]") !=
+                           std::string::npos;
+            }));
     }
-    const std::string failed = "current-phase weight failed: strict range "
-                               "violation on /Asset/Rig/Weights/Wrapped";
-    CHECK(diagnostics.size() == frames.size());
-    if (diagnostics.size() == frames.size()) {
-        CHECK(!_HasLine(diagnostics[0], failed));
-        CHECK(_HasLine(diagnostics[3], failed));
+    std::vector<uint8_t> bytes;
+    std::string error;
+    CHECK(!RigExecTestBakeAt(evaluator, 1, &bytes, &error));
+    std::printf("%s: checked\n", name);
+}
+
+// The combine over the painted Full weight (1 everywhere) instead of the
+// sphere: every input is an authored constant, so strength 2 is refused at
+// Build in every evaluator. Keyed or dragged to 2 it fails at run time.
+static void
+TestConstantCombineFailure()
+{
+    const char *const name = "constant combine, strength 2";
+    const auto stageWith = [](float strength) {
+        const UsdStageRefPtr stage = _CurrentPhaseThroughCombineStage(strength);
+        stage->GetPrimAtPath(SdfPath("/Asset/Rig/Weights/Wrapped"))
+            .GetRelationship(TfToken("rigExec:inputWeights"))
+            .SetTargets({SdfPath("/Asset/Rig/Weights/Full")});
+        return stage;
+    };
+    const std::string refused = "/Asset/Rig/Weights/Wrapped: a weight is not "
+                                "finite or outside [0, 1] at every frame";
+    const auto names = [&](const std::vector<std::string> &lines) {
+        return std::any_of(lines.begin(), lines.end(),
+                           [&](const std::string &line) {
+                               return line.find(refused) != std::string::npos;
+                           });
+    };
+    const auto ranFailed = [](const RigExecRigPose &pose) {
+        return !pose.valid &&
+               std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                           [](const std::string &line) {
+                               return line.rfind("/Asset/Rig/Weights/Wrapped: "
+                                                 "node ",
+                                                 0) == 0;
+                           });
+    };
+    {
+        const UsdStageRefPtr stage = stageWith(2.0f);
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        for (const double frame : {1.0, 4.0}) {
+            const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(frame));
+            CHECK(!pose.valid && names(pose.diagnostics) && !ranFailed(pose));
+            if (!names(pose.diagnostics)) {
+                for (const std::string &line : pose.diagnostics)
+                    std::printf("%s: frame %g: %s\n", name, frame,
+                                line.c_str());
+            }
+        }
+        std::shared_ptr<const RigExecFrozenProgram> frozen;
+        std::string error;
+        CHECK(!RigExecFreezeProgram(evaluator, &frozen, &error));
+        std::vector<uint8_t> bytes;
+        CHECK(!RigExecTestBakeAt(evaluator, 1, &bytes, &error));
+    }
+    {
+        // Keyed: frame 1 runs, frame 4 fails when it runs.
+        const UsdStageRefPtr stage = stageWith(1.0f);
+        const UsdAttribute strength =
+            stage->GetPrimAtPath(SdfPath("/Asset/Rig/Weights/Wrapped"))
+                .CreateAttribute(TfToken("inputs:strength"),
+                                 SdfValueTypeNames->Float);
+        strength.Set(1.0f, UsdTimeCode(1.0));
+        strength.Set(2.0f, UsdTimeCode(4.0));
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
+        CHECK(ranFailed(evaluator.Evaluate(UsdTimeCode(4.0))));
+        CHECK(evaluator.IsBakeable(nullptr));
+    }
+    {
+        // Dragged from the authored 1 to 2: that frame fails when it runs.
+        const UsdStageRefPtr stage = stageWith(1.0f);
+        const UsdPrim wrapped =
+            stage->GetPrimAtPath(SdfPath("/Asset/Rig/Weights/Wrapped"));
+        wrapped
+            .CreateAttribute(TfToken("inputs:strength"),
+                             SdfValueTypeNames->Float)
+            .Set(1.0f);
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
+        RigExecValueOverride drag;
+        drag.prim = wrapped.GetPath();
+        drag.attribute = TfToken("inputs:strength");
+        drag.value = VtValue(2.0f);
+        evaluator.SetInteractiveOverrides({drag});
+        CHECK(ranFailed(evaluator.Evaluate(UsdTimeCode(1.0))));
+        evaluator.SetInteractiveOverrides({});
+        CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
     }
     std::printf("%s: checked\n", name);
+}
+
+// The same combine with inputs:strength keyed 1 through frame 3 and 2 at
+// frame 4: frames 1 to 3 run and match the .rigexec bit for bit, frame 4
+// alone stops with the packet's error in both, and frame 3 recovers.
+static void
+TestCurrentPhaseFailureBoundary()
+{
+    const char *const name = "current phase, keyed strength";
+    const UsdStageRefPtr stage = _CurrentPhaseThroughCombineStage();
+    const UsdAttribute strength =
+        stage->GetPrimAtPath(SdfPath("/Asset/Rig/Weights/Wrapped"))
+            .CreateAttribute(TfToken("inputs:strength"),
+                             SdfValueTypeNames->Float);
+    strength.Set(1.0f, UsdTimeCode(1.0));
+    strength.Set(1.0f, UsdTimeCode(3.0));
+    strength.Set(2.0f, UsdTimeCode(4.0));
+    _TestStage(name, stage, {1.0, 2.0, 3.0});
+    RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+    std::vector<uint8_t> bytes;
+    std::string error;
+    CHECK(RigExecTestBakeAt(evaluator, 1, &bytes, &error));
+    RigExecTestPlayer player;
+    CHECK(player.Open(bytes, stage, &error));
+    size_t failed = 0;
+    for (const double frame : {1.0, 2.0, 3.0, 4.0, 3.0}) {
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(frame));
+        std::string played;
+        const bool ran = player.Play(frame, &played);
+        if (frame == 4.0) {
+            ++failed;
+            CHECK(!pose.valid && !ran);
+            CHECK(pose.diagnostics.size() == 2 &&
+                  pose.diagnostics[0] == played &&
+                  pose.diagnostics[1] ==
+                      "native program did not complete generation");
+            CHECK(played.rfind("/Asset/Rig/Weights/Wrapped: node ", 0) == 0 &&
+                  played.find(" (rig:CombineWeights) failed: CombineWeights: "
+                              "a weight is not finite or outside [0, 1]") !=
+                      std::string::npos);
+            continue;
+        }
+        CHECK(pose.valid && ran && pose.diagnostics.empty());
+        const auto want =
+            pose.movedProperties.find(SdfPath("/Asset/Geom/M.points"));
+        const auto &moved = player.Reader().GetPoints();
+        const auto got = std::find_if(
+            moved.begin(), moved.end(), [](const RigExecRuntimePoints &p) {
+                return p.path == "/Asset/Geom/M.points";
+            });
+        CHECK(want != pose.movedProperties.end() && got != moved.end());
+        if (want == pose.movedProperties.end() || got == moved.end())
+            continue;
+        const VtVec3fArray &points = want->second.Get<VtVec3fArray>();
+        const std::vector<RrVec3f> &read = got->points.Vector();
+        CHECK(read.size() == points.size() &&
+              std::memcmp(read.data(), points.cdata(),
+                          points.size() * sizeof(GfVec3f)) == 0);
+    }
+    CHECK(failed == 1);
+    std::printf("%s: frame 4 fails alone, in both\n", name);
 }
 
 // A current-phase combine over the three volume kinds, each read where the
@@ -2859,32 +3135,31 @@ TestVolumeMixCurrentPhase()
     }
 }
 
-// An authored empty rigExec:planeAxis: the oracle reads the attribute as
-// authored and fails ("unknown rigExec:planeAxis "), so every current-phase
-// resolve fails with the program's diagnostic, though the plane's own
-// packet substitutes the fallback axis.
+// An authored empty rigExec:planeAxis is an unknown axis: every frame
+// stops with the error, so nothing bakes.
 static void
 TestEmptyPlaneAxis()
 {
     const char *const name = "volume mix, empty planeAxis";
-    const std::vector<double> frames = {1, 2, 3, 4};
     _MixOptions options;
     options.axis = "";
-    _TestStage(name, _VolumeMixStage(options), frames);
-    std::vector<std::vector<std::string>> diagnostics;
+    const UsdStageRefPtr stage = _VolumeMixStage(options);
+    const SdfPath rigPath = _FindRig(stage);
+    const std::string failed =
+        "/Asset/Rig/Weights/Plane: unknown rigExec:planeAxis ";
+    RigExecRigEvaluator evaluator(stage, rigPath);
+    for (const double frame : {1., 2., 3., 4.}) {
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(frame));
+        CHECK(!pose.valid);
+        CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                          [&](const std::string &line) {
+                              return line.find(failed) != std::string::npos;
+                          }));
+    }
+    RigExecRigEvaluator baker(stage, rigPath);
+    std::vector<uint8_t> bytes;
     std::string error;
-    CHECK(_RunDiagnostics(_VolumeMixStage(options), frames, &diagnostics,
-                          &error));
-    if (!error.empty()) {
-        std::printf("%s: %s\n", name, error.c_str());
-    }
-    const std::string failed = "current-phase weight failed: "
-                               "/Asset/Rig/Weights/Plane: unknown "
-                               "rigExec:planeAxis ";
-    CHECK(diagnostics.size() == frames.size());
-    for (const std::vector<std::string> &lines : diagnostics) {
-        CHECK(_HasLine(lines, failed));
-    }
+    CHECK(!RigExecTestBakeAt(baker, 1.0, &bytes, &error));
     std::printf("%s: checked\n", name);
 }
 
@@ -3338,7 +3613,7 @@ TestOraclePointsSet()
              file->geometry->weightObjects) {
             if (RigExecFormatPathText(*file, object.path) ==
                 "/Asset/Rig/Weights/Plane") {
-                listed += object.oracleSamplesSlot == slot ? 1 : 0;
+                listed += object.fieldSamplesSlot == slot ? 1 : 0;
             }
         }
         const fb::RigExecWirePathRead *row =
@@ -3387,18 +3662,18 @@ TestOraclePointsSet()
     std::unique_ptr<RigExecRuntimeReader> fewer =
         _ArrayReader(name, RigExecTestListPrivateArraySlots(bytes));
     if (fewer) {
+        // One point fewer stops the frame with the volume's error.
         VtVec3fArray shorter(points.begin(), points.end() - 1);
-        matched +=
-            _ArraySetsMatch(name, "sampled, one point fewer", stage, rigPath,
-                            fewer.get(), {{sampler, VtValue(shorter), true}});
-        const std::string failed =
-            "current-phase weight failed: /Asset/Rig/Weights/Plane: "
-            "sampled point count does not match the target";
-        const std::vector<std::string> &lines = fewer->GetDiagnostics();
-        CHECK(std::find(lines.begin(), lines.end(), failed) != lines.end());
+        std::string error;
+        CHECK(RigExecTestApplyArraySets(
+            fewer.get(), {{sampler, VtValue(shorter), true}}, &error));
+        CHECK(!fewer->Execute(&error));
+        CHECK(error.rfind("/Asset/Rig/Weights/Plane: node ", 0) == 0 &&
+              error.find("VolumeWeights: sampled point count does not match "
+                         "the target") != std::string::npos);
     }
-    std::printf("%s: %d of 2 sets == session edit\n", name, matched);
-    CHECK(matched == 2);
+    std::printf("%s: %d of 1 set == session edit\n", name, matched);
+    CHECK(matched == 1);
 }
 
 // The oracle's sample points are the attribute the oracle resolves its
@@ -3443,7 +3718,7 @@ TestOracleSlotIsCanonical()
                 samples < int64_t(file->inputs.size()) && gathered >= 0 &&
                 (file->inputs[size_t(samples)].flags() &
                  uint8_t(fb::InputSlotFlags::Listed)) == 0 &&
-                samples != gathered && object.oracleSamplesSlot == samples &&
+                samples != gathered && object.fieldSamplesSlot == samples &&
                 object.samplePoints.empty() &&
                 !RigExecTestPathReadRow(file.get(), sampler, false) && row &&
                 row->read &&
@@ -3569,11 +3844,6 @@ TestStageArrayOracleAndChain()
                           SdfPath("/Asset/Rig/Joints/Lift.avars:ty"))
                       .Get(&precedingLift, UsdTimeCode(1)) &&
                   precedingLift != 0.0);
-            // The Mix is current-phase through its preceding Sphere. Plane's
-            // canonical fallback is the raw base, apart from First's lift.
-            CHECK(stage->GetPrimAtPath(SdfPath("/Asset/Rig/Weights/Plane"))
-                      .GetRelationship(TfToken("rigExec:weightTarget"))
-                      .SetTargets({fallbackPath.GetPrimPath()}));
         }
         std::vector<uint8_t> bytes;
         std::string error;
@@ -3610,8 +3880,8 @@ TestStageArrayOracleAndChain()
                 if (RigExecFormatPathText(*file, object.path) ==
                     (curveOracle ? "/Asset/Rig/Weights/Curve"
                                  : "/Asset/Rig/Weights/Plane")) {
-                    bound += (curveOracle ? object.oracleCurveSlot
-                                          : object.oracleSamplesSlot) == slot
+                    bound += (curveOracle ? object.fieldCurveSlot
+                                          : object.fieldSamplesSlot) == slot
                                  ? 1
                                  : 0;
                 }
@@ -3655,7 +3925,7 @@ TestStageArrayOracleAndChain()
                               RigExecFormatPathText(*file,
                                                     object.targetPoints[0]) ==
                                   fallbackPath.GetString() &&
-                              object.targetValid == std::vector<uint8_t>{0});
+                              object.targetValid == std::vector<uint8_t>{1});
                     }
                 }
             }
@@ -3672,8 +3942,8 @@ TestStageArrayOracleAndChain()
         CHECK(sampler.Bind(stage, *reader, &error));
         CHECK(sampler.GetWarnings().empty());
         const std::string countFailure =
-            "current-phase weight failed: /Asset/Rig/Weights/Plane: "
-            "sampled point count does not match the target";
+            "/Asset/Rig/Weights/Plane: sampled point count does not match "
+            "the target";
         const std::string missingFailure =
             "current-phase weight failed: /Asset/Rig/Weights/Plane: "
             "could not read the points to sample";
@@ -3681,30 +3951,38 @@ TestStageArrayOracleAndChain()
             bool sampled = false;
             CHECK(sampler.Apply(UsdTimeCode(time), reader.get(), &error,
                                 &sampled));
-            CHECK(reader->Execute(&error));
+            std::string failure;
+            const bool ran = reader->Execute(&failure);
             CHECK(reader->GetInputCount() == publicCount);
             {
+                // An invalid volume input stops the frame in both evaluators
+                // with the same error.
                 RigExecRigPose pose;
-                CHECK(RigExecTestArrayReference(stage, rigPath, {}, time, &pose,
-                                                &error));
-                std::vector<std::string> diffs;
-                CHECK(RigExecCompareRuntimeRun(pose, *reader, &diffs));
-                for (const auto &diff : diffs) {
-                    std::printf("  %s at %.0f: %s\n", name, time, diff.c_str());
+                const bool referenced = RigExecTestArrayReference(
+                    stage, rigPath, {}, time, &pose, &error);
+                if (!ran) {
+                    CHECK(!referenced && !pose.valid &&
+                          _HasLine(pose.diagnostics, failure));
+                } else {
+                    CHECK(referenced);
+                    std::vector<std::string> diffs;
+                    CHECK(RigExecCompareRuntimeRun(pose, *reader, &diffs));
+                    for (const auto &diff : diffs)
+                        std::printf("  %s at %.0f: %s\n", name, time,
+                                    diff.c_str());
                 }
             }
             if (privateOracle) {
-                const auto &lines = reader->GetDiagnostics();
                 if (curveOracle) {
-                    const std::string curveFailure =
-                        "current-phase weight failed: "
-                        "/Asset/Rig/Weights/Curve: "
-                        "rigExec:curve must name exactly one points source";
-                    CHECK(_HasLine(lines, curveFailure) ==
-                          (time == 4 || time == 5));
+                    CHECK(ran == !(time == 4 || time == 5));
+                    if (!ran)
+                        CHECK(failure.rfind("/Asset/Rig/Weights/Curve: node ",
+                                            0) == 0);
                 } else {
-                    CHECK(_HasLine(lines, countFailure) ==
-                          (time == 3 || time == 4));
+                    const auto &lines = reader->GetDiagnostics();
+                    CHECK(ran == !(time == 3 || time == 4));
+                    if (!ran)
+                        CHECK(failure.find(countFailure) != std::string::npos);
                     // A blocked primary sampleSource falls back to raw
                     // weightTarget points. A successful empty primary does not.
                     CHECK(_HasLine(lines, missingFailure) == false);
@@ -3732,6 +4010,37 @@ TestStageArrayOracleAndChain()
             "%s: original slot, 7 frames incl short/empty/missing/recovery\n",
             name);
     }
+}
+
+// A volume weight whose weightTarget names a prim, not points, weighs no
+// points: compile refuses the rig, so nothing evaluates or bakes.
+static void
+TestVolumeTargetWithoutPointsRefused()
+{
+    _MixOptions options;
+    options.animatedSampler = true;
+    options.samplerPrim = true;
+    const UsdStageRefPtr stage = _VolumeMixStage(options);
+    const SdfPath rigPath("/Asset/Rig");
+    CHECK(stage->GetPrimAtPath(SdfPath("/Asset/Rig/Weights/Plane"))
+              .GetRelationship(TfToken("rigExec:weightTarget"))
+              .SetTargets({SdfPath("/Asset/Geom/M")}));
+    const std::string refusal =
+        "/Asset/Rig/Weights/Plane: the volume weighs no target points";
+    RigExecRigEvaluator evaluator(stage, rigPath);
+    std::vector<std::string> errors;
+    evaluator.Compile(&errors);
+    CHECK(!evaluator.GetBakedProgram());
+    const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(1.0));
+    CHECK(!pose.valid);
+    CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                      [&](const std::string &line) {
+                          return line.find(refusal) != std::string::npos;
+                      }));
+    std::vector<uint8_t> bytes;
+    std::string error;
+    CHECK(!RigExecTestBakeAt(evaluator, 1, &bytes, &error));
+    std::printf("volume target without points: refused\n");
 }
 
 // docs/examples/skin_mover.usda's two skins, whose layouts hold a mid-row
@@ -3978,12 +4287,10 @@ _DynamicSupportStage()
 }
 
 // The dynamic support check over the painted indices, which the export
-// lists as inputs: an indices set off the base's support fails the
-// dynamic weight with the
-// oracle's words on every run, where the evaluators' compile refuses the
-// authored edit and skips its consumer, with the same pass-through; a set
-// of the base's support in another order passes, as the session edit
-// does.
+// lists as inputs: an indices set off the base's support stops the run
+// with an error, where the evaluators' compile refuses the authored edit;
+// a set of the base's support in another order passes, as the session
+// edit does.
 static void
 TestDynamicSupportFromSlots()
 {
@@ -4051,19 +4358,18 @@ TestDynamicSupportFromSlots()
     // Off the base's support.
     const std::vector<RigExecTestArraySet> off = {
         {indices, VtValue(VtIntArray{0, 2}), false}};
-    CHECK(RigExecTestApplyArraySets(reader.get(), off, &error) &&
-          reader->Execute(&error));
-    CHECK(hasLine(*reader));
-    {
-        RigExecRigPose pose;
-        CHECK(
-            RigExecTestArrayReference(stage, rigPath, off, 2.0, &pose, &error));
-        std::vector<std::string> diffs;
-        CHECK(RigExecCompareRuntimeRun(pose, *reader, &diffs, true));
-        for (const std::string &diff : diffs) {
-            std::printf("  %s, off the support: %s\n", name, diff.c_str());
-        }
-    }
+    CHECK(RigExecTestApplyArraySets(reader.get(), off, &error));
+    std::string failure;
+    CHECK(!reader->Execute(&failure));
+    CHECK(failure.find("dynamic/base sparse support mismatch") !=
+          std::string::npos);
+    // The failing field node is the dynamic weight's, as native names it,
+    // not its base's.
+    CHECK(failure.rfind(dynamic + ": ", 0) == 0);
+    if (failure.find("dynamic/base sparse support mismatch") ==
+            std::string::npos ||
+        failure.rfind(dynamic + ": ", 0) != 0)
+        std::printf("  %s, off the support: %s\n", name, failure.c_str());
     // The base's support in another order passes, as live passes it.
     CHECK(_ArraySetsMatch(name, "the base's support", stage, rigPath,
                           reader.get(),
@@ -4613,9 +4919,9 @@ TestSimdSettingPerReader()
                 name, differing);
 }
 
-// One revision of each class RevisionStatic decides: a matrix, a blend shape
-// and a dense wire whose inputs:defaultWeight leaves [0, 1] at frame 2 (a
-// refused packet) and returns at full and partial strength, and a
+// One revision of each class RevisionStatic decides: a blend shape and a
+// dense wire whose inputs:defaultWeight leaves [0, 1] at frame 2 (a refused
+// packet) and returns at full and partial strength, and a
 // classicLinear skin whose joint weights go negative at frame 2 (the layout
 // half of its validation refuses). At a partial weight the wire blends with
 // the envelope RevisionStatic resolved.
@@ -4667,7 +4973,7 @@ def Scope "Asset"
             {
                 rel rigExec:moves = </Asset/Geom/Lift.points>
                 rel rigExec:transform = </Asset/Rig/Shift>
-                float inputs:defaultWeight.timeSamples = {1: 0.5, 2: 1.5, 3: 1, 4: 0.25}
+                float inputs:defaultWeight.timeSamples = {1: 0.5, 2: 0.75, 3: 1, 4: 0.25}
             }
             def RigExecBlendShapeMover "Blend" (
                 prepend apiSchemas = ["RigExecMoverAPI"]
@@ -4787,9 +5093,9 @@ TestAcceptanceFailureRecovers()
         return;
     }
     RigExecRigEvaluator evaluator(stage, rigPath);
-    const char *const movers[] = {
-        "/Asset/Rig/Movers/Lift", "/Asset/Rig/Movers/Blend",
-        "/Asset/Rig/Movers/Wire", "/Asset/Rig/Movers/Skin"};
+    const char *const movers[] = {"/Asset/Rig/Movers/Blend",
+                                  "/Asset/Rig/Movers/Wire",
+                                  "/Asset/Rig/Movers/Skin"};
     size_t decided = 0;
     for (const double frame : frames) {
         CHECK(evaluator.Evaluate(frame).valid);
@@ -5155,66 +5461,6 @@ _StageFromText(const std::string &text)
     return stage;
 }
 
-/// \p file with every format-21 setting of its Delta Mush, lattice and
-/// surface revisions taken out (path reads and leaf sites), relabelled
-/// format 20: what a format-20 export of the same legacy rig holds.
-static void
-_AsFormat20(fb::RigExecWireFile *file)
-{
-    auto &reads = file->geometry->pathReads;
-    for (fb::RigExecWireChain &chain : file->geometry->chains) {
-        for (fb::RigExecWireRevision &revision : chain.revisions) {
-            size_t count = 0;
-            const char *const *names =
-                RigExecFormatExtendedSettingNames(revision.op, &count);
-            if (!names || revision.moverPrim == 0) {
-                continue;
-            }
-            const std::string mover =
-                RigExecFormatPathText(*file, revision.moverPrim);
-            const auto extended = [&](uint32_t path) {
-                const std::string text = RigExecFormatPathText(*file, path);
-                for (size_t i = 0; i < count; ++i) {
-                    if (text == mover + "." + names[i]) {
-                        return true;
-                    }
-                }
-                return false;
-            };
-            for (auto *sites :
-                 {&revision.leafSites, &revision.layoutLeafSites}) {
-                sites->erase(std::remove_if(sites->begin(), sites->end(),
-                                            [&](const auto &site) {
-                                                return extended(site.path);
-                                            }),
-                             sites->end());
-            }
-            reads.erase(std::remove_if(reads.begin(), reads.end(),
-                                       [&](const auto &read) {
-                                           return extended(read.path);
-                                       }),
-                        reads.end());
-        }
-    }
-    file->formatVersion = 20;
-}
-
-/// The points \p bytes publishes in one run at its defaults; empty, with a
-/// failed CHECK, when it does not open or run.
-static std::vector<RigExecRuntimePoints>
-_RunDefaults(const std::vector<uint8_t> &bytes, const std::string &name)
-{
-    std::string error;
-    const std::unique_ptr<RigExecRuntimeReader> reader =
-        RigExecRuntimeReader::Open(bytes.data(), bytes.size(), &error);
-    if (!reader || !reader->Execute(&error)) {
-        std::printf("%s: %s\n", name.c_str(), error.c_str());
-        CHECK(false);
-        return {};
-    }
-    return reader->GetPoints();
-}
-
 // The format-21 deformer settings play bit for bit beside the evaluator:
 // every independent reference rig (regular-grid lattices with each
 // interpolation family, surface snaps under each policy), a lattice whose
@@ -5262,29 +5508,11 @@ TestExtendedDeformerSettingsPlay()
         _TestStage("framed lattice, animated", stage, {1, 2, 1, 2});
     }
 
-    // A legacy rig's format-20 file plays its format-21 file's points.
-    bool same = false;
-    if (const UsdStageRefPtr stage = _StageFromText(_kLegacyMushStage)) {
+    if (const UsdStageRefPtr stage = _StageFromText(_kLegacyMushStage))
         _TestStage("legacy delta mush", stage, {1});
-        std::vector<uint8_t> current;
-        std::string error;
-        RigExecRigEvaluator baker(stage, SdfPath("/Rig"));
-        CHECK(RigExecTestBakeAt(baker, 1.0, &current, &error));
-        if (!current.empty()) {
-            const std::vector<uint8_t> previous = RigExecTestEdited(
-                current, [](fb::RigExecWireFile *file) { _AsFormat20(file); });
-            const std::vector<RigExecRuntimePoints> a =
-                _RunDefaults(current, "legacy delta mush, format 21");
-            const std::vector<RigExecRuntimePoints> b =
-                _RunDefaults(previous, "legacy delta mush, format 20");
-            same = !a.empty() && _SamePoints({a}, {b});
-            CHECK(same);
-        }
-    }
     std::printf("extended deformer settings: %zu lattice and %zu surface "
-                "references played; legacy format 20 %s\n",
-                latticeReferenceCases.size(), surfaceReferenceCases.size(),
-                same ? "plays its format-21 points" : "DIFFERS");
+                "references played\n",
+                latticeReferenceCases.size(), surfaceReferenceCases.size());
 }
 
 // Recomputed normals keep the authored layout: faceVarying normals on a
@@ -5417,16 +5645,20 @@ main(int argc, char **argv)
     TestRangeChainRolesAndCutoff();
     TestGroupChainPlays();
     TestSmoothChainPlays();
+    TestSharedSegmentErrorNamesItsMover();
     TestGroupChainRolesAndCutoff();
     TestEpilogueSharesPublications();
     TestPacketArrayVersions();
     TestGeometryDomainArm();
     TestCurrentPhaseThroughCombine();
     TestCurrentPhaseFailure();
+    TestCurrentPhaseFailureBoundary();
+    TestConstantCombineFailure();
     TestVolumeMixCurrentPhase();
     TestOraclePointsSet();
     TestOracleSlotIsCanonical();
     TestStageArrayOracleAndChain();
+    TestVolumeTargetWithoutPointsRefused();
     TestDynamicSupportFromSlots();
     TestEmptyPlaneAxis();
     TestAnimatedStaticPointsReported();

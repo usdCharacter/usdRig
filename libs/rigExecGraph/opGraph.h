@@ -63,12 +63,15 @@ struct RigExecOpExclusionProof {
 /// One producer-based compiler and canonical Kahn order for every domain.
 /// SetAside omits only cycle members; consumers retain explicit fallback reads.
 bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
-    const std::vector<RigExecValueId> &leaves, RigExecCyclePolicy cyclePolicy,
-    RigExecCompiledGraph *graph, std::string *error = nullptr);
+                           const std::vector<RigExecValueId> &leaves,
+                           RigExecCyclePolicy cyclePolicy,
+                           RigExecCompiledGraph *graph,
+                           std::string *error = nullptr);
 bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
-    const std::vector<RigExecValueId> &leaves, RigExecCyclePolicy cyclePolicy,
-    const RigExecOpExclusionProof *retainedExclusions,
-    RigExecCompiledGraph *graph, std::string *error);
+                           const std::vector<RigExecValueId> &leaves,
+                           RigExecCyclePolicy cyclePolicy,
+                           const RigExecOpExclusionProof *retainedExclusions,
+                           RigExecCompiledGraph *graph, std::string *error);
 
 /// Coarsen only linear chains whose intermediate values have no outside
 /// readers and whose later members have no extra predecessors. Readiness at
@@ -76,12 +79,12 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
 /// Costs are in canonical op order; empty uses one microsecond per op.
 /// Zero grain gives singleton clusters. Translate once, serialize unchanged.
 bool RigExecTranslateOpClusters(RigExecCompiledGraph *graph,
-    const std::vector<double> &opCostsUs, double grainUs,
-    std::string *error = nullptr);
+                                const std::vector<double> &opCostsUs,
+                                double grainUs, std::string *error = nullptr);
 
 /// Validate serialized membership and safe coarsening against canonical ops.
 bool RigExecValidateOpClusters(const RigExecCompiledGraph &graph,
-    std::string *error = nullptr);
+                               std::string *error = nullptr);
 
 struct RigExecOpCallbacks {
     /// false cancels bodies not yet started; tasks already active may finish.
@@ -126,15 +129,23 @@ struct RigExecOpExecution {
     /// clears `touchedValid` (the next reset then clears everything).
     std::vector<uint32_t> touched;
     bool touchedValid = false;
+    /// The lowest op whose body failed, or UINT32_MAX. A failure stops only
+    /// the ops above it, so every op below it ran as in a run without
+    /// failures: serial and parallel runs fail at the same op.
+    uint32_t firstFailed = UINT32_MAX;
 };
 
 struct RigExecOpPendingCount {
     std::atomic<uint32_t> value{0};
     RigExecOpPendingCount() = default;
     RigExecOpPendingCount(const RigExecOpPendingCount &other)
-        : value(other.value.load(std::memory_order_relaxed)) {}
-    RigExecOpPendingCount &operator=(const RigExecOpPendingCount &other) {
-        value.store(other.value.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        : value(other.value.load(std::memory_order_relaxed))
+    {
+    }
+    RigExecOpPendingCount &operator=(const RigExecOpPendingCount &other)
+    {
+        value.store(other.value.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
         return *this;
     }
 };
@@ -162,25 +173,29 @@ struct RigExecOpWorkspace {
 /// only when `verifyReset` found a byte the records missed (the byte is
 /// zeroed; the caller fails the run). Owner thread, between executions.
 bool RigExecOpResetExecution(RigExecOpExecution *out,
-    RigExecOpWorkspace *workspace, size_t ops, size_t clusters);
+                             RigExecOpWorkspace *workspace, size_t ops,
+                             size_t clusters);
 
 /// Writes to \p out, ascending and unique, every i < \p n with
 /// flags[i] != 0, given \p listed holding each such i at least once and
 /// nothing else: by a scan of \p flags when listed.size() * 16 >= n, else
 /// by sorting a copy of \p listed. Both give the same sequence.
 void RigExecOpAscending(const std::vector<uint32_t> &listed,
-    const std::vector<char> &flags, size_t n, std::vector<uint32_t> *out);
+                        const std::vector<char> &flags, size_t n,
+                        std::vector<uint32_t> *out);
 
 /// The same readiness/change-propagation loop for serial and parallel backends.
 /// Callers reset current-generation change flags before publishing sampled leaves.
 /// A clean retained output stops the wave; no domain or source barriers exist.
 /// candidateOps schedules potential readers without forcing their bodies to run.
 bool RigExecExecuteOpGraph(const RigExecCompiledGraph &graph,
-    const std::vector<RigExecValueId> &changedLeaves,
-    const std::vector<uint32_t> &seedOps, bool force,
-    const RigExecOpCallbacks &callbacks, RigExecOpExecution *execution,
-    std::string *error = nullptr, RigExecOpWorkspace *workspace = nullptr,
-    const std::vector<uint32_t> *candidateOps = nullptr);
+                           const std::vector<RigExecValueId> &changedLeaves,
+                           const std::vector<uint32_t> &seedOps, bool force,
+                           const RigExecOpCallbacks &callbacks,
+                           RigExecOpExecution *execution,
+                           std::string *error = nullptr,
+                           RigExecOpWorkspace *workspace = nullptr,
+                           const std::vector<uint32_t> *candidateOps = nullptr);
 
 } // namespace rigExec
 #endif

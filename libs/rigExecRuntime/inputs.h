@@ -45,44 +45,41 @@ static_assert(sizeof(RrVec2f) == 2 * sizeof(float) &&
               "array elements are their components, unpadded");
 
 /// The element type of an array input tag.
-template <class T>
-struct RrArrayTag;
-template <>
-struct RrArrayTag<int32_t> {
+template <class T> struct RrArrayTag;
+template <> struct RrArrayTag<int32_t> {
     static constexpr RigExecWireInputTag value = RigExecWireInputTag::IntArray;
 };
-template <>
-struct RrArrayTag<float> {
+template <> struct RrArrayTag<float> {
     static constexpr RigExecWireInputTag value =
         RigExecWireInputTag::FloatArray;
 };
-template <>
-struct RrArrayTag<double> {
+template <> struct RrArrayTag<double> {
     static constexpr RigExecWireInputTag value =
         RigExecWireInputTag::DoubleArray;
 };
-template <>
-struct RrArrayTag<RrVec2f> {
+template <> struct RrArrayTag<RrVec2f> {
     static constexpr RigExecWireInputTag value =
         RigExecWireInputTag::Vec2fArray;
 };
-template <>
-struct RrArrayTag<RrVec3f> {
+template <> struct RrArrayTag<RrVec3f> {
     static constexpr RigExecWireInputTag value =
         RigExecWireInputTag::Vec3fArray;
 };
 
 template <> struct RrArrayTag<RigExecWireVec3d> {
-    static constexpr RigExecWireInputTag value=RigExecWireInputTag::Vec3dArray;
+    static constexpr RigExecWireInputTag value =
+        RigExecWireInputTag::Vec3dArray;
 };
 template <> struct RrArrayTag<RigExecWireMatrix4d> {
-    static constexpr RigExecWireInputTag value=RigExecWireInputTag::Matrix4dArray;
+    static constexpr RigExecWireInputTag value =
+        RigExecWireInputTag::Matrix4dArray;
 };
 template <> struct RrArrayTag<uint32_t> {
-    static constexpr RigExecWireInputTag value=RigExecWireInputTag::TokenArray;
+    static constexpr RigExecWireInputTag value =
+        RigExecWireInputTag::TokenArray;
 };
 template <> struct RrArrayTag<uint8_t> {
-    static constexpr RigExecWireInputTag value=RigExecWireInputTag::BoolArray;
+    static constexpr RigExecWireInputTag value = RigExecWireInputTag::BoolArray;
 };
 
 /// Typed element storage for an array input, one vector per element type;
@@ -175,7 +172,7 @@ RrValueFromWire(const RrWireValue &value)
         out.vec = RrVec3d(value.vec3d[0], value.vec3d[1], value.vec3d[2]);
         break;
     case RigExecWireInputTag::Vec3i:
-        out.vec3i=RrVec3i(value.vec3i[0],value.vec3i[1],value.vec3i[2]);
+        out.vec3i = RrVec3i(value.vec3i[0], value.vec3i[1], value.vec3i[2]);
         break;
     case RigExecWireInputTag::Vec3f:
         out.vec3f = RrVec3f(value.vec3f[0], value.vec3f[1], value.vec3f[2]);
@@ -246,8 +243,8 @@ struct RrPathRead {
 /// when it holds no such row. A binary search: the table is sorted by
 /// (path, rest), one row per key. The families resolve their sites' rows
 /// with it at Open; no run searches the table.
-int32_t RrFindPathReadRow(const std::vector<RrPathRead> &table,
-                          uint32_t path, bool rest);
+int32_t RrFindPathReadRow(const std::vector<RrPathRead> &table, uint32_t path,
+                          bool rest);
 
 /// Builds the path-read table at Open from the file's path_reads: a value
 /// row per static value, decoded out of the pools, a read row per
@@ -304,10 +301,19 @@ struct RrInputState {
     /// avarConstantBindings), as RrProgram::registeredReads indices,
     /// bucketed by provider slot (avar / 11): provider p's reads are
     /// avarReads[avarReadBegin[p], avarReadBegin[p + 1]), its varying ones
-    /// then its constant ones, each in file order -- the order an
-    /// AvarInputs step walks them in. Read through RrAvarReadRange.
+    /// then its constant ones, each by avar -- the order an AvarBindings
+    /// lookup reads them in. Read through RrAvarReadRange.
     std::vector<uint32_t> avarReadBegin;
     std::vector<uint32_t> avarReads;
+    /// Per op node: the slot whose avars it stores
+    /// (eval::OpOutputTarget::Avars), or -1.
+    std::vector<int64_t> avarNodeSlot;
+    /// Per op node: the pose interpolator whose weights it stores
+    /// (eval::OpOutputTarget::PoseWeights), or -1.
+    std::vector<int64_t> interpolatorNode;
+    /// Per op node: 1 where it runs a compose group's first pose, reading
+    /// a ComposeInputs, SwitchInputs or ClavicleInputs lookup.
+    std::vector<uint8_t> composeNode;
     /// The override numbers of the provider ladders' inputs, sorted
     /// (RigExecBakedProgramImpl::ladderOverrides).
     std::vector<int32_t> ladderOverrides;
@@ -375,6 +381,53 @@ RrAvarReadRange(const RrInputState &state, int64_t provider)
             state.avarReadBegin[size_t(provider) + 1]};
 }
 
+/// Whether op node \p node of \p file reads a ComposeInputs, SwitchInputs
+/// or ClavicleInputs lookup.
+inline bool
+RrReadsComposeLookup(const RigExecWireFile &file, size_t node)
+{
+    if (!file.opGraph || node >= file.opGraph->nodes.size() ||
+        !file.opGraph->nodes[node])
+        return false;
+    const auto &lookups = file.opGraph->lookups;
+    for (const auto &input : file.opGraph->nodes[node]->inputs)
+        if (input && input->host == 4 && input->object < lookups.size() &&
+            lookups[input->object] && lookups[input->object]->source >= 45 &&
+            lookups[input->object]->source <= 47)
+            return true;
+    return false;
+}
+
+/// Whether \p step runs a compose group's op node (composeNode).
+inline bool
+RrComposeStep(const RrInputState &state, const RigExecWireStep &step)
+{
+    return step.kind == RigExecWireStepKind::OpNode && step.object >= 0 &&
+           size_t(step.object) < state.composeNode.size() &&
+           state.composeNode[size_t(step.object)];
+}
+
+/// The slot whose avars op step \p step stores, or -1 for any other step.
+inline int64_t
+RrAvarSlotOf(const RrInputState &state, const RigExecWireStep &step)
+{
+    return step.kind == RigExecWireStepKind::OpNode && step.object >= 0 &&
+                   size_t(step.object) < state.avarNodeSlot.size()
+               ? state.avarNodeSlot[size_t(step.object)]
+               : -1;
+}
+
+/// The pose interpolator whose weights op step \p step stores, or -1 for
+/// any other step.
+inline int64_t
+RrInterpolatorOf(const RrInputState &state, const RigExecWireStep &step)
+{
+    return step.kind == RigExecWireStepKind::OpNode && step.object >= 0 &&
+                   size_t(step.object) < state.interpolatorNode.size()
+               ? state.interpolatorNode[size_t(step.object)]
+               : -1;
+}
+
 /// Attaches \p file's slots to the program: the value pool inline, each
 /// slot at its bake-time default, the token index; and checks what the
 /// tables need of the weight objects: for every constraint whose envelope
@@ -422,10 +475,11 @@ bool RrInputsSetArray(RrProgram *program, size_t index,
 std::vector<size_t> RrStageArraySlots(const RrProgram *program);
 bool RrStageArraySet(RrProgram *program, size_t slot,
                      const RigExecRuntimeArray &value, std::string *error);
-bool RrStageTokenArraySet(RrProgram *, size_t, const std::vector<std::string> &, std::string *);
+bool RrStageTokenArraySet(RrProgram *, size_t, const std::vector<std::string> &,
+                          std::string *);
 bool RrStageInputBlockedSet(RrProgram *, size_t, bool, std::string *);
-bool RrStageScalarSet(RrProgram *,size_t,const RrInputValue &,std::string *);
-bool RrStageScalarClear(RrProgram *,size_t,std::string *);
+bool RrStageScalarSet(RrProgram *, size_t, const RrInputValue &, std::string *);
+bool RrStageScalarClear(RrProgram *, size_t, std::string *);
 bool RrStageArrayClear(RrProgram *program, size_t slot, std::string *error);
 
 /// Array input \p index's elements as the reads see them: its held set,
@@ -503,8 +557,7 @@ bool RrInputChangedSinceRun(const RrProgram *program, uint32_t slot);
 /// that holds a value; Resolved, the most upstream hop that does (no
 /// overlay holds arrays). -1 when none does, and the read takes its
 /// constant.
-int32_t RrArrayReadSlot(const RrProgram *program,
-                        const RigExecWireInput &read);
+int32_t RrArrayReadSlot(const RrProgram *program, const RigExecWireInput &read);
 
 /// Array read \p read's elements this run: RrArrayReadSlot's, else its
 /// constant's, as a const std::vector of \p tag's element type; null when
@@ -541,12 +594,11 @@ RrPathArray(const RrProgram *program, const RrPathRead &row)
 /// token, or a Token node's text) sets its id; other text is interned at
 /// extraTokenBase + k first, once. False with the reason, nothing changed,
 /// for an index past the listed inputs or an input that is not a Token.
-bool RrInputsSetToken(RrProgram *program, size_t index,
-                      const std::string &text, std::string *error);
+bool RrInputsSetToken(RrProgram *program, size_t index, const std::string &text,
+                      std::string *error);
 // Internal sampling only; private tokens remain outside authored APIs.
-bool RrStageTokenSet(RrProgram *program, size_t slot,
-                     const std::string &text, bool hasValue,
-                     std::string *error);
+bool RrStageTokenSet(RrProgram *program, size_t slot, const std::string &text,
+                     bool hasValue, std::string *error);
 
 /// Input \p index (a listed slot) returns to its bake-time default, value
 /// and HasValue alike (an array input also drops its authored mark), and
@@ -635,18 +687,22 @@ RrWireValue RrReadInput(const RrProgram *program,
                         const RigExecWireInput &input);
 
 // API4 scalar declaration evaluation preserves failed reads separately from fallback.
-bool RrEffectiveInputMemo(const RrProgram *program,uint32_t step,std::string *key,
-                         std::vector<uint32_t> *coveredPropertyVersions,
-                         std::vector<std::pair<uint32_t,uint32_t>> *coveredTyped = nullptr);
-void RrEffectiveReadMemo(const RrProgram *program,const RigExecWireInput &read,std::string *key);
+bool RrEffectiveInputMemo(
+    const RrProgram *program, uint32_t step, std::string *key,
+    std::vector<uint32_t> *coveredPropertyVersions,
+    std::vector<std::pair<uint32_t, uint32_t>> *coveredTyped = nullptr);
+void RrEffectiveReadMemo(const RrProgram *program, const RigExecWireInput &read,
+                         std::string *key);
 /// \p versioned keys a numeric array slot's current elements by their
 /// content version and its immutable default by nothing, for a memo that
 /// every run rebuilds and compares with the previous run's only.
-void RrSourceReadMemo(const RrProgram *program,const RigExecWireInput &read,std::string *key,
-                      bool versioned=false);
-bool RrReadExternalScalar(const RrProgram *, const RigExecWireExternalDeclaredInput &,
+void RrSourceReadMemo(const RrProgram *program, const RigExecWireInput &read,
+                      std::string *key, bool versioned = false);
+bool RrReadExternalScalar(const RrProgram *,
+                          const RigExecWireExternalDeclaredInput &,
                           RrWireValue *);
-const void *RrReadExternalArray(const RrProgram *, const RigExecWireExternalDeclaredInput &);
+const void *RrReadExternalArray(const RrProgram *,
+                                const RigExecWireExternalDeclaredInput &);
 
 /// A connection-following assembler read (a read row of path_reads):
 /// RrReadInput, and for a site that reads the head's own value when the
@@ -658,7 +714,8 @@ RrWireValue RrReadPathScalar(const RrProgram *program,
 /// \p value of read row \p row in the form the assemblers read stage
 /// values in: the read's own type. A double site widens a Float value
 /// itself. False for a type no scalar site reads.
-bool RrPathValueFromWire(RigExecWireInputTag tag,const RrWireValue &value,RrPathValue *out);
+bool RrPathValueFromWire(RigExecWireInputTag tag, const RrWireValue &value,
+                         RrPathValue *out);
 bool RrPathValueFromRead(const RigExecWirePathRead &row,
                          const RrWireValue &value, RrPathValue *out);
 
@@ -668,8 +725,8 @@ bool RrPathValueFromRead(const RigExecWirePathRead &row,
 /// inputs:weight read. Geometry chain \p chain, revision \p revision (or
 /// derived target \p revision when \p derived), binding channel
 /// \p channel; 0 when the file holds no such channel.
-float RrReadBlendWeight(const RrProgram *program, size_t chain,
-                        size_t revision, bool derived, size_t channel);
+float RrReadBlendWeight(const RrProgram *program, size_t chain, size_t revision,
+                        bool derived, size_t channel);
 
 /// The rigExec:activation of sample \p sample of that blend channel, as
 /// the gather reads it through the resolved inputs; 1 when the file holds
@@ -683,15 +740,17 @@ float RrReadBlendActivation(const RrProgram *program, size_t chain,
 float RrReadDefaultWeight(const RrProgram *program, size_t chain,
                           size_t revision);
 
-/// The weight oracle's _ResolvedRead<float> (rigEvaluatorInternal.h):
+/// The weight field's _ResolvedRead<float> (rigEvaluatorInternal.h):
 /// RigExecResolvedInputs::GetAttribute<float> over the read's walk,
 /// whatever the read's mode, with the overlay above, and \p fallback (the
-/// oracle's own fallback at that read site) when the walk yields nothing.
+/// field's own fallback at that read site) when the walk yields nothing.
 /// A double hop is read as a double walk from that hop and cast with
 /// static_cast<float>.
-struct RrOracleReadContext;
-float RrReadOracleFloat(const RrProgram *program, const RigExecWireInput &input,
-                       const RrOracleReadContext &context, float fallback);
+struct RrWeightScalarReadContext;
+float RrReadWeightScalar(const RrProgram *program,
+                         const RigExecWireInput &input,
+                         const RrWeightScalarReadContext &context,
+                         float fallback);
 
 float RrReadResolvedFloat(const RrProgram *program,
                           const RigExecWireInput &input, float fallback);
@@ -699,6 +758,6 @@ float RrReadResolvedFloat(const RrProgram *program,
 /// The float a Float-tagged value holds (bits in the low 32).
 float RrWireValueFloat(const RrWireValue &value);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_RUNTIME_INPUTS_H
+#endif // RIGEXEC_RUNTIME_INPUTS_H

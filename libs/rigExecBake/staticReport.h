@@ -24,7 +24,7 @@ struct RigExecBakeStaticEntry {
     /// bind coordinates or topology), "revision read" (any other path read
     /// a mover's assembly makes at the time that no input slot evaluates:
     /// a structural token, lattice divisions, a wire's dropoff, extent
-    /// widths), and "weight object <path> oracle" or "weight object <path>
+    /// widths), and "weight object <path> field" or "weight object <path>
     /// gather". A plugin mover's own reads are not listed.
     std::string field;
     /// The animated attribute, or for a transform the prim whose transform
@@ -45,6 +45,6 @@ bool RigExecBakeStaticReport(RigExecRigEvaluator &evaluator,
                              std::vector<RigExecBakeStaticEntry> *entries,
                              std::string *error);
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_BAKE_STATIC_REPORT_H
+#endif // RIGEXEC_BAKE_STATIC_REPORT_H

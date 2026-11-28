@@ -1,30 +1,29 @@
-// testRigExecFormat: the single-FlatBuffer .rigexec format on hand-built
-// files. Write -> Open -> Write is byte-identical and keeps every stored bit
-// (signed zeros, NaN payloads, denormals) of every floating-point field
-// kind, value, pool and struct; Open refuses short buffers, the old
-// container, a wrong file identifier, buffers the verifier rejects and
-// other format versions, and buffers whose objects are shared or overlap,
-// takes bytes at any address and keeps none of them, refuses every
-// truncated tail and the named defects, and survives every single-byte
-// flip, vtable flips and many random multi-byte corruptions; writing is
-// deterministic; the validator refuses a smoke set of rule violations, a
-// step or cluster graph playback could not walk, the retired snapshot
-// step and domain, space switches out of resolution order, VolumePlacements
-// steps that do not place one volume each, a failed plugin assembly
-// holding frame bytes, and a presentation without its identifier, orders
-// listed inputs as their composed texts, and handles a path tree 100000
-// prims deep; step labels match the program's; sparse skin topologies
-// encode losslessly and expand back to the layout bit for bit, every layout
-// the sparse form cannot hold is stored raw and verbatim, and the validated
-// flag holds to the evaluator's rules in both directions, in either form;
-// chunk tables hold to the shape the bake cuts, a chain with groups'
-// (format 20: Range and Whole revisions, gates and the private constants
-// they rest on) among them; array inputs (slots of each
-// array tag, their pool and layout defaults, the reads bound to them, and
-// the chain base, layout, painted and oracle slots) round-trip bit for bit,
-// and each rule of theirs refuses its violation with its exact message.
-// USD-free, like the format.
+// testRigExecFormat: the single-FlatBuffer .rigexec format on hand-built files.
+// Write -> Open -> Write is byte-identical and keeps every stored bit (signed
+// zeros, NaN payloads, denormals) of every floating-point field kind, value,
+// pool and struct; Open refuses short buffers, the old container, a wrong file
+// identifier, buffers the verifier rejects and other format versions, and
+// buffers whose objects are shared or overlap, takes bytes at any address and
+// keeps none of them, refuses every truncated tail and the named defects, and
+// survives every single-byte flip, vtable flips and many random multi-byte
+// corruptions; writing is deterministic; the validator refuses a smoke set of
+// rule violations, a step or cluster graph playback could not walk, the retired
+// snapshot step and domain, space switches out of resolution order,
+// VolumePlacement op steps that do not place one volume each, a failed plugin
+// assembly holding frame bytes, and a presentation without its identifier,
+// orders listed inputs as their composed texts, and handles a path tree 100000
+// prims deep; step labels match the program's; sparse skin topologies encode
+// losslessly and expand back to the layout bit for bit, every layout the sparse
+// form cannot hold is stored raw and verbatim, and the validated flag holds to
+// the evaluator's rules in both directions, in either form; chunk tables hold
+// to the shape the bake cuts, a chain with groups' (format 20: Range and Whole
+// revisions, gates and the private constants they rest on) among them; array
+// inputs (slots of each array tag, their pool and layout defaults, the reads
+// bound to them, and the chain base, layout, painted and oracle slots)
+// round-trip bit for bit, and each rule of theirs refuses its violation with
+// its exact message.
 #include "rigExecBinary/format.h"
+#include "rigExecBinary/manifest.h"
 #include "rigExecBinary/stepGraph.h"
 #include "rigExecBinary/transport.h"
 #include "rigExecGraph/providerRecords.h"
@@ -306,6 +305,7 @@ _MinimalFile()
 {
     RigExecWireFile f;
     f.formatVersion = RigExecFormatVersion;
+    f.manifest = RigExecManifestBuild(RigExecManifestCurrent());
     f.names = {"", "Rig"};
     f.paths = {fb::PathNode(0, 0, PathKind::None),
                fb::PathNode(0, 1, PathKind::Prim)};
@@ -334,20 +334,350 @@ _MinimalFile()
     return f;
 }
 
+// Fixture authoring only: each property revision as one op node, the
+// first reading its chain's base through a lookup, every node storing its
+// version. The validator does not resolve the op, so one entry stands in.
+void
+_AddPropertyOpGraph(RigExecWireFile &f)
+{
+    f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    f.manifest->coreOps.clear();
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = "FloatMath";
+    entry->version = 1;
+    f.manifest->coreOps.push_back(std::move(entry));
+    constexpr uint32_t kIn = 0, kOut = 6;
+    const auto store = [&](uint32_t node, uint32_t port, uint32_t version) {
+        auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+        output->node = node;
+        output->port = port;
+        output->object = version;
+        f.opGraph->hostOutputs.push_back(std::move(output));
+    };
+    uint32_t node = 0;
+    for (uint32_t c = 0; c < f.propertyChains.size(); ++c) {
+        const auto &chain = f.propertyChains[c];
+        for (uint32_t r = 0; r < chain.revisions.size(); ++r, ++node) {
+            auto op = std::make_unique<fb::RigExecWireOpNode>();
+            auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+            in->port = kIn;
+            if (r == 0) {
+                in->host = 4;
+                in->object = uint32_t(f.opGraph->lookups.size());
+                auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+                lookup->object = c;
+                f.opGraph->lookups.push_back(std::move(lookup));
+                store(node, kIn, chain.versionBase);
+            } else {
+                in->node = int32_t(node - 1);
+                in->output = kOut;
+            }
+            op->inputs.push_back(std::move(in));
+            store(node, kOut, chain.versionBase + r + 1);
+            f.opGraph->nodes.push_back(std::move(op));
+        }
+    }
+}
+
+// Fixture authoring only: an AvarInputs op node reading slot \p slot's
+// bindings and storing its avars, and the OpNode step that runs it, writing
+// them.
+fb::RigExecWireStep
+_AvarStep(RigExecWireFile &f, uint32_t slot)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = "AvarInputs";
+    entry->version = 1;
+    f.manifest->coreOps.push_back(std::move(entry));
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = uint32_t(f.manifest->coreOps.size() - 1);
+    auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+    in->port = 0;
+    in->host = 4;
+    in->object = uint32_t(f.opGraph->lookups.size());
+    op->inputs.push_back(std::move(in));
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+    lookup->source = 40;
+    lookup->object = slot;
+    lookup->part = -1;
+    f.opGraph->lookups.push_back(std::move(lookup));
+    auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+    output->node = node;
+    output->port = 1;
+    output->target = 40;
+    output->object = slot;
+    f.opGraph->hostOutputs.push_back(std::move(output));
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    step.writes = {fb::SlotRange(fb::SlotDomain::Avars, slot, slot + 1)};
+    return step;
+}
+
+// Fixture authoring only: a SpaceCheckpoint op node reading checkpoint
+// \p checkpoint's inputs and storing its switch frame, and the OpNode step
+// that runs it, writing it.
+fb::RigExecWireStep
+_CheckpointStep(RigExecWireFile &f, uint32_t checkpoint)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = "SpaceCheckpoint";
+    entry->version = 1;
+    f.manifest->coreOps.push_back(std::move(entry));
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = uint32_t(f.manifest->coreOps.size() - 1);
+    const uint32_t reads =
+        f.pose->spaceCheckpoints[checkpoint].anchor >= 0 ? 10 : 9;
+    for (uint32_t read = 0; read < reads; ++read) {
+        auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+        in->port = read;
+        in->host = 4;
+        in->object = uint32_t(f.opGraph->lookups.size());
+        op->inputs.push_back(std::move(in));
+        auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+        lookup->source = 41;
+        lookup->object = checkpoint;
+        lookup->part = -1;
+        lookup->read = uint8_t(read);
+        f.opGraph->lookups.push_back(std::move(lookup));
+    }
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+    output->node = node;
+    output->port = 10;
+    output->target = 41;
+    output->object = checkpoint;
+    f.opGraph->hostOutputs.push_back(std::move(output));
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    return step;
+}
+
+// A RestCompose op node of compose group \p group (lookups 43, its three
+// outputs into target 43), and the OpNode step that runs it.
+fb::RigExecWireStep
+_RestStep(RigExecWireFile &f, uint32_t group)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    uint32_t entry = 0;
+    while (entry < f.manifest->coreOps.size() &&
+           f.manifest->coreOps[entry]->name != "RestCompose")
+        ++entry;
+    if (entry == f.manifest->coreOps.size()) {
+        auto added = std::make_unique<fb::RigExecWireManifestEntry>();
+        added->nameSpace = "rig";
+        added->name = "RestCompose";
+        added->version = 1;
+        f.manifest->coreOps.push_back(std::move(added));
+    }
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = entry;
+    const int32_t slot = f.pose->composeGroups[group].begin;
+    const uint32_t reads = f.slotMeta->parent[size_t(slot)] >= 0 ? 4 : 3;
+    for (uint32_t read = 0; read < reads; ++read) {
+        auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+        in->port = read;
+        in->host = 4;
+        in->object = uint32_t(f.opGraph->lookups.size());
+        op->inputs.push_back(std::move(in));
+        auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+        lookup->source = 43;
+        lookup->object = group;
+        lookup->part = -1;
+        lookup->read = uint8_t(read);
+        f.opGraph->lookups.push_back(std::move(lookup));
+    }
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    for (uint32_t port = 4; port <= 6; ++port) {
+        auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+        output->node = node;
+        output->port = port;
+        output->target = 43;
+        output->object = group;
+        f.opGraph->hostOutputs.push_back(std::move(output));
+    }
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    step.part = -1;
+    step.isHead = true;
+    return step;
+}
+
+// A ComposeSlot op node of slot \p slot (lookups 45 on input ports equal to
+// their read, its base and posed matrix into targets 46 and 47), and the
+// OpNode step that runs it.
+fb::RigExecWireStep
+_ComposeStep(RigExecWireFile &f, uint32_t slot)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    uint32_t entry = 0;
+    while (entry < f.manifest->coreOps.size() &&
+           f.manifest->coreOps[entry]->name != "ComposeSlot")
+        ++entry;
+    if (entry == f.manifest->coreOps.size()) {
+        auto added = std::make_unique<fb::RigExecWireManifestEntry>();
+        added->nameSpace = "rig";
+        added->name = "ComposeSlot";
+        added->version = 1;
+        f.manifest->coreOps.push_back(std::move(added));
+    }
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = entry;
+    const uint32_t reads =
+        slot < f.slotMeta->parent.size() && f.slotMeta->parent[slot] >= 0 ? 10
+                                                                          : 9;
+    for (uint32_t read = 0; read < reads; ++read) {
+        auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+        in->port = read;
+        in->host = 4;
+        in->object = uint32_t(f.opGraph->lookups.size());
+        op->inputs.push_back(std::move(in));
+        auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+        lookup->source = 45;
+        lookup->object = slot;
+        lookup->part = -1;
+        lookup->read = uint8_t(read);
+        f.opGraph->lookups.push_back(std::move(lookup));
+    }
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    for (uint32_t port = 10; port <= 11; ++port) {
+        auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+        output->node = node;
+        output->port = port;
+        output->target = uint8_t(port == 10 ? 46 : 47);
+        output->object = slot;
+        f.opGraph->hostOutputs.push_back(std::move(output));
+    }
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    return step;
+}
+
+// A LadderCompose op node of compose group \p group (lookups 44 on input
+// ports equal to their read, its nine outputs into target 44), and the
+// OpNode step that runs it.
+fb::RigExecWireStep
+_LadderStep(RigExecWireFile &f, uint32_t group)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    uint32_t entry = 0;
+    while (entry < f.manifest->coreOps.size() &&
+           f.manifest->coreOps[entry]->name != "LadderCompose")
+        ++entry;
+    if (entry == f.manifest->coreOps.size()) {
+        auto added = std::make_unique<fb::RigExecWireManifestEntry>();
+        added->nameSpace = "rig";
+        added->name = "LadderCompose";
+        added->version = 1;
+        f.manifest->coreOps.push_back(std::move(added));
+    }
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = entry;
+    const int32_t slot = f.pose->composeGroups[group].begin;
+    const uint32_t reads = f.slotMeta->parent[size_t(slot)] >= 0 ? 8 : 6;
+    for (uint32_t read = 0; read < reads; ++read) {
+        auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+        in->port = read;
+        in->host = 4;
+        in->object = uint32_t(f.opGraph->lookups.size());
+        op->inputs.push_back(std::move(in));
+        auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+        lookup->source = 44;
+        lookup->object = group;
+        lookup->part = -1;
+        lookup->read = uint8_t(read);
+        f.opGraph->lookups.push_back(std::move(lookup));
+    }
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    for (uint32_t port = 8; port <= 16; ++port) {
+        auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+        output->node = node;
+        output->port = port;
+        output->target = 44;
+        output->object = group;
+        f.opGraph->hostOutputs.push_back(std::move(output));
+    }
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    step.part = -1;
+    step.isHead = true;
+    return step;
+}
+
+// Whether \p step runs a LadderCompose op node.
+bool
+_IsLadderStep(const RigExecWireFile &f, const fb::RigExecWireStep &step)
+{
+    if (step.kind != fb::StepKind::OpNode || !f.opGraph)
+        return false;
+    for (const auto &output : f.opGraph->hostOutputs)
+        if (output && output->node == uint64_t(step.object) &&
+            output->target == 44)
+            return true;
+    return false;
+}
+
+// Whether \p step runs a RestCompose op node.
+bool
+_IsRestStep(const RigExecWireFile &f, const fb::RigExecWireStep &step)
+{
+    if (step.kind != fb::StepKind::OpNode || !f.opGraph)
+        return false;
+    for (const auto &output : f.opGraph->hostOutputs)
+        if (output && output->node == uint64_t(step.object) &&
+            output->target == 43)
+            return true;
+    return false;
+}
+
+// Whether \p step runs an AvarInputs op node.
+bool
+_IsAvarStep(const RigExecWireFile &f, const fb::RigExecWireStep &step)
+{
+    if (step.kind != fb::StepKind::OpNode || !f.opGraph)
+        return false;
+    for (const auto &output : f.opGraph->hostOutputs)
+        if (output && output->node == uint64_t(step.object) &&
+            output->target == 40)
+            return true;
+    return false;
+}
+
 // Fixture authoring only: declare the new source role before malformed copies are made.
 void
 _DeclareFixtureStageFrames(RigExecWireFile &f)
 {
     using D = fb::SlotDomain;
     using K = fb::StepKind;
-    const auto prep = [](K kind) {
-        return kind == K::PropertyRevision || kind == K::RestCompose ||
-               kind == K::LadderCompose || kind == K::SkinTopology;
+    const auto prep = [&f](const RigExecWireStep &step) {
+        return RigExecFormatPropertyPart(f, step, nullptr, nullptr) ||
+               _IsRestStep(f, step) || _IsLadderStep(f, step) ||
+               step.kind == K::SkinTopology;
     };
     std::map<std::pair<D, uint32_t>, std::vector<size_t>> producers;
     std::vector<size_t> pending;
     for (size_t i = 0; i < f.steps.size(); ++i) {
-        if (prep(f.steps[i].kind))
+        if (prep(f.steps[i]))
             pending.push_back(i);
         for (const auto &range : f.steps[i].writes)
             for (uint32_t slot = range.begin(); slot < range.end(); ++slot)
@@ -376,9 +706,21 @@ _DeclareFixtureStageFrames(RigExecWireFile &f)
                                       D::RequiredStageFramesAdmission;
                            }),
             step.reads.end());
-        const bool helper =
-            step.kind == K::WeightField || step.kind == K::SpaceExpression;
-        if (prep(step.kind) || step.kind == K::AvarInputs ||
+        bool field = false;
+        if (step.kind == K::OpNode && f.opGraph && step.object >= 0 &&
+            size_t(step.object) < f.opGraph->nodes.size())
+            for (const auto &input : f.opGraph->nodes[step.object]->inputs)
+                field =
+                    field || (input->host == 4 &&
+                              f.opGraph->lookups[input->object]->source == 4);
+        bool answer = false;
+        if (step.kind == K::OpNode && f.opGraph)
+            for (const auto &output : f.opGraph->hostOutputs)
+                answer = answer ||
+                         (output && output->node == uint64_t(step.object) &&
+                          output->target == 52);
+        const bool helper = field || answer;
+        if (prep(step) || _IsAvarStep(f, step) ||
             step.kind == K::SnapshotFinals || (helper && ancestors.count(i)))
             continue;
         if (std::none_of(
@@ -534,9 +876,10 @@ _RichFileBody()
     c.rotationSign = {5};
 
     // One step in one cluster.
+    // Its compose node is added with the fixture heads.
     fb::RigExecWireStep step;
-    step.kind = fb::StepKind::ComposeSubtree;
-    step.object = 0;
+    step.kind = fb::StepKind::OpNode;
+    step.object = -2;
     step.cluster = 0;
     step.reads = {fb::SlotRange(fb::SlotDomain::Avars, 0, 1)};
     step.writes = {fb::SlotRange(fb::SlotDomain::PoseFin, 0, 1)};
@@ -598,50 +941,21 @@ _RichFileBody()
     interp.path = _pCtl;
     interp.enabled = _In(InputTag::Bool);
     interp.valueInputs.push_back(_InValue(InputTag::Double));
-    interp.solver = std::make_unique<fb::RigExecWireRbf>();
-    interp.solver->poses = {_V3d(0), _V3d(1)};
-    interp.solver->translations = {_V3d(2)};
-    interp.solver->poseTypes = {0, 2};
-    interp.solver->twistAxis = _V3d(3);
-    interp.solver->radius = _SD(1);
-    interp.solver->translationRadius = _SD(2);
-    interp.solver->radii = _Ds(2, 3);
-    interp.solver->translationRadii = _Ds(2, 4);
-    interp.solver->regularization = _SD(5);
-    interp.solver->weights.resize(2);
-    interp.solver->weights[0].v = _Ds(2, 0);
-    interp.solver->weights[1].v = _Ds(2, 2);
     pose.poseInterpolators.push_back(std::move(interp));
 
     fb::RigExecWireSolver solver;
     solver.path = _pCtl;
     solver.type = _pTokenXyz;
     solver.jointRests = {_L(0)};
-    solver.splineRestWeights = _Ds(3);
-    solver.controlRests = {_L(1)};
-    solver.startRest = _L(2);
     solver.ikRests = {_L(3), _L(4), _L(5)};
-    solver.ikParams = {_SD(0), _SD(1), _SD(2), _SD(3), _SD(4)};
     solver.bend = _In(InputTag::Double);
     solver.upperOffset = _In(InputTag::Double);
     solver.lowerOffset = _In(InputTag::Double);
     solver.stretch = _In(InputTag::Float);
     solver.softness = _In(InputTag::Float);
-    solver.upperLengthBase = _SD(1);
-    solver.lowerLengthBase = _SD(2);
     solver.ikSpace = _In(InputTag::Matrix4d);
     solver.spaceSlot = 0;
-    solver.spaceRest = _L(0);
     solver.blendWeight = _In(InputTag::Float);
-    solver.splineRest = std::make_unique<fb::RigExecWireSplineIkRest>();
-    solver.splineRest->cvs = _L(1);
-    solver.splineRest->rootControl = _Frame(0);
-    solver.splineRest->midControl = _Frame(1);
-    solver.splineRest->endControl = _Frame(2);
-    solver.splineRest->joints = {_Frame(3)};
-    solver.splineRest->segmentLengths = _Ds(2, 4);
-    solver.splineRest->restArcLength = _SD(3);
-    solver.splineRest->volumeWeights = _Ds(2, 5);
     solver.splineParams.preserveVolume = _SD(0);
     solver.splineParams.midFollowWeight = _SD(1);
     solver.splineParams.roll = _SD(2);
@@ -654,11 +968,7 @@ _RichFileBody()
     solver.roll = _In(InputTag::Double);
     solver.twist = _In(InputTag::Double);
     solver.minLengthRatio = _In(InputTag::Double);
-    solver.twistStartRest = _L(3);
-    solver.twistEndRest = _L(4);
-    solver.twistWeights = _Ds(2, 1);
     solver.twistTurns = _In(InputTag::Double);
-    solver.ribbonRestPoints = {_V3f(0)};
     solver.ribbonConstantPoints = {_V3f(1), _V3f(2)};
     solver.ribbonSampleCount = _In(InputTag::Int);
     solver.outputs = {{0, 1}};
@@ -667,7 +977,7 @@ _RichFileBody()
     fb::RigExecWireConstraint constraint;
     constraint.path = _pCtl;
     constraint.type = _pTokenXyz;
-    constraint.target = 0;
+    constraint.target = -1;
     constraint.enabled = _In(InputTag::Bool);
     constraint.defaultWeight = _In(InputTag::Float);
     constraint.offset = _In(InputTag::Vec3d);
@@ -684,7 +994,11 @@ _RichFileBody()
     constraint.worldUpVector = _In(InputTag::Vec3d);
     constraint.aimAxisFallback = _V3d(1);
     constraint.sceneUp = _V3d(4);
-    constraint.flags = uint8_t(fb::ConstraintFlags::ANY);
+    // A single-chain IK with no target, with every flag but preserve joint
+    // orientation.
+    constraint.singleChainIk = true;
+    constraint.flags = uint8_t(fb::ConstraintFlags::ANY) &
+                       ~RigExecWireConstraintPreserveJointOrientation;
     constraint.arrays = 0;
     constraint.poleVector = _In(InputTag::Vec3d);
     constraint.twistDegrees = _In(InputTag::Double);
@@ -816,7 +1130,7 @@ _RichFileBody()
           &weight.extentU, &weight.extentV}) {
         *read = _In(InputTag::Float);
     }
-    weight.oracleStaticError = "static note";
+    weight.fieldStaticError = "static note";
     g.weightObjects.push_back(std::move(weight));
     g.falloffPaths = {_pWeight};
     g.falloffLuts.resize(1);
@@ -897,7 +1211,7 @@ _RegionBegin(const RigExecWireFile &f)
 {
     size_t n = 0;
     while (n < f.steps.size() &&
-           (f.steps[n].isHead || f.steps[n].kind == fb::StepKind::AvarInputs ||
+           (f.steps[n].isHead || _IsAvarStep(f, f.steps[n]) ||
             f.steps[n].kind == fb::StepKind::ChainInputs))
         ++n;
     return n;
@@ -956,21 +1270,14 @@ _AddFixtureHeads(RigExecWireFile &f)
     // The rich fixture has exactly one float chain and one record.
     f.propertyChains[0].versionBase = 0;
     f.phasedConsumers[0].version = 2;
-    fb::RigExecWireStep base;
-    base.kind = fb::StepKind::PropertyRevision;
-    base.object = 0;
-    base.part = 0;
-    base.isHead = true;
-    base.headInputSlots = {2};
-    base.writes = {fb::SlotRange(fb::SlotDomain::PropertyResult, 0, 1)};
-    heads.push_back(base);
-    fb::RigExecWireStep revision = base;
-    revision.part = 1;
-    revision.headInputSlots = {};
-    revision.reads = {fb::SlotRange(fb::SlotDomain::PropertyResult, 0, 1)};
-    revision.writes = {fb::SlotRange(fb::SlotDomain::PropertyResult, 1, 3)};
-    revision.preds = {0};
-    heads[0].succs = {1};
+    _AddPropertyOpGraph(f);
+    fb::RigExecWireStep revision;
+    revision.kind = fb::StepKind::OpNode;
+    revision.object = 0;
+    revision.part = -1;
+    revision.isHead = true;
+    revision.headInputSlots = {2};
+    revision.writes = {fb::SlotRange(fb::SlotDomain::PropertyResult, 0, 3)};
     for (auto *read : {f.propertyChains[0].revisions[0].defaultWeight.get(),
                        f.propertyChains[0].revisions[0].value.get()}) {
         for (uint32_t slot : read->walk) {
@@ -983,16 +1290,10 @@ _AddFixtureHeads(RigExecWireFile &f)
     heads.push_back(revision);
     if (!f.pose->composeGroups.empty()) {
         const auto &group = f.pose->composeGroups[0];
-        fb::RigExecWireStep rest;
-        rest.isHead = true;
-        rest.kind = fb::StepKind::RestCompose;
-        rest.object = 0;
-        rest.part = 0;
+        fb::RigExecWireStep rest = _RestStep(f, 0);
         rest.writes = {
             fb::SlotRange(fb::SlotDomain::Rest, group.begin, group.end)};
-        fb::RigExecWireStep ladder = rest;
-        ladder.kind = fb::StepKind::LadderCompose;
-        ladder.part = 1;
+        fb::RigExecWireStep ladder = _LadderStep(f, 0);
         ladder.reads = rest.writes;
         ladder.writes = {
             fb::SlotRange(fb::SlotDomain::Ladder, group.begin, group.end)};
@@ -1021,29 +1322,23 @@ _AddFixtureHeads(RigExecWireFile &f)
         for (const auto &read : ladder.headInputReads)
             ladder.headVaryingLeaves |=
                 bool(read.flags & uint16_t(fb::InputReadFlags::Varying));
-        rest.succs = {3};
-        ladder.preds = {2};
+        rest.succs = {2};
+        ladder.preds = {1};
         heads.push_back(std::move(rest));
         heads.push_back(std::move(ladder));
         for (auto &step : f.steps) {
-            if (step.kind == fb::StepKind::ComposeSubtree)
-                step.reads.push_back(fb::SlotRange(fb::SlotDomain::Ladder,
-                                                   group.begin, group.end));
-            if (step.kind == fb::StepKind::Constraint ||
-                step.kind == fb::StepKind::FrameMatrix)
-                step.reads.push_back(fb::SlotRange(fb::SlotDomain::Rest, 0, 1));
+            if (step.kind != fb::StepKind::OpNode || step.object != -2)
+                continue;
+            step.object = _ComposeStep(f, uint32_t(group.begin)).object;
+            step.reads.push_back(
+                fb::SlotRange(fb::SlotDomain::Ladder, group.begin, group.end));
         }
     }
     // Actual raw avar producers precede fixture region consumers.
     for (size_t slot = 0; slot < f.slotMeta->paths.size(); ++slot) {
         if (f.slotMeta->slotKind[slot] != fb::SlotKind::FirstFramePose)
             continue;
-        fb::RigExecWireStep avars;
-        avars.kind = fb::StepKind::AvarInputs;
-        avars.object = int32_t(slot);
-        avars.writes = {fb::SlotRange(fb::SlotDomain::Avars, uint32_t(slot),
-                                      uint32_t(slot + 1))};
-        heads.push_back(std::move(avars));
+        heads.push_back(_AvarStep(f, uint32_t(slot)));
     }
     // ChainBase is produced from the actual sampled ChainInput source.
     for (size_t chain = 0; chain < f.geometry->chains.size(); ++chain) {
@@ -1332,23 +1627,8 @@ TestBitExactness()
     CHECK(_Same(o->clustering->serialCost, file.clustering->serialCost));
     CHECK(_Same(o->clustering->criticalPathCost,
                 file.clustering->criticalPathCost));
-    const fb::RigExecWireRbf &rbf = *o->pose->poseInterpolators[0].solver;
-    const fb::RigExecWireRbf &rbf0 = *file.pose->poseInterpolators[0].solver;
-    CHECK(_Same(rbf.radius, rbf0.radius));
-    CHECK(_Same(rbf.translationRadius, rbf0.translationRadius));
-    CHECK(_Same(rbf.regularization, rbf0.regularization));
-    CHECK(_Same(rbf.radii, rbf0.radii));
-    CHECK(_Same(rbf.translationRadii, rbf0.translationRadii));
-    CHECK(_Same(rbf.poses, rbf0.poses));
-    CHECK(_Same(rbf.translations, rbf0.translations));
-    CHECK(_Same(rbf.twistAxis, rbf0.twistAxis));
-    CHECK(rbf.weights.size() == 2 &&
-          _Same(rbf.weights[1].v, rbf0.weights[1].v));
     const fb::RigExecWireSolver &s = o->pose->solvers[0];
     const fb::RigExecWireSolver &s0 = file.pose->solvers[0];
-    CHECK(_Same(s.upperLengthBase, s0.upperLengthBase));
-    CHECK(_Same(s.lowerLengthBase, s0.lowerLengthBase));
-    CHECK(_Same(s.splineRest->restArcLength, s0.splineRest->restArcLength));
     const auto &samples =
         o->geometry->chains[0].revisions[0].blendChannels[0].samples;
     const auto &samples0 =
@@ -1365,12 +1645,6 @@ TestBitExactness()
 
     // Structs.
     CHECK(_Same(s.ikRests, s0.ikRests));
-    CHECK(_Same(s.ikParams.upperLength, s0.ikParams.upperLength) &&
-          _Same(s.ikParams.lowerLength, s0.ikParams.lowerLength) &&
-          _Same(s.ikParams.stretch, s0.ikParams.stretch) &&
-          _Same(s.ikParams.softness, s0.ikParams.softness) &&
-          _Same(s.ikParams.preferredBendRadians,
-                s0.ikParams.preferredBendRadians));
     CHECK(
         _Same(s.splineParams.preserveVolume, s0.splineParams.preserveVolume) &&
         _Same(s.splineParams.midFollowWeight,
@@ -1379,17 +1653,7 @@ TestBitExactness()
         _Same(s.splineParams.twist, s0.splineParams.twist) &&
         _Same(s.splineParams.minLengthRatio, s0.splineParams.minLengthRatio) &&
         s.splineParams.aimRootTangent);
-    CHECK(_Same(s.splineRest->cvs, s0.splineRest->cvs));
-    CHECK(_Same(s.splineRest->rootControl, s0.splineRest->rootControl));
-    CHECK(_Same(s.splineRest->joints, s0.splineRest->joints));
-    CHECK(_Same(s.splineRest->segmentLengths, s0.splineRest->segmentLengths));
-    CHECK(_Same(s.splineRest->volumeWeights, s0.splineRest->volumeWeights));
-    CHECK(_Same(s.startRest, s0.startRest));
-    CHECK(_Same(s.spaceRest, s0.spaceRest));
     CHECK(s.spaceSlot == 0);
-    CHECK(_Same(s.twistStartRest, s0.twistStartRest));
-    CHECK(_Same(s.twistWeights, s0.twistWeights));
-    CHECK(_Same(s.splineRestWeights, s0.splineRestWeights));
     CHECK(_Same(s.ribbonConstantPoints, s0.ribbonConstantPoints));
     CHECK(_Same(s.jointRests, s0.jointRests));
     CHECK(s.outputs == s0.outputs);
@@ -1407,7 +1671,7 @@ TestBitExactness()
     const fb::RigExecWireConstraint &k = o->pose->constraints[0];
     CHECK(_Same(k.aimAxisFallback, file.pose->constraints[0].aimAxisFallback));
     CHECK(_Same(k.sceneUp, file.pose->constraints[0].sceneUp));
-    CHECK(k.flags == uint8_t(fb::ConstraintFlags::ANY));
+    CHECK(k.flags == file.pose->constraints[0].flags);
     const fb::RigExecWireConstraintArrays &a = o->pose->constraintArrays[0];
     const fb::RigExecWireConstraintArrays &a0 = file.pose->constraintArrays[0];
     CHECK(_Same(a.weights, a0.weights) &&
@@ -1449,7 +1713,7 @@ TestBitExactness()
     CHECK(_Same(o->geometry->deltaBaseMatrix, file.geometry->deltaBaseMatrix));
     const fb::RigExecWireWeightObject &w = o->geometry->weightObjects[0];
     CHECK(_Same(w.falloffCurve, file.geometry->weightObjects[0].falloffCurve));
-    CHECK(w.oracleStaticError == "static note");
+    CHECK(w.fieldStaticError == "static note");
     CHECK(
         _Same(o->geometry->falloffLuts[0].v, file.geometry->falloffLuts[0].v));
     const fb::RigExecWirePropertyRevision &pr =
@@ -1563,24 +1827,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 32 &&
-                      RigExecFormatOldestReadable == 20,
-                  "format 22 adds the IK/FK match, format 23 the property "
-                  "movers' quantize and path operations, format 24 "
-                  "RigLogic's solves, format 25 windowed operations, "
-                  "format 26 the cloth's material model (RCL3) and format "
-                  "27 volume falloff sample inputs, format 28 Range "
-                  "Smooth revisions, format 29 sparse blend channel keys, "
-                  "format 30 Range DQ and independent summaries and format 31 "
-                  "the 2D skeleton, unclamped animated map and scalar primvar "
-                  "records, format 32 the recomputed normals layout; per-group "
-                  "range chains pin the oldest readable "
-                  "format at 20");
-    // Every format before 20, 19 among them, requires re-export: a chain
-    // with groups' records (gated parts, Whole revisions' published groups,
-    // Range skins, private constants) mean something else to an older
-    // reader. Future versions require a supported exporter. Format 20 opens
-    // (it holds no extended deformer settings) but is never written.
+    static_assert(RigExecFormatVersion == 68 &&
+                      RigExecFormatOldestReadable == 68,
+                  "format 68 runs the remaining step 10 families as op nodes "
+                  "and is the only format Open reads");
+    // Every older format requires re-export: it may hold retired steps.
+    // Future versions require a supported exporter.
     RigExecWireFile versioned = _RichFile();
     size_t reexports = 0, rebakes = 0;
     for (uint32_t version = 0; version <= RigExecFormatVersion + 1; ++version) {
@@ -1590,27 +1842,13 @@ TestOpenRefusals()
         versioned.formatVersion = version;
         const std::string expected =
             "unsupported .rigexec format version " + std::to_string(version) +
-            " (this reader reads 20 through " +
+            " (this reader reads 68 through " +
             std::to_string(RigExecFormatVersion) + "); " +
-            (version < 20 ? "re-export: per-group range chains" : "rebake");
+            (version < 68 ? "re-export: step 10 op nodes" : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
-        ++(version < 20 ? reexports : rebakes);
+        ++(version < 68 ? reexports : rebakes);
     }
-    CHECK(reexports == 20 && rebakes == 1);
-    _context = "open refusals: version 20";
-    versioned.formatVersion = 20;
-    const auto previous = _Open(_PackUnchecked(versioned), &why);
-    CHECK(previous && previous->formatVersion == 20);
-    std::vector<uint8_t> unwritten = {1, 2, 3};
-    CHECK(!_Write(versioned, &unwritten, &why) && unwritten.empty() &&
-          _Contains(why, "format_version is 20; a writer writes " +
-                             std::to_string(RigExecFormatVersion)));
-    for (uint32_t older = 21; older < RigExecFormatVersion; ++older) {
-        _context = "open refusals: version " + std::to_string(older);
-        versioned.formatVersion = older;
-        const auto opened = _Open(_PackUnchecked(versioned), &why);
-        CHECK(opened && opened->formatVersion == older);
-    }
+    CHECK(reexports == 68 && rebakes == 1);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;
@@ -1917,12 +2155,15 @@ TestValidationSmoke()
     // Solvers and interpolators.
     expect("ik rests", "ik_rests",
            [](F &f) { f.pose->solvers[0].ikRests.pop_back(); });
-    expect("rbf weights", "weights[0]", [](F &f) {
-        f.pose->poseInterpolators[0].solver->weights[0].v.pop_back();
-    });
     // Constraints.
     expect("envelope without weight object", "weight_object_index",
            [](F &f) { f.pose->constraints[0].weightObjectIndex = 0; });
+    expect("preserve orientation off SingleChainIK",
+           "preserve joint orientation", [](F &f) {
+               f.pose->constraints[0].singleChainIk = false;
+               f.pose->constraints[0].flags |=
+                   RigExecWireConstraintPreserveJointOrientation;
+           });
     // Space switches.
     expect("switch filters", "filters",
            [](F &f) { f.pose->spaceSwitches[0].filters = {0, 1}; });
@@ -2631,8 +2872,9 @@ TestSwitchOrder()
 }
 
 /// The rich file with slot 0 a volume and slot 1 (/Rig/Slot0) not, and the
-/// volume's VolumePlacements step after the compose: step 1, part 1,
-/// reading PoseFin[0] and writing WeightFrames[0], in cluster 0.
+/// volume's two VolumePlacement op nodes after the compose: step 1 runs node
+/// 0, reading PoseFin[0] through lookup 0 and storing WeightFrames[0]; step 2
+/// node 1, the base placement, in cluster 0.
 RigExecWireFile
 _VolumeFile()
 {
@@ -2640,17 +2882,46 @@ _VolumeFile()
     _AddSlots(f, 1);
     f.constants->noScaleAvars = {1, 0};
     f.pose->commits[0].slotWrites[0] = uint32_t(f.slotMeta->paths.size());
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    const uint32_t first = uint32_t(f.opGraph->nodes.size());
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = "VolumePlacement";
+    entry->version = 1;
+    f.manifest->coreOps.push_back(std::move(entry));
+    for (uint32_t base = 0; base < 2; ++base) {
+        auto op = std::make_unique<fb::RigExecWireOpNode>();
+        op->op = uint32_t(f.manifest->coreOps.size() - 1);
+        auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+        in->port = 0;
+        in->host = 4;
+        in->object = uint32_t(f.opGraph->lookups.size());
+        op->inputs.push_back(std::move(in));
+        f.opGraph->nodes.push_back(std::move(op));
+        auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+        lookup->source = 1;
+        lookup->object = 0;
+        lookup->part = int32_t(base);
+        f.opGraph->lookups.push_back(std::move(lookup));
+        auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+        output->node = first + base;
+        output->port = 1;
+        output->target = uint8_t(1 + base);
+        output->object = 0;
+        f.opGraph->hostOutputs.push_back(std::move(output));
+    }
     fb::RigExecWireStep place;
-    place.kind = fb::StepKind::VolumePlacements;
-    place.object = 0;
-    place.part = 1;
+    place.kind = fb::StepKind::OpNode;
+    place.object = int32_t(first);
+    place.part = -1;
     place.cluster = 0;
     place.reads = {fb::SlotRange(fb::SlotDomain::PoseFin, 0, 1)};
     place.writes = {fb::SlotRange(fb::SlotDomain::WeightFrames, 0, 1)};
     place.preds = _RegionIds(f, {0});
     _RegionStep(f, 0).succs = _RegionIds(f, {1});
     fb::RigExecWireStep base = place;
-    base.part = 2;
+    base.object = int32_t(first + 1);
     base.reads = {fb::SlotRange(fb::SlotDomain::PoseBase, 0, 1)};
     base.writes = {fb::SlotRange(fb::SlotDomain::WeightFramesBase, 0, 1)};
     _RegionStep(f, 0).writes.push_back(
@@ -2666,6 +2937,158 @@ _VolumeFile()
     return f;
 }
 
+/// An op node of \p name storing host output target \p target (port
+/// \p port) of \p object, and, for a frame record's matrix, its valid byte
+/// too; the OpNode step that runs it, writing nothing yet.
+fb::RigExecWireStep
+_SpaceStep(RigExecWireFile &f, const char *name, uint8_t target,
+           uint32_t object)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = name;
+    entry->version = 1;
+    f.manifest->coreOps.push_back(std::move(entry));
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = uint32_t(f.manifest->coreOps.size() - 1);
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    const bool record = target == 22;
+    for (uint8_t t = target; t <= (record ? target + 1 : target); ++t) {
+        auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+        output->node = node;
+        output->port = record ? 5u + uint32_t(t - target) : 3u;
+        output->target = t;
+        output->object = object;
+        f.opGraph->hostOutputs.push_back(std::move(output));
+    }
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    return step;
+}
+
+/// Feeds port \p port of op step \p step's node from a new lookup.
+void
+_LookUp(RigExecWireFile &f, const fb::RigExecWireStep &step, uint32_t port,
+        uint8_t source, uint32_t object, int32_t part, uint8_t read = 0)
+{
+    auto input = std::make_unique<fb::RigExecWireOpNodeInput>();
+    input->port = port;
+    input->host = 4;
+    input->object = uint32_t(f.opGraph->lookups.size());
+    f.opGraph->nodes[size_t(step.object)]->inputs.push_back(std::move(input));
+    auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+    lookup->source = source;
+    lookup->object = object;
+    lookup->part = part;
+    lookup->read = read;
+    f.opGraph->lookups.push_back(std::move(lookup));
+}
+
+/// A StaticWeights op node storing the packet of weight object \p object,
+/// and the OpNode step that runs it writing that packet alone.
+fb::RigExecWireStep
+_PacketStep(RigExecWireFile &f, uint32_t object)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = "StaticWeights";
+    entry->version = 1;
+    f.manifest->coreOps.push_back(std::move(entry));
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = uint32_t(f.manifest->coreOps.size() - 1);
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+    output->node = node;
+    output->port = 3;
+    output->target = 3;
+    output->object = object;
+    f.opGraph->hostOutputs.push_back(std::move(output));
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    step.writes = {
+        fb::SlotRange(fb::SlotDomain::WeightPacket, object, object + 1)};
+    return step;
+}
+
+/// A PoseCommit op node writing commit \p commit back, its candidates stored
+/// through a CommitSlots host output, and the OpNode step that runs it.
+fb::RigExecWireStep
+_CommitStep(RigExecWireFile &f, uint32_t commit)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = "PoseCommit";
+    entry->version = 1;
+    f.manifest->coreOps.push_back(std::move(entry));
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = uint32_t(f.manifest->coreOps.size() - 1);
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+    output->node = node;
+    output->port = 9;
+    output->target = 30;
+    output->object = commit;
+    f.opGraph->hostOutputs.push_back(std::move(output));
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    return step;
+}
+
+/// A StaticWeightField op node weighing weight object \p object for weight
+/// field \p field, its values read through a WeightFieldInputs lookup and
+/// its weights stored as the field's, and the OpNode step that runs it
+/// writing those weights alone.
+fb::RigExecWireStep
+_FieldStep(RigExecWireFile &f, uint32_t field, int32_t object)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    auto entry = std::make_unique<fb::RigExecWireManifestEntry>();
+    entry->nameSpace = "rig";
+    entry->name = "StaticWeightField";
+    entry->version = 1;
+    f.manifest->coreOps.push_back(std::move(entry));
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = uint32_t(f.manifest->coreOps.size() - 1);
+    auto input = std::make_unique<fb::RigExecWireOpNodeInput>();
+    input->port = 0;
+    input->host = 4;
+    input->object = uint32_t(f.opGraph->lookups.size());
+    op->inputs.push_back(std::move(input));
+    auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+    lookup->source = 4;
+    lookup->object = field;
+    lookup->part = object;
+    lookup->read = 27;
+    f.opGraph->lookups.push_back(std::move(lookup));
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+    output->node = node;
+    output->port = 4;
+    output->target = 5;
+    output->object = field;
+    f.opGraph->hostOutputs.push_back(std::move(output));
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    step.writes = {
+        fb::SlotRange(fb::SlotDomain::WeightField, field, field + 1)};
+    return step;
+}
+
 /// Appends \p step to \p f in cluster 0, with no edges.
 void
 _AppendStep(RigExecWireFile &f, fb::RigExecWireStep step)
@@ -2678,9 +3101,230 @@ _AppendStep(RigExecWireFile &f, fb::RigExecWireStep step)
     f.steps.push_back(std::move(step));
 }
 
-/// One VolumePlacements step per volume slot, each placing its own slot
-/// alone: the per-volume form is accepted and round-trips; the whole-map
-/// form, a step of a slot that is no volume, a write other than its own
+/// Each op node's lookups read only what the node runs for: a pose
+/// version lookup past the pools on a node that places nothing, a second
+/// pose version lookup on a placement node and a weight lookup on a node
+/// that builds no packet are refused at validation.
+void
+TestOpLookupOwners()
+{
+    using F = RigExecWireFile;
+    std::string why;
+    int cases = 0;
+    const auto expect = [&](const char *name, const std::string &text,
+                            const std::function<void(F &)> &mutate) {
+        _context = std::string("op lookup owners: ") + name;
+        ++cases;
+        F file = _VolumeFile();
+        mutate(file);
+        why.clear();
+        const bool ok = RigExecFormatValidate(file, &why);
+        CHECK(!ok && why.find(text) != std::string::npos);
+        if (ok || why.find(text) == std::string::npos)
+            std::printf("  got '%s', expected '%s'\n",
+                        ok ? "(accepted)" : why.c_str(), text.c_str());
+    };
+    const auto look = [](F &f, uint32_t node, uint8_t source, uint32_t object,
+                         int32_t part) {
+        auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+        lookup->source = source;
+        lookup->object = object;
+        lookup->part = part;
+        auto input = std::make_unique<fb::RigExecWireOpNodeInput>();
+        input->port = 1;
+        input->host = 4;
+        input->object = uint32_t(f.opGraph->lookups.size());
+        f.opGraph->lookups.push_back(std::move(lookup));
+        f.opGraph->nodes[node]->inputs.push_back(std::move(input));
+    };
+    {
+        _context = "op lookup owners: the volume file";
+        const F valid = _VolumeFile();
+        CHECK(RigExecFormatValidate(valid, &why));
+    }
+    const uint32_t place = uint32_t(_VolumeFile().opGraph->nodes.size() - 2);
+    const auto packetStep = [](F &f) {
+        fb::RigExecWireStep step = _PacketStep(f, 0);
+        step.reads = {
+            fb::SlotRange(fb::SlotDomain::RequiredStageFramesAdmission, 0, 1)};
+        return step;
+    };
+    expect("a pose version past the pools on a packet node",
+           "reads no pose frame of the program", [&](F &f) {
+               fb::RigExecWireStep packet = packetStep(f);
+               look(f, uint32_t(packet.object), 1, 1000000, 0);
+               _AppendStep(f, std::move(packet));
+           });
+    expect("an undeclared pose frame on a packet node",
+           "reads a pose frame its node's step does not read", [&](F &f) {
+               fb::RigExecWireStep packet = packetStep(f);
+               look(f, uint32_t(packet.object), 1, 0, 0);
+               _AppendStep(f, std::move(packet));
+           });
+    expect("a second pose version on a placement node",
+           "places a volume from 2 pose version lookups",
+           [&](F &f) { look(f, place, 1, 0, 0); });
+    expect("a rest frame on a placement node",
+           "reads a rest frame of a slot its node does not store", [&](F &f) {
+               look(f, place, 20, 0, -1);
+               for (fb::RigExecWireStep &step : f.steps)
+                   if (step.kind == fb::StepKind::OpNode &&
+                       step.object == int32_t(place))
+                       step.reads.push_back(
+                           fb::SlotRange(fb::SlotDomain::Rest, 0, 1));
+           });
+    expect("a commit gate on a placement node",
+           "reads the gates of a commit its node's record does not name",
+           [&](F &f) { look(f, place, 21, 0, -1); });
+    expect("avar bindings on a placement node",
+           "reads the avar bindings of a slot its node does not store",
+           [&](F &f) { look(f, place, 40, 0, -1); });
+    expect("a checkpoint the file does not hold",
+           "a checkpoint inputs lookup reads no input",
+           [&](F &f) { look(f, place, 41, 0, -1); });
+    expect("pose interpolator inputs on a placement node",
+           "reads the inputs of a pose interpolator its node does not store",
+           [&](F &f) { look(f, place, 42, 0, -1); });
+    expect("rest inputs on a placement node", "rest input",
+           [&](F &f) { look(f, place, 43, 0, -1); });
+    expect(
+        "another slot's rest frame on a provider matrix node",
+        "reads a rest frame of a slot its node does not store", [&](F &f) {
+            fb::RigExecWireStep matrix = _SpaceStep(f, "ProviderMatrix", 20, 1);
+            matrix.writes = {fb::SlotRange(fb::SlotDomain::FinalMatrix, 1, 2)};
+            matrix.reads = {
+                fb::SlotRange(fb::SlotDomain::Rest, 0, 1),
+                fb::SlotRange(fb::SlotDomain::RequiredStageFramesAdmission, 0,
+                              1)};
+            look(f, uint32_t(matrix.object), 20, 0, -1);
+            _AppendStep(f, std::move(matrix));
+        });
+    expect("a listed rest frame on a placement node",
+           "reads a rest frame of a slot its node does not store", [&](F &f) {
+               auto element = std::make_unique<fb::RigExecWireOpLookup>();
+               element->source = 20;
+               element->object = 0;
+               element->part = -1;
+               const uint32_t at = uint32_t(f.opGraph->lookups.size());
+               f.opGraph->lookups.push_back(std::move(element));
+               look(f, place, 5, at, 1);
+           });
+    expect(
+        "provider candidates on a placement node",
+        "reads the candidates of a provider value its node does not "
+        "answer",
+        [&](F &f) {
+            f.providerProgram =
+                std::make_unique<fb::RigExecWireProviderProgram>();
+            f.providerProgram->valueKeys = {"/Rig/Volume.value"};
+            f.providerProgram->defaults.resize(1);
+            fb::RigExecWireProviderOp attribute;
+            attribute.kind = uint32_t(RigExecProviderOpKind::Attribute);
+            attribute.owner = "/Rig/Volume.value";
+            attribute.output = 0;
+            f.providerProgram->ops.push_back(std::move(attribute));
+            fb::RigExecWireStep answer = _SpaceStep(f, "ProviderSelect", 52, 0);
+            answer.writes = {fb::SlotRange(fb::SlotDomain::SpaceValue, 0, 1)};
+            answer.reads = {fb::SlotRange(
+                fb::SlotDomain::RequiredStageFramesAdmission, 0, 1)};
+            _AppendStep(f, std::move(answer));
+            look(f, place, 25, 0, -1);
+        });
+    expect("a weight lookup on a placement node",
+           "reads a weight its node does not build", [&](F &f) {
+               _AppendStep(f, packetStep(f));
+               look(f, place, 2, 0, -1);
+           });
+    expect("a constraint lookup of a commit no constraint makes",
+           "a constraint lookup reads nothing constraint 0 holds",
+           [&](F &f) { look(f, place, 32, 0, -1); });
+    const auto constraintWalk = [](F &f) {
+        CHECK(f.pose);
+        if (f.pose->commits.empty())
+            f.pose->commits.emplace_back();
+        if (f.pose->walkSteps.empty())
+            f.pose->walkSteps.emplace_back();
+        CHECK(!f.pose->constraints.empty());
+        f.pose->walkSteps[0].solverBatch = false;
+        f.pose->walkSteps[0].index = 0;
+    };
+    for (const uint8_t source : {32, 33, 34, 35, 36, 37, 39})
+        expect("a constraint lookup on a placement node",
+               "reads a constraint its node does not solve", [&](F &f) {
+                   constraintWalk(f);
+                   look(f, place, source, 0,
+                        source == 37 ? 1 : (source == 32 ? 0 : -1));
+                   f.opGraph->lookups.back()->read = source == 33   ? 20
+                                                     : source == 35 ? 30
+                                                                    : 0;
+               });
+    for (const uint8_t target : {35, 36, 37})
+        expect("a constraint output on a placement node",
+               "node " + std::to_string(place) +
+                   " stores into constraint 0, which it does not solve",
+               [&](F &f) {
+                   if (target != 35)
+                       constraintWalk(f);
+                   auto output =
+                       std::make_unique<fb::RigExecWireOpHostOutput>();
+                   output->node = place;
+                   output->port = 1;
+                   output->target = target;
+                   output->object = 0;
+                   f.opGraph->hostOutputs.push_back(std::move(output));
+               });
+    expect("commit versions on a placement node",
+           "reads a commit its node does not write back",
+           [&](F &f) { look(f, place, 30, 0, 0); });
+    expect("the retired commit candidates lookup",
+           "the retired commit candidates lookup",
+           [&](F &f) { look(f, place, 31, 0, 0); });
+    expect("a solver input on a placement node",
+           "reads a solver its node does not run",
+           [&](F &f) { look(f, place, 60, 0, 0); });
+    expect("a solver input of no solver",
+           "a solver lookup reads nothing solver 1000000 holds",
+           [&](F &f) { look(f, place, 60, 1000000, 0); });
+    expect("a solver input past the solver reads",
+           "a solver lookup reads nothing solver 0 holds",
+           [&](F &f) { look(f, place, 60, 0, 200); });
+    expect("an enabled state stored by a node storing no groups",
+           "stores whether revision 0 is enabled, but not its groups",
+           [&](F &f) {
+               auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+               output->node = place;
+               output->port = 1;
+               output->target = 6;
+               output->object = 0;
+               f.opGraph->hostOutputs.push_back(std::move(output));
+           });
+    {
+        // An unvalidated file may hold a null lookup: labelling its node's
+        // step reads no lookup through it.
+        _context = "op lookup owners: a null lookup labelled";
+        F f = _VolumeFile();
+        auto op = std::make_unique<fb::RigExecWireOpNode>();
+        auto input = std::make_unique<fb::RigExecWireOpNodeInput>();
+        input->host = 4;
+        input->object = uint32_t(f.opGraph->lookups.size());
+        op->inputs.push_back(std::move(input));
+        f.opGraph->lookups.push_back(nullptr);
+        fb::RigExecWireStep step;
+        step.kind = fb::StepKind::OpNode;
+        step.object = int32_t(f.opGraph->nodes.size());
+        f.opGraph->nodes.push_back(std::move(op));
+        _AppendStep(f, std::move(step));
+        CHECK(f.geometry != nullptr);
+        CHECK(RigExecFormatStepLabel(f, f.steps.size() - 1) ==
+              "OpNode op node " + std::to_string(f.opGraph->nodes.size() - 1));
+    }
+    std::printf("op lookup owners: %d foreign lookup(s) refused\n", cases);
+}
+
+/// One VolumePlacement op step per volume slot and phase, each placing its
+/// own slot alone: the form is accepted and round-trips; the retired step
+/// kind, a node of a slot that is no volume, a pose lookup of no frame or of
+/// a version the step does not declare, a write other than its own
 /// WeightFrames slot, a second step of one volume, a volume with no step,
 /// another kind writing WeightFrames and a reader of a placement ahead of
 /// its step are refused, each naming the step.
@@ -2698,9 +3342,10 @@ TestVolumePlacementSteps()
     CHECK(_Write(valid, &bytes));
     const auto opened = _Open(bytes, &why);
     CHECK(opened && opened->steps.size() == _RegionBegin(*opened) + 3 &&
-          _RegionStep(*opened, 1).kind == fb::StepKind::VolumePlacements &&
-          _RegionStep(*opened, 1).object == 0 &&
-          _RegionStep(*opened, 1).part == 1);
+          _RegionStep(*opened, 1).kind == fb::StepKind::OpNode &&
+          _RegionStep(*opened, 1).object == _RegionStep(valid, 1).object &&
+          RigExecFormatStepLabel(*opened, _RegionBegin(*opened) + 2) ==
+              "OpNode /Rig/Ctl base");
     std::vector<uint8_t> again;
     CHECK(opened && _Write(*opened, &again) && again == bytes);
 
@@ -2719,61 +3364,67 @@ TestVolumePlacementSteps()
                         ok ? "(accepted)" : why.c_str(), text.c_str());
         }
     };
-    const auto wholeMap = [](F &f) { _RegionStep(f, 1).part = -1; };
-    const std::string retired = "step 1 (VolumePlacements every volume "
-                                "weight) is the retired whole-map placement "
-                                "(part -1)";
-    expect("whole-map form", retired, wholeMap);
+    const auto retiredKind = [](F &f) {
+        _RegionStep(f, 1).kind = fb::StepKind::ReservedVolumePlacements;
+    };
+    const std::string node = std::to_string(_RegionStep(valid, 1).object);
+    const size_t output = valid.opGraph->hostOutputs.size() - 2;
+    const size_t lookup = valid.opGraph->lookups.size() - 2;
+    const std::string retired = "step 1 (ReservedVolumePlacements " + node +
+                                "): the retired VolumePlacements step";
+    expect("the retired step kind", retired, retiredKind);
     {
-        _context = "volume placements open: whole-map form";
+        _context = "volume placements open: the retired step kind";
         ++cases;
         F file = _VolumeFile();
-        wholeMap(file);
+        retiredKind(file);
         CHECK(!_Open(_PackUnchecked(file), &why) &&
               why == "invalid .rigexec: " + _RegionDiagnostic(file, retired));
     }
-    expect("another part",
-           "step 1 (VolumePlacements every volume weight) has part 0, "
-           "which is no VolumePlacements form",
-           [](F &f) { _RegionStep(f, 1).part = 0; });
     expect("no volume slot",
-           "step 1 (VolumePlacements /Rig/Slot0) places slot 1, which is no "
-           "volume slot",
-           [](F &f) {
-               _RegionStep(f, 1).object = 1;
-               _RegionStep(f, 1).reads = {
-                   fb::SlotRange(fb::SlotDomain::PoseFin, 1, 2)};
+           "op_graph.host_outputs: node " + node +
+               " places slot 1, which is no volume slot",
+           [&](F &f) {
+               f.opGraph->hostOutputs[output]->object = 1;
                _RegionStep(f, 1).writes = {
                    fb::SlotRange(fb::SlotDomain::WeightFrames, 1, 2)};
            });
     expect("slot past the slots",
-           "step 1 (VolumePlacements every volume weight) places slot 2, "
-           "which is no volume slot",
-           [](F &f) { _RegionStep(f, 1).object = 2; });
+           "op_graph.host_outputs: node " + node +
+               " places slot 2, which is no volume slot",
+           [&](F &f) { f.opGraph->hostOutputs[output]->object = 2; });
+    expect("a lookup of no fin or base frame",
+           "op_graph.lookups: a pose version lookup reads neither a fin nor "
+           "a base frame",
+           [&](F &f) { f.opGraph->lookups[lookup]->part = 2; });
+    expect("a lookup of an undeclared version",
+           "step 1 (OpNode /Rig/Ctl) looks up PoseFin[1], which it does not "
+           "read",
+           [&](F &f) { f.opGraph->lookups[lookup]->object = 1; });
     expect("another volume's slot",
-           "step 1 (VolumePlacements /Rig/Ctl) writes other than "
+           "step 1 (OpNode /Rig/Ctl) writes other than "
            "WeightFrames[0]",
            [](F &f) {
                _RegionStep(f, 1).writes = {
                    fb::SlotRange(fb::SlotDomain::WeightFrames, 1, 2)};
            });
     expect("more than its slot",
-           "step 1 (VolumePlacements /Rig/Ctl) writes other than "
+           "step 1 (OpNode /Rig/Ctl) writes other than "
            "WeightFrames[0]",
            [](F &f) {
                _RegionStep(f, 1).writes = {
                    fb::SlotRange(fb::SlotDomain::WeightFrames, 0, 2)};
            });
     expect("no write",
-           "step 1 (VolumePlacements /Rig/Ctl) writes other than "
+           "step 1 (OpNode /Rig/Ctl) writes other than "
            "WeightFrames[0]",
            [](F &f) { _RegionStep(f, 1).writes.clear(); });
     expect("a second step of one volume",
-           "step 3 (VolumePlacements /Rig/Ctl) places volume slot 0 again; "
-           "step 1 (VolumePlacements /Rig/Ctl) already does",
+           "step 3 (OpNode /Rig/Ctl) places volume slot 0 again; "
+           "step 1 (OpNode /Rig/Ctl) already does",
            [](F &f) { _AppendStep(f, _RegionStep(f, 1)); });
     expect("a volume with no step",
-           "volume slot 1 (/Rig/Slot0) has no VolumePlacements step",
+           "volume slot 1 (/Rig/Slot0) has no VolumePlacement op step",
            [](F &f) { f.constants->noScaleAvars[1] = 1; });
     // A retired kind is named as one ahead of the WeightFrames rule its
     // write would break.
@@ -2781,31 +3432,102 @@ TestVolumePlacementSteps()
            "step 1 is a retired SnapshotFinals step",
            [](F &f) { _RegionStep(f, 1).kind = fb::StepKind::SnapshotFinals; });
     expect("a weight packet writing WeightFrames",
-           "step 3 (WeightPacket /Rig/W) writes WeightFrames, which only a "
-           "VolumePlacements step writes",
+           "step 3 (OpNode /Rig/W) writes other than the WeightPacket of "
+           "weight object 0",
+           [](F &f) {
+               fb::RigExecWireStep packet = _PacketStep(f, 0);
+               packet.writes.push_back(
+                   fb::SlotRange(fb::SlotDomain::WeightFrames, 0, 1));
+               _AppendStep(f, std::move(packet));
+           });
+    expect("a retired weight packet step",
+           "step 3 (ReservedWeightPacket 0): the retired WeightPacket step",
            [](F &f) {
                fb::RigExecWireStep packet;
-               packet.kind = fb::StepKind::WeightPacket;
+               packet.kind = fb::StepKind::ReservedWeightPacket;
                packet.object = 0;
                packet.writes = {
-                   fb::SlotRange(fb::SlotDomain::WeightPacket, 0, 1),
-                   fb::SlotRange(fb::SlotDomain::WeightFrames, 0, 1)};
+                   fb::SlotRange(fb::SlotDomain::WeightPacket, 0, 1)};
                _AppendStep(f, std::move(packet));
+           });
+    expect("a retired space expression step",
+           "step 3 (ReservedSpaceExpression 0): the retired SpaceExpression "
+           "step",
+           [](F &f) {
+               fb::RigExecWireStep space;
+               space.kind = fb::StepKind::ReservedSpaceExpression;
+               space.object = 0;
+               _AppendStep(f, std::move(space));
+           });
+    expect("a retired provider matrix step",
+           "step 3 (ReservedProviderMatrix 0): the retired ProviderMatrix step",
+           [](F &f) {
+               fb::RigExecWireStep matrix;
+               matrix.kind = fb::StepKind::ReservedProviderMatrix;
+               matrix.object = 0;
+               _AppendStep(f, std::move(matrix));
+           });
+    expect("a retired frame matrix step",
+           "step 3 (ReservedFrameMatrix 0): the retired FrameMatrix step",
+           [](F &f) {
+               fb::RigExecWireStep matrix;
+               matrix.kind = fb::StepKind::ReservedFrameMatrix;
+               matrix.object = 0;
+               _AppendStep(f, std::move(matrix));
+           });
+    expect("a retired solve step",
+           "step 3 (Solve /Rig/Ctl): the retired Solve step", [](F &f) {
+               fb::RigExecWireStep solve;
+               solve.kind = fb::StepKind::ReservedSolve;
+               solve.object = 0;
+               _AppendStep(f, std::move(solve));
+           });
+    expect("a retired solver commit step",
+           "step 3 (ReservedSolverCommit 0): the retired SolverCommit step",
+           [](F &f) {
+               fb::RigExecWireStep commit;
+               commit.kind = fb::StepKind::ReservedSolverCommit;
+               commit.object = 0;
+               _AppendStep(f, std::move(commit));
+           });
+    expect("a retired commit delta step",
+           "step 3 (ReservedCommitDelta 0): the retired CommitDelta step",
+           [](F &f) {
+               fb::RigExecWireStep commit;
+               commit.kind = fb::StepKind::ReservedCommitDelta;
+               commit.object = 0;
+               _AppendStep(f, std::move(commit));
+           });
+    expect("a retired propagate chunk step",
+           "step 3 (ReservedPropagateChunk 0): the retired PropagateChunk step",
+           [](F &f) {
+               fb::RigExecWireStep commit;
+               commit.kind = fb::StepKind::ReservedPropagateChunk;
+               commit.object = 0;
+               _AppendStep(f, std::move(commit));
+           });
+    expect("a retired commit apply step",
+           "step 3 (ReservedCommitApply 0): the retired CommitApply step",
+           [](F &f) {
+               fb::RigExecWireStep commit;
+               commit.kind = fb::StepKind::ReservedCommitApply;
+               commit.object = 0;
+               _AppendStep(f, std::move(commit));
            });
 
     // A reader of a volume's placement: after its step it reads what the
     // step wrote; ahead of it, the producer check refuses it.
-    fb::RigExecWireStep reader;
-    reader.kind = fb::StepKind::WeightPacket;
-    reader.object = 0;
-    reader.reads = {
-        fb::SlotRange(fb::SlotDomain::WeightFrames, 0, 1),
-        fb::SlotRange(fb::SlotDomain::RequiredStageFramesAdmission, 0, 1)};
-    reader.writes = {fb::SlotRange(fb::SlotDomain::WeightPacket, 0, 1)};
+    const auto reader = [](F &f) {
+        fb::RigExecWireStep step = _PacketStep(f, 0);
+        step.reads = {
+            fb::SlotRange(fb::SlotDomain::WeightFrames, 0, 1),
+            fb::SlotRange(fb::SlotDomain::RequiredStageFramesAdmission, 0, 1)};
+        return step;
+    };
     {
         _context = "volume placements: reader after its step";
         F file = _VolumeFile();
-        _AppendStep(file, reader);
+        _AppendStep(file, reader(file));
         why.clear();
         CHECK(RigExecFormatValidate(file, &why));
         if (!why.empty()) {
@@ -2816,7 +3538,7 @@ TestVolumePlacementSteps()
            "step 1 reads WeightFrames slots [0, 1), which no earlier step "
            "writes",
            [&reader](F &f) {
-               _AppendStep(f, reader);
+               _AppendStep(f, reader(f));
                // Swap the two last steps: the reader runs before the
                // placement it reads.
                std::swap(_RegionStep(f, 1), _RegionStep(f, 3));
@@ -2839,18 +3561,19 @@ TestStepLabels()
     // The rich file's compose step names a group the file does not hold.
     const RigExecWireFile rich = _RichFile();
     CHECK(RigExecFormatStepLabel(rich, _RegionBegin(rich)) ==
-          "ComposeSubtree /Rig/Ctl");
+          "OpNode /Rig/Ctl");
     CHECK(RigExecFormatStepLabel(rich, _RegionBegin(rich) + 1) ==
           std::to_string(_RegionBegin(rich) + 1));
     const RigExecWireFile volume = _VolumeFile();
     CHECK(RigExecFormatStepLabel(volume, _RegionBegin(volume) + 1) ==
-          "VolumePlacements /Rig/Ctl");
+          "OpNode /Rig/Ctl");
 
     size_t checked = 3;
     const auto label =
         [&](const char *want,
             const std::function<void(RigExecWireFile &)> &mutate) {
             RigExecWireFile file = _Copy(rich);
+            _RegionStep(file, 0).object = 0;
             mutate(file);
             const std::string got =
                 RigExecFormatStepLabel(file, _RegionBegin(file));
@@ -2861,45 +3584,32 @@ TestStepLabels()
             }
         };
     using fb::StepKind;
-    label("VolumePlacements every volume weight", [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::VolumePlacements;
-        _RegionStep(f, 0).part = -1;
+    label("ReservedVolumePlacements 0", [](RigExecWireFile &f) {
+        _RegionStep(f, 0).kind = StepKind::ReservedVolumePlacements;
+        _RegionStep(f, 0).object = 0;
     });
-    const auto group = [](RigExecWireFile &f) {
-        f.pose->composeGroups.resize(1);
-        f.pose->composeGroups[0].begin = 0;
-        f.pose->composeGroups[0].end = 1;
-    };
-    label("ComposeSubtree /Rig/Ctl", group);
-    label("ComposeSubtree 7", [&group](RigExecWireFile &f) {
-        group(f);
-        _RegionStep(f, 0).object = 7;
+    label("Solve /Rig/Ctl", [](RigExecWireFile &f) {
+        _RegionStep(f, 0).kind = StepKind::ReservedSolve;
     });
-    label("Solve /Rig/Ctl",
-          [](RigExecWireFile &f) { _RegionStep(f, 0).kind = StepKind::Solve; });
-    label("Constraint /Rig/Ctl", [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::Constraint;
+    label("ReservedConstraint 0", [](RigExecWireFile &f) {
+        _RegionStep(f, 0).kind = StepKind::ReservedConstraint;
+        _RegionStep(f, 0).object = 0;
     });
-    label("CommitApply batch 0", [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::CommitApply;
-        f.pose->commits[0].moverPath = 0;
+    label("OpNode /Rig/Ctl final", [](RigExecWireFile &f) {
+        _RegionStep(f, 0) = _SpaceStep(f, "ProviderMatrix", 20, 0);
     });
-    label("ProviderMatrix /Rig/Ctl final", [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::ProviderMatrix;
-        _RegionStep(f, 0).part = 1;
+    label("OpNode /Rig/Ctl base", [](RigExecWireFile &f) {
+        _RegionStep(f, 0) = _SpaceStep(f, "ProviderMatrix", 21, 0);
     });
-    label("ProviderMatrix /Rig/Ctl base", [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::ProviderMatrix;
-        _RegionStep(f, 0).part = 0;
+    label("ReservedProviderMatrix 0", [](RigExecWireFile &f) {
+        _RegionStep(f, 0).kind = StepKind::ReservedProviderMatrix;
+        _RegionStep(f, 0).object = 0;
     });
     label("SnapshotFinals every provider", [](RigExecWireFile &f) {
         _RegionStep(f, 0).kind = StepKind::SnapshotFinals;
     });
-    label("PoseInterpolator /Rig/Ctl", [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::PoseInterpolator;
-    });
-    label("WeightPacket /Rig/W", [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::WeightPacket;
+    label("ReservedPoseInterpolator 0", [](RigExecWireFile &f) {
+        _RegionStep(f, 0).kind = StepKind::ReservedPoseInterpolator;
     });
     label("RevisionFuse /Rig/Mover", [](RigExecWireFile &f) {
         _RegionStep(f, 0).kind = StepKind::RevisionFuse;
@@ -2918,20 +3628,16 @@ TestStepLabels()
     // an object past the records and a provider past the slots keep their
     // numbers.
     const auto record = [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::FrameMatrix;
+        _RegionStep(f, 0) = _SpaceStep(f, "FrameMatrix", 22, 0);
         f.pose->frameRecords = {fb::FrameRecord(0, 0, 0, -1, 1, _pMover)};
     };
-    label("FrameMatrix /Rig/Ctl after /Rig/Mover", record);
-    label("FrameMatrix record 1", [&record](RigExecWireFile &f) {
-        record(f);
+    label("OpNode /Rig/Ctl after /Rig/Mover", record);
+    label("ReservedFrameMatrix 1", [](RigExecWireFile &f) {
+        _RegionStep(f, 0).kind = StepKind::ReservedFrameMatrix;
         _RegionStep(f, 0).object = 1;
     });
-    label("FrameMatrix record -1", [&record](RigExecWireFile &f) {
-        record(f);
-        _RegionStep(f, 0).object = -1;
-    });
-    label("FrameMatrix slot 4 after /Rig/Mover", [](RigExecWireFile &f) {
-        _RegionStep(f, 0).kind = StepKind::FrameMatrix;
+    label("OpNode slot 4 after /Rig/Mover", [](RigExecWireFile &f) {
+        _RegionStep(f, 0) = _SpaceStep(f, "FrameMatrix", 22, 0);
         f.pose->frameRecords = {fb::FrameRecord(4, 0, -1, 0, 1, _pMover)};
     });
     std::printf("step labels: %zu checked\n", checked);
@@ -2939,11 +3645,11 @@ TestStepLabels()
 
 /// The rich file with a second slot, /Rig/Slot0, both composed by step 0
 /// (compose group [0, 2), so PoseFin versions 0 and 1 are the composes);
-/// commit 0 writes slot 0's last version, 2, in step 1; and frame record 0
-/// of slot 0 after commit 0 reads version 2 in step 2, which declares
-/// PoseFin[0] and CommitTable[0] and writes FrameMatrix[0]. \p solver makes
-/// commit 0 a solver batch over both slots (versions 2 and 3), step 1 its
-/// SolverCommit, and the record a solver's at position 0.
+/// commit 0's PoseCommit op node writes slot 0's last version, 2, in step 1;
+/// and frame record 0 of slot 0 after commit 0 reads version 2 in step 2,
+/// which declares PoseFin[0] and CommitTable[0] and writes FrameMatrix[0].
+/// \p solver makes commit 0 a solver batch over both slots (versions 2 and
+/// 3) and the record a solver's at position 0.
 RigExecWireFile
 _RecordFile(bool solver = false)
 {
@@ -2964,16 +3670,14 @@ _RecordFile(bool solver = false)
     commit.slotWrites =
         solver ? std::vector<uint32_t>{2, 3} : std::vector<uint32_t>{2};
     fb::RigExecWireStep writer;
-    writer.kind =
-        solver ? fb::StepKind::SolverCommit : fb::StepKind::Constraint;
-    writer.object = 0;
+    writer.kind = fb::StepKind::OpNode;
+    writer.object = -1;
     writer.reads = {fb::SlotRange(fb::SlotDomain::PoseFin, 0, 1)};
     writer.writes = {fb::SlotRange(fb::SlotDomain::CommitTable, 0, 1),
                      fb::SlotRange(fb::SlotDomain::PoseFin, 2, solver ? 4 : 3)};
     _AppendStep(f, std::move(writer));
     fb::RigExecWireStep frame;
-    frame.kind = fb::StepKind::FrameMatrix;
-    frame.object = 0;
+    frame.kind = fb::StepKind::OpNode;
     frame.reads = {fb::SlotRange(fb::SlotDomain::PoseFin, 2, 3),
                    fb::SlotRange(fb::SlotDomain::CommitTable, 0, 1)};
     frame.writes = {fb::SlotRange(fb::SlotDomain::FrameMatrix, 0, 1)};
@@ -2981,6 +3685,10 @@ _RecordFile(bool solver = false)
     f.pose->frameRecords = {
         fb::FrameRecord(0, 0, solver ? -1 : 0, solver ? 0 : -1, 2, _pCtl)};
     _AddFixtureHeads(f);
+    _RegionStep(f, 2).object = _SpaceStep(f, "FrameMatrix", 22, 0).object;
+    for (fb::RigExecWireStep &step : f.steps)
+        if (step.kind == fb::StepKind::OpNode && step.object < 0)
+            step.object = _CommitStep(f, 0).object;
     _DeclareFixtureStageFrames(f);
     return f;
 }
@@ -3164,11 +3872,8 @@ TestPhaseTables()
         walk.index = 1;
         f.pose->walkSteps.push_back(std::move(walk));
         f.pose->commits.push_back(std::move(later));
-        fb::RigExecWireStep step;
-        step.kind = fb::StepKind::Constraint;
-        step.object = 1;
-        step.reads = {fb::SlotRange(fb::SlotDomain::PoseFin, 0, 1),
-                      fb::SlotRange(fb::SlotDomain::Rest, 0, 1)};
+        fb::RigExecWireStep step = _CommitStep(f, 1);
+        step.reads = {fb::SlotRange(fb::SlotDomain::PoseFin, 0, 1)};
         step.writes = {fb::SlotRange(fb::SlotDomain::CommitTable, 1, 2),
                        fb::SlotRange(fb::SlotDomain::PoseFin, 2, 3)};
         _AppendStep(f, std::move(step));
@@ -3181,6 +3886,20 @@ TestPhaseTables()
         F file = _RecordFile();
         laterCommit(file);
         accepted("record before a later commit", file);
+    }
+    // The Constraint step is retired.
+    {
+        _context = "phase tables: a Constraint step";
+        F file = _RecordFile();
+        _RegionStep(file, 1).kind = fb::StepKind::ReservedConstraint;
+        _RegionStep(file, 1).object = 0;
+        why.clear();
+        const bool ok = RigExecFormatValidate(file, &why);
+        const std::string want = ": the retired Constraint step";
+        CHECK(!ok && why.find(want) != std::string::npos);
+        if (ok || why.find(want) == std::string::npos)
+            std::printf("  got '%s', expected '%s'\n",
+                        ok ? "(accepted)" : why.c_str(), want.c_str());
     }
     // A non-final version: the binding reads what revision 0's fuse, step
     // 6, left (version 1), through RevisionDone[0] and ChainDirty[0].
@@ -3267,14 +3986,14 @@ TestPhaseTables()
             return f;
         };
     };
-    const std::string frame = "step 2 (FrameMatrix /Rig/Ctl after /Rig/Ctl)";
+    const std::string frame = "step 2 (OpNode /Rig/Ctl after /Rig/Ctl)";
     const std::string fold = "step 3 (InfluenceFold /Rig/Mover)";
     const std::string reader = "step 5 (RevisionStatic /Rig/Mover)";
 
     // The records and their FrameMatrix steps.
     expect("version a later commit writes",
            frame + " is bound to PoseFin version 2 of /Rig/Ctl, which step 3 "
-                   "(Constraint /Rig/Mover) writes at or after it",
+                   "(OpNode /Rig/Mover) writes at or after it",
            record([&](F &f) {
                laterCommit(f);
                f.pose->frameRecords[0] = fb::FrameRecord(0, 0, 0, -1, 2, _pCtl);
@@ -3317,6 +4036,14 @@ TestPhaseTables()
                        fb::FrameRecord(0, 0, 0, 0, 2, _pCtl);
                },
                true));
+    expect("solver commit without its write",
+           "step 1 (OpNode /Rig/Ctl): body SSA missing write PoseFin[2]",
+           record(
+               [](F &f) {
+                   _RegionStep(f, 1).writes = {
+                       fb::SlotRange(fb::SlotDomain::CommitTable, 0, 1)};
+               },
+               true));
     expect("constraint record with a position",
            frame + " records commit 0, a constraint's, at target 0 and "
                    "position 0; a constraint's record has a target and "
@@ -3328,17 +4055,23 @@ TestPhaseTables()
            "frame record 0 of /Rig/Ctl after /Rig/Ctl has no FrameMatrix step",
            record([](F &f) { _DropStep(f, 2); }));
     expect("two steps for one record",
-           "step 3 (FrameMatrix /Rig/Ctl after /Rig/Ctl) evaluates the same "
+           "step 3 (OpNode /Rig/Ctl after /Rig/Ctl) evaluates the same "
            "frame record as " +
                frame,
            record([](F &f) { _AppendStep(f, _RegionStep(f, 2)); }));
     expect("object past the records",
-           "step 2 (FrameMatrix record 1) names frame record 1 of 1",
-           record([](F &f) { _RegionStep(f, 2).object = 1; }));
+           "op_graph.host_outputs: node " +
+               std::to_string(_RegionStep(_RecordFile(false), 2).object) +
+               " stores a matrix of no frame record 1",
+           record([](F &f) {
+               for (auto &output : f.opGraph->hostOutputs)
+                   if (output->target == 22 || output->target == 23)
+                       output->object = 1;
+           }));
     // A record's own fields out of range: named by its FrameMatrix step,
     // and by the record's row only when no step evaluates it.
     expect("record past the slots",
-           "step 2 (FrameMatrix slot 2 after /Rig/Ctl) names slot 2 of 2",
+           "step 2 (OpNode slot 2 after /Rig/Ctl) names slot 2 of 2",
            record([](F &f) {
                f.pose->frameRecords[0] = fb::FrameRecord(2, 0, 0, -1, 2, _pCtl);
            }));
@@ -3356,7 +4089,7 @@ TestPhaseTables()
                    fb::SlotRange(fb::SlotDomain::PoseFin, 4, 5);
            }));
     expect("record mover label past the paths",
-           "step 2 (FrameMatrix /Rig/Ctl after ) names mover label path id "
+           "step 2 (OpNode /Rig/Ctl after ) names mover label path id "
            "999 of " +
                std::to_string(_RecordFile(false).paths.size()),
            record([](F &f) {
@@ -3382,15 +4115,15 @@ TestPhaseTables()
     // writes it. Either way the producer check would name an unproduced
     // CommitTable read instead.
     expect("ahead of its commit",
-           "step 1 (FrameMatrix /Rig/Ctl after /Rig/Ctl) reads the exit of "
-           "commit 0, which step 2 (Constraint /Rig/Ctl) writes at or after "
+           "step 1 (OpNode /Rig/Ctl after /Rig/Ctl) reads the exit of "
+           "commit 0, which step 2 (OpNode /Rig/Ctl) writes at or after "
            "it",
            record([&](F &f) {
                composeVersion(f);
                std::swap(_RegionStep(f, 1), _RegionStep(f, 2));
            }));
     expect("commit with no step",
-           "step 1 (FrameMatrix /Rig/Ctl after /Rig/Ctl) reads the exit of "
+           "step 1 (OpNode /Rig/Ctl after /Rig/Ctl) reads the exit of "
            "commit 0, which no step writes",
            record([&](F &f) {
                composeVersion(f);
@@ -3403,20 +4136,21 @@ TestPhaseTables()
                _RegionStep(f, 1).kind = fb::StepKind::SnapshotFinals;
            }));
     expect("another kind writing FrameMatrix",
-           "step 1 (Constraint /Rig/Ctl) writes FrameMatrix, which only a "
+           "step 1 (OpNode /Rig/Ctl) writes FrameMatrix, which only a "
            "FrameMatrix step writes",
            record([](F &f) {
                _RegionStep(f, 1).writes.push_back(
                    fb::SlotRange(fb::SlotDomain::FrameMatrix, 0, 1));
            }));
     expect("FrameMatrix writing more than its record",
-           frame + " writes other than FrameMatrix[0]", record([](F &f) {
+           frame + " writes other than the matrices it stores",
+           record([](F &f) {
                _RegionStep(f, 2).writes = {
                    fb::SlotRange(fb::SlotDomain::FrameMatrix, 0, 2)};
            }));
     expect("two composes of one version",
-           "step 3 (ComposeSubtree /Rig/Ctl) writes PoseFin version 0, which "
-           "step 0 (ComposeSubtree /Rig/Ctl) writes too",
+           "step 3 (OpNode /Rig/Ctl) writes PoseFin version 0, which "
+           "step 0 (OpNode /Rig/Ctl) writes too",
            record([](F &f) {
                fb::RigExecWireStep again = _RegionStep(f, 0);
                again.overrideInputs.clear();
@@ -3633,7 +4367,7 @@ TestPhaseTables()
                         file,
                         frame +
                             " is bound to PoseFin version 2 of /Rig/Ctl, which "
-                            "step 3 (Constraint /Rig/Mover) writes at or after "
+                            "step 3 (OpNode /Rig/Mover) writes at or after "
                             "it"));
     }
     std::printf("phase tables: records, lists and bindings accepted and "
@@ -4661,7 +5395,8 @@ _GroupFile(fb::RevisionOp op, std::vector<size_t> parts = {}, bool gate = false)
         return reads;
     };
     if (gate) {
-        _AppendStep(f, _GroupStep(K::WeightPacket, 0, -1, {},
+        fb::RigExecWireStep packet = _PacketStep(f, 0);
+        _AppendStep(f, _GroupStep(K::OpNode, packet.object, -1, {},
                                   {_GroupSlot(D::WeightPacket, 0)}));
     }
     _AppendStep(f, _GroupStep(K::InfluenceFold, 0, -1, {},
@@ -4856,7 +5591,7 @@ TestRangeChunkTables()
     int accepted = 0;
     for (const fb::RevisionOp op :
          {fb::RevisionOp::Matrix, fb::RevisionOp::Wire, fb::RevisionOp::Lattice,
-          fb::RevisionOp::BlendShape, fb::RevisionOp::Skin}) {
+          fb::RevisionOp::Skin}) {
         const auto opened = accept(
             std::string("as ") + fb::EnumNameRevisionOp(op), _GroupFile(op));
         const bool skin = op == fb::RevisionOp::Skin;
@@ -4880,7 +5615,7 @@ TestRangeChunkTables()
     }
     accepted +=
         accept("gated", _GroupFile(fb::RevisionOp::Matrix, {0}, true)) ? 1 : 0;
-    CHECK(accepted == 8);
+    CHECK(accepted == 7);
 
     // The steps of a file, named as the validator names them.
     const auto stepName = [](const F &f, K kind, int32_t object, int32_t part) {
@@ -4953,12 +5688,6 @@ TestRangeChunkTables()
     // The Range table, as format 19 held it.
     refuse("a range-shaped volume correction", matrix([](F &, R &r) {
                r.op = uint8_t(fb::RevisionOp::VolumeCorrect);
-           }),
-           text(row + ": 3 chunks, but not chunked"));
-    refuse("a range-shaped smooth revision in format 27",
-           matrix([](F &f, R &r) {
-               r.op = uint8_t(fb::RevisionOp::Smooth);
-               f.formatVersion = 27;
            }),
            text(row + ": 3 chunks, but not chunked"));
     refuse("a key on a range", matrix([](F &, R &r) { r.chunks[1].key = {0}; }),
@@ -5209,17 +5938,10 @@ TestRangeChunkTables()
            }),
            text(row + ": a Range Skin's rigExec:skinningMethod is not one "
                       "private, unanimated slot"));
-    refuse("a legacy Range dual-quaternion method", rangeSkin([](F &f, R &) {
-               f.formatVersion = 29;
-               f.inputs[_sgMethod] =
-                   fb::InputSlot(_pgMethod, _vgDual, -1, -1, InputTag::Token,
-                                 uint8_t(fb::InputSlotFlags::HasValue));
-           }),
-           text(row + ": unsupported Range Skin method 'dualQuaternion'"));
     std::printf("group tables: %d chains with groups accepted; %d group "
                 "table, step and constant violations refused\n",
                 accepted, refused);
-    CHECK(refused == 29);
+    CHECK(refused == 27);
 }
 
 // ----------------------------------------------------------------- arrays
@@ -5344,8 +6066,8 @@ _ArrayFile()
     fb::RigExecWireWeightObject &weight = g.weightObjects[0];
     weight.valuesSlot = int32_t(_sValues);
     weight.indicesSlot = int32_t(_sIndices);
-    weight.oracleSamplesSlot = int32_t(_sSamples);
-    weight.oracleCurveSlot = int32_t(_sCurve);
+    weight.fieldSamplesSlot = int32_t(_sSamples);
+    weight.fieldCurveSlot = int32_t(_sCurve);
 
     const auto read = [&](uint32_t path, bool rest, InputTag tag, ReadMode mode,
                           uint32_t at, uint32_t constant) {
@@ -5423,8 +6145,8 @@ TestArrayInputs()
         const fb::RigExecWireWeightObject &w = o->geometry->weightObjects[0];
         CHECK(w.valuesSlot == int32_t(_sValues) &&
               w.indicesSlot == int32_t(_sIndices) &&
-              w.oracleSamplesSlot == int32_t(_sSamples) &&
-              w.oracleCurveSlot == int32_t(_sCurve));
+              w.fieldSamplesSlot == int32_t(_sSamples) &&
+              w.fieldCurveSlot == int32_t(_sCurve));
         const auto &rows = o->geometry->pathReads;
         CHECK(rows.size() == 9);
         if (rows.size() == 9) {
@@ -5767,10 +6489,10 @@ TestArrayInputs()
                    int32_t(_sJointIndices);
            });
     expect("an oracle curve slot of another tag",
-           weight + ".oracle_curve_slot: slot " + at(_sValues) +
+           weight + ".field_curve_slot: slot " + at(_sValues) +
                " is not a float3[] input",
            [](F &f) {
-               f.geometry->weightObjects[0].oracleCurveSlot = int32_t(_sValues);
+               f.geometry->weightObjects[0].fieldCurveSlot = int32_t(_sValues);
            });
     expect("a painted default that is a layout",
            weight + ".indices_slot: its default is not a pool array",
@@ -5836,6 +6558,7 @@ _PackMinimalWith(
     const auto tokenArrays = b.CreateVector(&tokens, 1);
     const auto bools = fb::CreateBoolArray(b, &f.boolArrays[0]);
     const auto boolArrays = b.CreateVector(&bools, 1);
+    const auto manifest = fb::CreateManifest(b, f.manifest.get());
     fb::FileBuilder file(b);
     file.add_commonGraph(commonGraph);
     file.add_vec3dArrays(vec3dArrays);
@@ -5858,6 +6581,7 @@ _PackMinimalWith(
     file.add_cones(cones);
     file.add_pose(pose);
     file.add_geometry(geometry);
+    file.add_manifest(manifest);
     fb::FinishFileBuffer(b, file.Finish());
     return std::vector<uint8_t>(b.GetBufferPointer(),
                                 b.GetBufferPointer() + b.GetSize());
@@ -6352,16 +7076,17 @@ TestSolverSemanticMetadataRefusals()
         solver.restSlots.clear();
         solver.solveDescriptorKey =
             RigExecFormatPathText(excluded, solver.path) +
-            "/category:" + std::to_string(int(fb::StepKind::Solve)) +
+            "/category:" + std::to_string(int(fb::StepKind::ReservedSolve)) +
             "/fixture";
     }
     fb::RigExecWireSolverRelationshipRequirement dependency;
     dependency.port = "rigExec:controls";
     dependency.solver = 1;
     excluded.pose->solvers[0].relationshipRequirements = {dependency};
+    const fb::RigExecWireStep node = _SpaceStep(excluded, "FkChain", 60, 0);
     auto &solve = _RegionStep(excluded, 0);
-    solve.kind = fb::StepKind::Solve;
-    solve.object = 0;
+    solve.kind = node.kind;
+    solve.object = node.object;
     solve.descriptorKey = excluded.pose->solvers[0].solveDescriptorKey;
     solve.semanticPredecessorKeys = {
         excluded.pose->solvers[1].solveDescriptorKey};
@@ -6404,12 +7129,8 @@ TestSolverSemanticMetadataRefusals()
     reject(std::move(wrongOwner),
            "invalid or duplicate canonical Solve identity");
     auto wrongBody = _RichFile();
-    const auto body = std::find_if(
-        wrongBody.steps.begin(), wrongBody.steps.end(),
-        [](const auto &step) { return step.kind != fb::StepKind::Solve; });
-    CHECK(body != wrongBody.steps.end());
-    if (body != wrongBody.steps.end())
-        body->semanticPredecessorKeys = {"/Unrelated/category:1/solver"};
+    _RegionStep(wrongBody, 0).semanticPredecessorKeys = {
+        "/Unrelated/category:1/solver"};
     reject(std::move(wrongBody), "semantic prerequisites on a non-Solve body");
 }
 
@@ -6420,7 +7141,6 @@ _AttachSkeleton2d(fb::RigExecWireSolver *solver)
 {
     solver->jointRests.resize(2);
     solver->controls = {0};
-    solver->controlRests = {_L(1)};
     solver->controlReads = {0};
     auto table = std::make_unique<fb::RigExecWireSkeleton2d>();
     table->solveOrder = {0, 1};
@@ -6486,10 +7206,6 @@ TestSkeleton2dWireShapes()
         CHECK(!RigExecFormatValidate(bad, &error));
         CHECK(error.find(fragment) != std::string::npos);
     };
-    // A skeleton2d is refused in a file older than format 31.
-    RigExecWireFile older = file;
-    older.formatVersion = 30;
-    reject(std::move(older), "skeleton2d: in a format older than 31");
     // A bad range, space, tip, selector, candidate, member, enabled flag or
     // channel tag is refused.
     RigExecWireFile badBegin = file;
@@ -6548,15 +7264,6 @@ TestJointGroupWireShapes()
         CHECK(!RigExecFormatValidate(bad, &error));
         CHECK(error.find(fragment) != std::string::npos);
     };
-    // Joint groups are refused in a file older than format 31, each field
-    // on its own.
-    RigExecWireFile older = file;
-    older.formatVersion = 30;
-    reject(std::move(older), "joint_groups: in a format older than 31");
-    RigExecWireFile olderParents = _RichFile();
-    olderParents.formatVersion = 30;
-    olderParents.pose->solvers[0].jointGroupParents = {-1};
-    reject(std::move(olderParents), "joint_groups: in a format older than 31");
     // A range past the members, a member past the joints, a parent past
     // the joints, a parent cycle, or a missing selector is refused.
     RigExecWireFile longRange = file;
@@ -6585,15 +7292,8 @@ static void
 _AttachAnimatedMaps(fb::RigExecWirePoseInterpolator *interp)
 {
     interp->poseSlots = {0, 1};
-    auto maps = std::make_unique<fb::RigExecWireAnimatedMaps>();
-    maps->inputCount = 1;
-    maps->rowInputs = {0, 0, 0};
-    maps->rowFrom = {-1, 1, 0};
-    maps->rowTo = {1, 3, 1};
-    maps->rowSlope = {0, 0, 1};
-    maps->rowCut = {30, -0.5, 0};
-    maps->mapBegin = {0, 2, 3};
-    interp->maps = std::move(maps);
+    interp->weightEnd = 2;
+    interp->solve = 3;
 }
 
 void
@@ -6603,6 +7303,7 @@ TestAnimatedMapsWireShapes()
     std::string why;
     RigExecWireFile file = _RichFile();
     _AttachAnimatedMaps(&file.pose->poseInterpolators[0]);
+    file.pose->poseWeightPaths = {_pCtl, _pCtl};
     CHECK(RigExecFormatValidate(file, &why));
     if (!why.empty())
         std::printf("    %s\n", why.c_str());
@@ -6611,46 +7312,18 @@ TestAnimatedMapsWireShapes()
         CHECK(!RigExecFormatValidate(bad, &error));
         CHECK(error.find(fragment) != std::string::npos);
     };
-    // Every map clamped writes no map_unclamped: the field is absent from
-    // the buffer, so a bake without unclamped maps keeps its old bytes.
-    std::vector<uint8_t> clamped;
-    CHECK(_Write(file, &clamped));
-    if (!clamped.empty()) {
-        const fb::File *root = fb::GetFile(clamped.data());
-        const auto *interps =
-            root && root->pose() ? root->pose()->poseInterpolators() : nullptr;
-        CHECK(interps && interps->size() == 1 && interps->Get(0)->maps() &&
-              interps->Get(0)->maps()->mapUnclamped() == nullptr);
-    }
-    // One byte per map opens and round-trips.
-    RigExecWireFile unclamped = file;
-    unclamped.pose->poseInterpolators[0].maps->mapUnclamped = {1, 0};
-    CHECK(RigExecFormatValidate(unclamped, &why));
-    std::vector<uint8_t> bytes;
-    CHECK(_Write(unclamped, &bytes));
-    const auto opened = _Open(bytes, &why);
-    CHECK(opened && opened->pose->poseInterpolators[0].maps &&
-          opened->pose->poseInterpolators[0].maps->mapUnclamped ==
-              std::vector<uint8_t>({1, 0}));
-    // A size that is neither 0 nor the map count is refused.
-    RigExecWireFile shortFlags = file;
-    shortFlags.pose->poseInterpolators[0].maps->mapUnclamped = {1};
-    reject(std::move(shortFlags), "malformed animated maps");
-    RigExecWireFile longFlags = file;
-    longFlags.pose->poseInterpolators[0].maps->mapUnclamped = {0, 1, 0};
-    reject(std::move(longFlags), "malformed animated maps");
-    // A value above 1 is refused.
-    RigExecWireFile badValue = file;
-    badValue.pose->poseInterpolators[0].maps->mapUnclamped = {0, 2};
-    reject(std::move(badValue), "malformed animated maps");
-    // A non-empty field in a file older than format 31 is refused; the same
-    // file without it opens.
-    RigExecWireFile older = unclamped;
-    older.formatVersion = 30;
-    reject(std::move(older), "malformed animated maps");
-    RigExecWireFile olderClamped = file;
-    olderClamped.formatVersion = 30;
-    CHECK(RigExecFormatValidate(olderClamped, &why));
+    RigExecWireFile badSolve = file;
+    badSolve.pose->poseInterpolators[0].solve = 4;
+    reject(std::move(badSolve), "solve out of range");
+    RigExecWireFile primvars = file;
+    primvars.pose->poseInterpolators[0].primvarSlots = {1};
+    primvars.pose->poseInterpolators[0].primvarSources = {0};
+    CHECK(RigExecFormatValidate(primvars, &why));
+    primvars.pose->poseInterpolators[0].solve = 0;
+    reject(std::move(primvars), "belong to animated maps");
+    RigExecWireFile outside = file;
+    outside.pose->poseInterpolators[0].poseSlots = {0, 2};
+    reject(std::move(outside), "lie in its weight range");
 }
 
 void
@@ -6938,14 +7611,11 @@ TestRequiredStageFrameSpaceBindings()
     program.valueKeys = {"/Rig/Parent.rest:space"};
     program.defaults.resize(1);
     fb::RigExecWireProviderOp expression;
-    expression.kind = uint32_t(RigExecProviderOpKind::RestFrame);
+    expression.kind = uint32_t(RigExecProviderOpKind::Attribute);
     expression.owner = "/Rig/Parent.rest:space";
     expression.output = 0;
     program.ops.push_back(std::move(expression));
-    fb::RigExecWireStep source;
-    source.kind = fb::StepKind::SpaceExpression;
-    source.object = 0;
-    source.part = 0;
+    fb::RigExecWireStep source = _SpaceStep(file, "ProviderSelect", 52, 0);
     source.isSource = true;
     source.cluster = 0;
     source.succs = {1};
@@ -7097,6 +7767,7 @@ main()
     TestExternalMovers();
     TestSwitchOrder();
     TestVolumePlacementSteps();
+    TestOpLookupOwners();
     TestStepLabels();
     TestPhaseTables();
     TestSparseTopology();

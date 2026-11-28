@@ -62,7 +62,7 @@
 #include "snapshotStore.h"
 #include "warmIndex.h"
 
-#include "rigExec/frozenContext.h"
+#include "rigExec/api/frozenContext.h"
 
 #include "pxr/base/tf/notice.h"
 #include "pxr/base/tf/weakBase.h"

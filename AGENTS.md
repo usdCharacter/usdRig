@@ -32,11 +32,16 @@ starting its workflow, and keep this list current when adding or changing skills
 ## Code map
 
 - `libs/rigExecMath`: numerical kernels. Keep math independent of stage access.
-  The archive links `arch`, `tf`, `gf`, and `vt`; it does not read a stage.
-  `rigExec`, the scene library, authoring, and the oracle library link it
-  privately. The header-only `*Kernel.h` files here (pose, provider, and
-  blend-layout arithmetic among them) also compile into the USD-free
-  runtime; keep them free of `pxr/` and `rigExecGraph` includes.
+  The `rigExecMath` target is header-only and links no OpenUSD library. The
+  kernels still written against Gf (the `.cpp` files and the headers that
+  include `pxr/`) build the `rigExecMathGf` archive, which links `arch`,
+  `tf`, `gf` and `vt`; `rigExec`, the scene library, authoring, and the
+  oracle library link it privately. The header-only `*Kernel.h` files here
+  (pose, provider, and blend-layout arithmetic among them) also compile into
+  the USD-free runtime; keep them free of `pxr/` and `rigExecGraph` includes.
+  `runtimeMath.h`, `dualQuatMath.h` and `affineMath.h` are the engine's own
+  vector, matrix and quaternion types (a `pxr`-free mirror of Gf, checked bit
+  for bit by `testRigExecRuntimeMath`); the runtime and the ops include them.
   `skeleton2dKernel.h` is the 2D skeleton solve; its rules without a public
   source are listed in `docs/references.md`.
 - `libs/rigExecGraph`: the USD-free op scheduler. The archive is
@@ -50,19 +55,30 @@ starting its workflow, and keep this list current when adding or changing skills
   headers are `step.h` and `kinds.h` (step identity and wire ordinals),
   `host.h` (the compile-time `Math`/`Inputs`/`State` binding), and the
   family headers `envelope.h`, `skin.h`, `chain.h`, `gate.h`, `closure.h`,
-  `pose.h`, `weights.h`, `spaces.h` and `properties.h`, which define
-  `RunGeometryStep` and `RunValueStep` as header-only templates. The baked
+  `pose.h`, `weights.h` and `spaces.h`, which define
+  `RunGeometryStep` and `RunValueStep` as header-only templates, and
+  `opSteps.h` with `propertyLookups.h`, which run op nodes as steps:
+  property revisions are op nodes whose inputs the host looks up per frame. The baked
   program and `rigExecRuntime` each bind inputs and publish outputs through
   their own host; neither keeps a second CPU step switch. Keep the headers
   free of `pxr/` includes and of new `.cpp` files so the installed source
   and include manifests stay byte-stable; `rigExecGraph` alone owns edges,
   readiness, invalidation and invocation.
+- `rigExecOpCore`: the op core, built from `libs/rigExec/internal/`
+  `registry`, `compile`, `program` and `exec` behind the `api/` headers
+  `registry.h`, `rigDesc.h`, `compile.h`, `evaluator.h`, `taps.h`,
+  `taskSystem.h`, `addressWait.h`, `gpuDevice.h` and `opPorts.h`. A shared library, so a
+  process has one registry; it links `rigExecGraph` and no OpenUSD library. `rigExec`,
+  `rigExecRuntime`, `rigExecBuiltins` and every type and op library link
+  it. `bin/check_runtime_usd_free.sh` compiles it and the built-in type and
+  op libraries with no `pxr` include path.
 - `libs/rigExecScene`: USD scene translation, built as `librigExecScene.so`.
   It links `tf`, `gf`, `vt`, `sdf`, `ts`, `usd`, `usdGeom`, and `rigExec`
-  publicly; graph and math are private. `librigExec.so` does not link it.
-  Imaging, bake, and the standalone adapter link it privately, so playback,
-  runtime, and imaging tests load the library without being selected as
-  scene tests. The evaluator calls it through the hooks in `sceneDispatch`.
+  publicly; graph, math and `rigExecBuiltins` are private. Its op bridges
+  (`geometryOps`, `poseOps`, `propertyOps`, `externalOps`) turn translated
+  records into op nodes. `librigExec.so` does not link it.
+  Imaging and bake link it privately, so playback, runtime, and imaging
+  tests load the library without being selected as scene tests. The evaluator calls it through the hooks in `sceneDispatch`.
   Installed headers live under `include/rigExecScene/`. Not every file in
   this directory is part of this library: `constraintProgram`,
   `geometryProgram`, `poseProgram`, `propertyProgram`, `providerProgram`,
@@ -72,7 +88,7 @@ starting its workflow, and keep this list current when adding or changing skills
 - `libs/rigExecOracle`: test oracles and golden capture, built as
   `librigExecOracle.so`. `librigExec.so` does not link it. The Python
   module links it, and so does each test that runs a cpu-reference,
-  golden, or exec cross-check. Imaging, playback, and runtime tests do
+  golden, or exec-row capture. Imaging, playback, and runtime tests do
   not. The install ships this library because the installed Python module
   loads it.
 - `libs/rigExecGpu`: the OpenGL 4.5 compute path for per-vertex deformation
@@ -82,6 +98,13 @@ starting its workflow, and keep this list current when adding or changing skills
   tests run the CPU path alone when no GPU device is available.
 - `libs/rigExecSampler`: copies stage values into runtime inputs. This is
   the USD boundary in front of playback.
+- `libs/rigExecPlayback`: the background scheduler that warms the frame
+  cache: its worker threads, the warm-job queue, the generation and per-time
+  fences, and the publish fence (`RigExecPublishFence`). Built as
+  `librigExecPlayback.so`, linking `rigExec` publicly; imaging links it
+  publicly. The engine does not link it: frozen evaluation polls a
+  `RigExecCancellationToken` (`rigExec/api/cancellation.h`) that the
+  scheduler hands out.
 - `libs/rigExecSchema/schema.usda`: source schema. Resources under
   `plugin/rigExecSchema/resources` are generated and checked in; regenerate
   with `bin/gen_schema.sh` or `bin/gen_schema.bat` after schema edits and
@@ -89,8 +112,7 @@ starting its workflow, and keep this list current when adding or changing skills
 - `libs/rigExec`: evaluator, mover graph, baked program, scheduling,
   invalidation, and frame caching. Preserve dynamic/baked parity.
   `Evaluate` runs that baked program, or returns an invalid pose and the
-  `IsBakeable` reasons. It does not evaluate through OpenExec. The tap set
-  remains for cross-check and tests. Its sources compile as the four
+  `IsBakeable` reasons. Its sources compile as the four
   OBJECT targets `rigExecCompile`, `rigExecEval`, `rigExecSchedule` and
   `rigExecVerify`, each declared with its own sources, includes and links
   in `cmake/rigExec<Layer>Sources.cmake` and composed into `librigExec`
@@ -113,7 +135,11 @@ starting its workflow, and keep this list current when adding or changing skills
   Built-ins enter the generated runtime catalog, and standalone hosts supply
   generated definitions at `Open`. Do not add mover names to runtime dispatch
   or registry lookups to graph bodies. Preserve existing binary opcodes and
-  specialized range or weighting contracts when migrating built-ins.
+  specialized range or weighting contracts when migrating built-ins. An op
+  library shipped as a plugin uses `rigexec_add_op_plugin` in
+  [rigExecOpPlugin.cmake](cmake/rigExecOpPlugin.cmake); its binders turn a
+  plugin mover's declared inputs into its op's
+  ([op plugins](docs/concepts/external-movers.md#build-an-op-plugin)).
 - Design a new or changed point mover to run per vertex group. A mesh's
   points are cut into groups once per compiled rig, and a Range mover
   passes each group straight to the next mover. A Whole mover waits for
@@ -155,12 +181,11 @@ starting its workflow, and keep this list current when adding or changing skills
   an unchanged public contract.
 - `libs/rigExecBake`, `libs/rigExecBinary`, `libs/rigExecRuntime`: export,
   binary layout, and playback. Check version compatibility when changing records.
-  `rigExecRuntime` links `rigExecBinary` and `rigExecGraph` and no OpenUSD
-  library. Do not include a `pxr/` header from a runtime translation unit or
+  `rigExecRuntime` links `rigExecBinary`, `rigExecGraph` and `rigExecOpCore`
+  and no OpenUSD library; a file's op nodes run through the op registry the
+  host registers or passes at `Open`. Do not include a `pxr/` header from a runtime translation unit or
   from a header-only kernel the runtime instantiates (the `rigExecGraph`
   headers and the `rigExecMath` kernel headers it includes).
-- `libs/rigExecStandalone`: experimental scene adapter and rigpack path;
-  distinct from `.rigexec` binary playback.
 - `plugin/rigExecUsdview`: editor UI plus Qt-free interaction models
   (`*Model.py`). `plugin/touchPose` and `plugin/shapeEditor` are further
   `usdview` tools with the same split. A host application can take over the
@@ -256,9 +281,9 @@ are no-mutex zones. Do not add mutexes, lock-taking helpers, shared mutable
 caches, or blocking synchronization there. This includes indirect locks from
 profiling and logging: collect per-step data locally and publish it at the
 existing boundary. Respect the contracts in
-[bodyPurity.h](libs/rigExec/bodyPurity.h),
-[bakedSchedule.h](libs/rigExec/bakedSchedule.h), and
-[frozenContext.h](libs/rigExec/frozenContext.h).
+[bodyPurity.h](libs/rigExec/internal/bodyPurity.h),
+[bakedSchedule.h](libs/rigExec/internal/bakedSchedule.h), and
+[frozenContext.h](libs/rigExec/api/frozenContext.h).
 
 Sample live USD inputs on the owning thread before dispatch. Computation
 bodies consume captured facts and declared typed values; workers own their
@@ -266,8 +291,9 @@ mutable arenas and must not access the live stage, evaluator, or imaging
 registry. Solve sharing through immutable snapshots and explicit ownership,
 not by wrapping a live evaluator or stage in a new mutex.
 
-Existing scheduler, cache-publication, and registry locks belong to their
-documented coordination boundaries. Preserve their lock order and generation
+The background scheduler's locks (`rigExecPlayback`), and the
+cache-publication and registry locks, belong to their documented
+coordination boundaries. Preserve their lock order and generation
 fences; do not extend their scope into computation or add locks to hide an
 ownership violation. Keep authoring and UI callbacks on their owner thread.
 A queued UI callback still blocks that thread while it runs: offload only
@@ -306,7 +332,7 @@ parallel lanes. Many ordinary calls take a lock and serialize those lanes:
   the last reference to one. `GetString()`, `GetText()`, and `GetAsToken()`
   intern the text under a lock; on parallel lanes and per-frame paths,
   spell paths with `RigExecPathText` or `RigExecSpellPathText` from
-  [pathText.h](libs/rigExec/pathText.h). A single-threaded Build pass that
+  [pathText.h](libs/rigExec/internal/pathText.h). A single-threaded Build pass that
   spells each path once is faster with `GetString()`: a fresh memo spells
   every ancestor again. Measure before converting one.
 - A function-local `static` runs a thread-safe initialization guard. Library
@@ -328,8 +354,9 @@ Before reporting a change, search every added line for these calls and for
 and anything merged or ported into it, not only the last diff.
 `tools/check_hidden_locks.py` runs in CI and fails on a new text-built
 token, guarded static, environment read, or lock in the compile, graph,
-math, runtime, and sampler sources. It cannot see path text or locks inside
-library calls. List a deliberate site in `tools/hidden_locks_allowlist.txt`.
+math, runtime, sampler, and playback sources. It cannot see path text or
+locks inside library calls. List a deliberate site in
+`tools/hidden_locks_allowlist.txt`.
 Do not convert a `static` table into a local rebuilt per call on a hot path:
 build it once at namespace scope instead.
 
@@ -404,7 +431,7 @@ Keep the exceptions above in sync with the code they describe.
 
 ### Build and test
 
-Use an unchanged OpenUSD 26.08 install with OpenExec, CMake 3.26+, Ninja,
+Use an unchanged OpenUSD 26.08 install, CMake 3.26+, Ninja,
 C++17, and a compatible Python interpreter. `USD` and `PY` configure helper
 scripts; their defaults look for a sibling dependency install.
 
@@ -434,13 +461,29 @@ scripts; their defaults look for a sibling dependency install.
    For a header edit, read the `--explain` output: the selector follows one
    level of `#include`, so a header reached only through another header
    selects nothing. Pass the `.cpp` files that include it as well.
-   `ctest --test-dir build -L fast` is the short tier. `ctest -L usd-free`
+   `ctest --test-dir build -L fast` is the short tier.
+   Tiers: tests that rerun a suite under another schedule, environment or
+   driver (`*Serial`, `*FineClusters`, `*Graph_*`, `*_serial`/`*_parallel`,
+   `*DigestGate`, `*ScopedClears`, the `*Python` tests) carry the `variant`
+   label. The quick tier, for a prepare commit, is
+   `ctest --test-dir build -LE variant -E 'Cones_|ExampleParity' -j 4`. The
+   whole suite, `ctest --test-dir build -E 'Cones_|ExampleParity' -j 4`, is
+   required before pushing and before a change that touches scheduling,
+   environment switches, serial/parallel evaluation or the Python bindings. `ctest -L usd-free`
    runs without a stage. `tests/fixtures/minimal.rigexec` is the checked-in
-   program `testRigExecRuntimeFixture` opens.
+   program `testRigExecRuntimeFixture` opens. Files of an older format are
+   refused, not upgraded: re-bake the fixtures when the format changes.
    `bin/build_rigexec.sh` writes `build/compile_commands.json` and uses
    ccache when it is on `PATH`. `.clangd` reads that database.
    `bin/check_runtime_usd_free.sh` compiles the runtime with no `pxr`
    include path; it calls `gcc` and `g++`, so it does not run under MSVC.
+   `-DRIGEXEC_WITH_USD=OFF` (default `ON`) configures with no OpenUSD or
+   OpenGL and builds only the engine targets, the tests outside the
+   `if (RIGEXEC_WITH_USD)` blocks of `CMakeLists.txt` and an engine-only
+   package; keep a new test outside those blocks when its links are USD-free.
+   Check it with `cmake -S . -B build-engine -G Ninja -DRIGEXEC_WITH_USD=OFF`,
+   `cmake --build build-engine` and `ctest --test-dir build-engine -L usd-free`
+   (CI's `engine-no-usd` job).
 6. Use `bin/test/run_python_tests.sh` or `.bat` only for Qt-free interaction
    changes, and the relevant `bin/test/run_testusdview*` helper only for
    viewport changes. The `execstack` and `ikfk_opacity` helpers need ignored
@@ -471,11 +514,27 @@ load instead. A script that builds its own subprocess environment sets
 
 Linking rules:
 
+- No target links `usdSkel`. Read and author a BlendShape prim by name
+  (`BlendShapeText` in `libs/rigExecSchema/schemaNames.h`) through the
+  generic Usd/Sdf API. No target links OpenExec (`exec`, `execUsd`,
+  `execGeom`, `ef`, `vdf`, `esf`, `esfUsd`): the exec-row goldens
+  (`tests/fixtures/README.md`) pin what it once judged.
+  `tools/check_pxr_libraries.py` runs in CI and fails on a link to either,
+  an include under `pxr/usd/usdSkel` or `pxr/exec`, or an import of their
+  Python modules.
+- A target that includes a header reaching the vendored FlatBuffers headers
+  (anything under `libs/rigExecEvalCore`, `rigExecRuntime` or
+  `rigExecBinary`) links a library that carries that include path; one
+  that includes a `rigExecMathGf` kernel header links `rigExecMathGf`.
+  Windows gets both from `cmake/WindowsArchiveLinks.cmake`, so a miss builds
+  there and fails on Linux and macOS. `tools/check_test_links.py` runs in CI
+  and fails on it; add the target to the matching `foreach()` at the end of
+  the root `CMakeLists.txt`.
 - A new test, bench, or probe that compiles a stage through `rigExec` alone
   joins the `rigExecScene` list near the end of `CMakeLists.txt`. Without
   it, compile returns false with a missing-scene diagnostic. Core-only tests
   of that failure deliberately omit the scene library. A test that runs a
-  cpu-reference, golden, or exec cross-check joins the `rigExecOracle` list
+  cpu-reference, golden, or exec-row capture joins the `rigExecOracle` list
   beside it. Missing oracle support returns false with diagnostics; golden
   APIs without an error channel throw `std::runtime_error`. Both scene and
   oracle targets register automatically in build and installed consumers.

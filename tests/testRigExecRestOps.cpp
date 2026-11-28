@@ -6,13 +6,13 @@
 // producers, while allowing descriptor enumeration across domain boundaries.
 // Cone verification compares incremental work with a forced common-graph run.
 // argv[1] = path to the examples directory.
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedOpValues.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedSchedule.h"
-#include "rigExec/bakedTrace.h"
-#include "rigExec/outputAffectedIndex.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedOpValues.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/internal/bakedTrace.h"
+#include "rigExec/internal/outputAffectedIndex.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/plug/registry.h"
@@ -440,17 +440,18 @@ TestEveryRestReaderDeclaresIt(const std::string &examples)
             }
         };
         for (const RigExecBakedStep &step : B.steps) {
-            switch (step.kind) {
+            const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+            switch (id.kind) {
             case RigExecBakedStepKind::ProviderMatrix:
-                rest(step, step.object, "ProviderMatrix");
+                rest(step, id.object, "ProviderMatrix");
                 break;
             case RigExecBakedStepKind::FrameMatrix:
-                rest(step, B.frameRecords[size_t(step.object)].slot,
+                rest(step, B.frameRecords[size_t(id.object)].slot,
                      "FrameMatrix");
                 break;
             case RigExecBakedStepKind::PoseInterpolator: {
                 const auto &interpolator =
-                    B.poseInterpolators[size_t(step.object)];
+                    B.poseInterpolators[size_t(id.object)];
                 if (interpolator.valueInputs.empty()) {
                     rest(step, interpolator.driverSlot, "PoseInterpolator");
                     rest(step, interpolator.parentSlot, "PoseInterpolator");
@@ -458,13 +459,12 @@ TestEveryRestReaderDeclaresIt(const std::string &examples)
                 break;
             }
             case RigExecBakedStepKind::Solve:
-                for (const int slot :
-                     B.solvers[size_t(step.object)].restSlots) {
+                for (const int slot : B.solvers[size_t(id.object)].restSlots) {
                     rest(step, slot, "Solve");
                 }
                 break;
             case RigExecBakedStepKind::Constraint: {
-                const auto &walk = B.walkSteps[size_t(step.object)];
+                const auto &walk = B.walkSteps[size_t(id.object)];
                 if (walk.solverBatch || walk.index < 0) {
                     break;
                 }
@@ -484,7 +484,7 @@ TestEveryRestReaderDeclaresIt(const std::string &examples)
             }
             case RigExecBakedStepKind::ComposeSubtree: {
                 const RigExecBakedComposeGroup &group =
-                    B.composeGroups[size_t(step.object)];
+                    B.composeGroups[size_t(id.object)];
                 for (int slot = group.begin; slot < group.end; ++slot) {
                     ladder(step, slot, "ComposeSubtree");
                 }
@@ -602,10 +602,11 @@ int
 HeadOpOf(const RigExecBakedProgramImpl &B, RigExecBakedStepKind kind, int slot)
 {
     for (const uint32_t i : RigExecBakedHeadIndices(B)) {
-        const RigExecBakedStep &step = B.steps[i];
-        if (step.kind == kind) {
+        const RigExecBakedStepIdentity id =
+            RigExecBakedIdentityOf(B, B.steps[i]);
+        if (id.kind == kind) {
             const RigExecBakedComposeGroup &group =
-                B.composeGroups[size_t(step.object)];
+                B.composeGroups[size_t(id.object)];
             if (group.begin <= slot && slot < group.end) {
                 return int(i);
             }
@@ -656,8 +657,11 @@ TestComposeKeysTrackConsumedLadderFields()
     B.parentSpaceM.assign(2, identity);
     B.parentSpaceAuthored.assign(2, 0);
     B.rotationSign.assign(2, 0);
+    B.opNodeOrigins.push_back({RigExecBakedOpFamily::Compose,
+                               RigExecBakedStepKind::ComposeSubtree, 0, -1});
     RigExecBakedStep step;
-    step.kind = RigExecBakedStepKind::ComposeSubtree;
+    step.kind = RigExecBakedStepKind::OpNode;
+    step.object = 0;
     step.reads.push_back(
         RigExecBakedRange(RigExecBakedSlotDomain::Ladder, 0, 2));
     std::vector<uint32_t> properties;
@@ -762,14 +766,16 @@ TestARestOnlyMoveSkipsTheCompose()
     std::vector<size_t> composes, matrices;
     for (size_t s = 0; s < B.steps.size(); ++s) {
         const RigExecBakedStep &step = B.steps[s];
-        if (step.kind == RigExecBakedStepKind::ComposeSubtree) {
+        if (const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+            id.kind == RigExecBakedStepKind::ComposeSubtree) {
             const RigExecBakedComposeGroup &group =
-                B.composeGroups[size_t(step.object)];
+                B.composeGroups[size_t(id.object)];
             if (group.begin <= leaf && leaf < group.end) {
                 composes.push_back(s);
             }
-        } else if (step.kind == RigExecBakedStepKind::ProviderMatrix &&
-                   step.object == leaf) {
+        } else if (RigExecBakedIdentityOf(B, step).kind ==
+                       RigExecBakedStepKind::ProviderMatrix &&
+                   RigExecBakedIdentityOf(B, step).object == leaf) {
             matrices.push_back(s);
         }
     }
@@ -873,12 +879,12 @@ TestTheValidatorRequiresComposeInputs(const std::string &examples)
              ladderOwnRest = false, ladderParent = false;
         for (uint32_t index : RigExecBakedHeadIndices(B)) {
             auto &step = B.steps[index];
-            const bool rest = step.kind == RigExecBakedStepKind::RestCompose;
-            const bool ladder =
-                step.kind == RigExecBakedStepKind::LadderCompose;
+            const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+            const bool rest = id.kind == RigExecBakedStepKind::RestCompose;
+            const bool ladder = id.kind == RigExecBakedStepKind::LadderCompose;
             if (!rest && !ladder)
                 continue;
-            const auto &group = B.composeGroups[size_t(step.object)];
+            const auto &group = B.composeGroups[size_t(id.object)];
             if (ladder && !ladderOwnRest) {
                 omit(step, RigExecBakedSlotDomain::Rest, uint32_t(group.begin));
                 ladderOwnRest = true;
@@ -911,7 +917,7 @@ TestTheValidatorRequiresComposeInputs(const std::string &examples)
         // A Solve reading a rest slot no RestCompose writes.
         RigExecBakedStep *solve = nullptr;
         for (RigExecBakedStep &step : B.steps) {
-            if (step.kind == RigExecBakedStepKind::Solve) {
+            if (RigExecBakedSolverOf(B, step) >= 0) {
                 solve = &step;
                 break;
             }
@@ -992,9 +998,10 @@ TestTheValidatorAcceptsDomainEnumerationOrder(const std::string &examples)
     for (size_t p = 0; p < RigExecBakedHeadIndices(B).size(); ++p) {
         const RigExecBakedStep &step = B.steps[RigExecBakedHeadIndices(B)[p]];
         property =
-            property || step.kind == RigExecBakedStepKind::PropertyRevision;
+            property || RigExecBakedPropertyPartOf(B, step, nullptr, nullptr);
         if (from == RigExecBakedHeadIndices(B).size() &&
-            step.kind == RigExecBakedStepKind::RestCompose) {
+            RigExecBakedIdentityOf(B, step).kind ==
+                RigExecBakedStepKind::RestCompose) {
             from = p;
         }
     }
@@ -1095,8 +1102,9 @@ TestARestEditIsSeedable()
     }
     size_t childMatrices = 0, closureOnly = 0;
     for (const RigExecBakedStep &step : B.steps) {
-        if (step.kind == RigExecBakedStepKind::ProviderMatrix &&
-            step.object == childSlot) {
+        if (RigExecBakedIdentityOf(B, step).kind ==
+                RigExecBakedStepKind::ProviderMatrix &&
+            RigExecBakedIdentityOf(B, step).object == childSlot) {
             ++childMatrices;
             CHECK(std::binary_search(seeds.begin(), seeds.end(), step.cluster));
             closureOnly += direct.count(step.cluster) ? 0 : 1;

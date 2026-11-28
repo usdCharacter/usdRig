@@ -14,14 +14,14 @@
 // A .rigexec playback session of a bake made with no upstream value admits
 // the same keys, reports the same drops and publishes live's outputs.
 // argv[1] = path to the examples directory.
-#include "rigExec/inputReplay.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedTrace.h"
-#include "rigExec/frameCache.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/frozenProgram.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedTrace.h"
+#include "rigExec/api/frameCache.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/internal/frozenProgram.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBake/bake.h"
 #include "rigExecBake/staticReport.h"
 #include "rigExecBake/computedCapture.h"
@@ -366,8 +366,8 @@ RunSampled(const RigExecRigEvaluator &evaluator,
     }
     context.frozen = snapshot.get();
     job.pose = RigExecEvaluateFrozen(context, job.inputs,
-                                     RigExecMakeProductionStepRunner(), nullptr,
-                                     SdfPath(), &job.report);
+                                     RigExecMakeProductionStepRunner(),
+                                     RigExecCancellationToken(), &job.report);
     // Accepted: the worker ran it from samples alone.
     CHECK(!job.inputs.HasChainResolvedInputs());
     CHECK(job.pose.valid);
@@ -1101,11 +1101,51 @@ TestAnOracleReadInput()
         const UsdStageRefPtr stage = UsdStage::Open(stagePath);
         auto evaluator = Make(stage, SdfPath("/Asset/Rig"));
         const RigExecBakedProgram *program = evaluator->GetBakedProgram();
-        CHECK(program && program->GetUpstreamOracle().count(scale));
+        CHECK(program && program->GetUpstreamWeightFieldReads().count(scale));
     }
     // At frame 5, where the driver has left 0 and the scale matters.
     RunCase("oracle input inputs:scale", stagePath, SdfPath("/Asset/Rig"), 5,
             {Up(scale, VtValue(0.25f))}, {{scale, VtValue(0.25f), {}}});
+}
+
+// One value per op-node family feeding the weights: a property chain
+// operand under a `final` driver, the control a volume placement follows,
+// and a volume input a current-phase revision's field and packet read.
+void
+TestComputedWeightFamilies()
+{
+    const std::string stagePath = Fixture("computed_weights.usda");
+    const SdfPath rig("/Asset/Rig");
+    const SdfPath max("/Asset/Rig/Movers/Limit.inputs:max");
+    RunCase("property operand inputs:max", stagePath, rig, 5,
+            {Up(max, VtValue(0.5f))}, {{max, VtValue(0.5f), {}}});
+    const SdfPath ty("/Asset/Rig/Controls/Lift.avars:ty");
+    RunCase("volume frame avars:ty", stagePath, rig, 5, {Up(ty, VtValue(3.0))},
+            {{ty, VtValue(), {{5.0, VtValue(3.0)}}}});
+    const SdfPath falloff("/Asset/Rig/Weights/Sphere.inputs:falloffMin");
+    RunCase("packet input inputs:falloffMin", stagePath, rig, 5,
+            {Up(falloff, VtValue(2.0f))}, {{falloff, VtValue(2.0f), {}}});
+    // A drag reruns the weight-field nodes whose subtree reads the value:
+    // Blend combines Quarter and Ramp, and Quarter reads neither value.
+    const auto ranNodes = [&](const RigExecValueOverride &input) {
+        const UsdStageRefPtr stage = UsdStage::Open(stagePath);
+        auto evaluator = Make(stage, rig);
+        CHECK(evaluator->Evaluate(UsdTimeCode(5)).valid);
+        evaluator->SetUpstreamInputs({input});
+        CHECK(evaluator->Evaluate(UsdTimeCode(5)).valid);
+        std::set<std::string> ran;
+        for (const RigExecOpTraceEntry &entry : evaluator->GetLastOpTrace())
+            if (entry.kind == "OpNode")
+                ran.insert(entry.label);
+        return ran;
+    };
+    const std::string weights = "/Asset/Rig/Weights/";
+    CHECK(ranNodes(Up(max, VtValue(0.5f))) ==
+          std::set<std::string>({"/Asset/Rig/Movers/Limit", weights + "Ramp",
+                                 weights + "Blend"}));
+    const SdfPath scale("/Asset/Rig/Weights/Ramp.inputs:scale");
+    CHECK(ranNodes(Up(scale, VtValue(0.25f))) ==
+          std::set<std::string>({weights + "Ramp", weights + "Blend"}));
 }
 
 // Keys admission drops, in both paths: the pose is the authored one and
@@ -2525,8 +2565,9 @@ TestTheArrayPlaybackLegs()
     CheckPlaybackParity("array chunked indices", chunked, kLimbsRig, 5,
                         {Up(kJointIndices, VtValue(chunkIndices))});
 
-    // A genuinely Animated unweighted chain supports changing stage counts;
-    // animated skin layouts remain an explicit original-export refusal.
+    // A genuinely Animated unweighted chain: a stage count other than the
+    // compiled rig's is an invalid frame; animated skin layouts remain an
+    // explicit original-export refusal.
     const SdfPath sampledRig("/SampleAsset/Rig");
     const SdfPath sampledPath("/SampleAsset/Geom/P.points");
     const auto varyingStage = UsdStage::CreateInMemory();
@@ -2618,9 +2659,15 @@ TestTheArrayPlaybackLegs()
     compare("array moving-time lift", 8);
     set(bad);
     compare("array first admission refusal", 9);
-    // Live admits this frame's two points; authored runtime sets keep three.
+    // Live admits this frame's two points, which recompiles its vertex
+    // groups. Runtime sets keep three, and the stage's own sample at 10
+    // holds two, not the compiled three: an invalid frame there.
     set(bad);
-    compare("array runtime first-refusal restores short stage sample", 10);
+    const size_t shortBuilds = evaluator->GetBakedProgramBuildCount();
+    const RigExecRigPose shortPose = evaluator->Evaluate(UsdTimeCode(10));
+    CHECK(shortPose.valid &&
+          evaluator->GetBakedProgramBuildCount() > shortBuilds);
+    CHECK(!play.EvaluateAndPublishResult(UsdTimeCode(10)).ok);
     CHECK(evaluator->GetUpstreamInputPaths() == PathsOf(bad));
     CHECK(play.GetUpstreamInputPaths().empty());
     CHECK(play.GetUpstreamDropLines() ==
@@ -2628,6 +2675,7 @@ TestTheArrayPlaybackLegs()
                                    ": " + sampledPath.GetString() +
                                    " holds 3 elements; an array set keeps that "
                                    "count, not 2; ignored"});
+    compare("array short stage sample recovers", 9);
 
     const std::string lattice = Example("06_LatticeBulge.usda");
     const SdfPath cage("/LatticeAsset/Geom/Cage.points");
@@ -2966,12 +3014,13 @@ CheckSetsAgainstTheExporter(const std::string &stagePath, double t)
             mark(input);
         }
     }
-    if (oracle != program->GetUpstreamOracle()) {
+    if (oracle != program->GetUpstreamWeightFieldReads()) {
         std::printf("FAIL %s: oracle set (%zu) != exporter's (%zu)\n",
-                    stagePath.c_str(), program->GetUpstreamOracle().size(),
+                    stagePath.c_str(),
+                    program->GetUpstreamWeightFieldReads().size(),
                     oracle.size());
     }
-    CHECK(oracle == program->GetUpstreamOracle());
+    CHECK(oracle == program->GetUpstreamWeightFieldReads());
     std::printf("  %s: %zu admissible, %zu oracle\n", stagePath.c_str(),
                 admissible.size(), oracle.size());
 }
@@ -3048,6 +3097,7 @@ main(int argc, char **argv)
         TestTheSamplerAdmitsAsLiveDoes();
         TestAStandingValueCostsNothing();
         TestAnOracleReadInput();
+        TestComputedWeightFamilies();
         TestDroppedKeys();
         TestThePosedVariant();
         TestTheBakeGuard();

@@ -1,9 +1,8 @@
 // Persistent graph and interactive edits through the public evaluator.
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/inputReplay.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/tapSet.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/setenv.h"
@@ -189,11 +188,6 @@ TestStructuralSplices()
     };
     auto pose = pull();
     CHECK(x(pose) == count);
-    // Stable tap systems share compiler nodes across requests and compiled rig versions.
-    RigExecTapSet first(stage), second(stage);
-    CHECK(first.GetSystem() == second.GetSystem());
-    ExecUsdSystem *system = first.GetSystem();
-
     auto tail = add("Inserted", target);
     auto order = scope.GetChildrenReorder();
     // Reverse sibling traversal: first child executes last.
@@ -205,16 +199,12 @@ TestStructuralSplices()
     pose = pull();
     CHECK(x(pose) == count + 1);
 
-    CHECK(first.GetSystem() == system);
     tail.GetRelationship(TfToken("rigExec:transform"))
         .SetTargets({other.GetPath()});
     pose = pull();
     CHECK(x(pose) == count + 3);
 
-    CHECK(first.GetSystem() == system);
-
-    // Deleting a prim retires the stock listener before its invalid-prim
-    // predicate runs; surviving point checkpoints remain live.
+    // Deleting a prim leaves the surviving point checkpoints live.
     CHECK(stage->RemovePrim(tail.GetPath()));
     pose = pull();
     CHECK(x(pose) == count);
@@ -498,11 +488,13 @@ TestGeometryConstraintsCompose()
     check(15);
     last.GetAttribute(TfToken("inputs:translationOffset"))
         .Set(GfVec3d(std::numeric_limits<double>::quiet_NaN(), 0, 0));
-    pose = check(11);
+    pose = evaluator.Evaluate(UsdTimeCode::Default());
+    CHECK(!pose.valid);
     CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
                       [](const std::string &d) {
-                          return d.find("MoverFailed /Asset/Rig/Movers/Last") !=
-                                 std::string::npos;
+                          return d.find("/Asset/Rig/Movers/Last: ") == 0 &&
+                                 d.find("non-finite offset") !=
+                                     std::string::npos;
                       }));
     last.GetAttribute(TfToken("inputs:translationOffset")).Set(GfVec3d(0));
     check(15);
@@ -541,17 +533,27 @@ TestAnimatedPointCounts()
     const size_t compiledRig = evaluator.GetCompiledRigSignature();
     auto pose = evaluator.Evaluate(UsdTimeCode(1));
 
+    // Topology is fixed per compiled rig: at 2 the changing points hold 2
+    // points, not the compiled 1, an invalid frame that publishes nothing;
+    // 1 recovers. Nothing recompiles.
     for (double time : {2.0, 1.0, 2.0}) {
         pose = evaluator.Evaluate(UsdTimeCode(time));
-        CHECK(pose.valid);
-
         CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
-        const auto result =
-            pose.movedProperties.at(SdfPath("/Asset/Changing.points"))
-                .Get<VtVec3fArray>();
-        CHECK(result.size() == (time == 1.0 ? 1 : 2));
-        CHECK(!result.empty() &&
-              result.front()[0] == (time == 1.0 ? 2.0f : 12.0f));
+        const auto found =
+            pose.movedProperties.find(SdfPath("/Asset/Changing.points"));
+        if (time == 2.0) {
+            CHECK(!pose.valid && found == pose.movedProperties.end());
+            CHECK(std::find(pose.diagnostics.begin(), pose.diagnostics.end(),
+                            "/Asset/Changing.points: the base has 2 point(s), "
+                            "but the compiled rig cut its vertex groups from "
+                            "1") != pose.diagnostics.end());
+            continue;
+        }
+        CHECK(pose.valid && found != pose.movedProperties.end());
+        if (found == pose.movedProperties.end())
+            continue;
+        const auto result = found->second.Get<VtVec3fArray>();
+        CHECK(result.size() == 1 && result.front()[0] == 2.0f);
     }
 }
 

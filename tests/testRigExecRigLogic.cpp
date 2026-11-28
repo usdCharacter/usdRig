@@ -6,7 +6,7 @@
 // their mesh primvars and a morph connected to one), each one against the
 // shared kernel driven directly, against the frame-cache worker, and against
 // the .rigexec runtime played over the same timeline, bit for bit.
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBinary/format.h"
 #include "rigExecMath/conditionalTableKernel.h"
 #include "rigExecMath/mlpKernel.h"
@@ -22,6 +22,7 @@
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/stage.h"
 
+#include <algorithm>
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
@@ -34,8 +35,13 @@ using namespace rigExec;
 PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
-#define CHECK(condition) do { if (!(condition)) { ++failures; \
-    std::printf("FAIL %d: %s\n", __LINE__, #condition); } } while (0)
+#define CHECK(condition)                                                       \
+    do {                                                                       \
+        if (!(condition)) {                                                    \
+            ++failures;                                                        \
+            std::printf("FAIL %d: %s\n", __LINE__, #condition);                \
+        }                                                                      \
+    } while (0)
 
 #include "rigExecFrozenParity.h"
 #include "rigExecRuntimeDrive.h"
@@ -93,8 +99,8 @@ AuthorInterpolator(const UsdStageRefPtr &stage, const Case &c,
                    RigExecRbfMethodDesc *desc)
 {
     auto builder = RigExecRigBuilder::Create(stage, kRig);
-    UsdPrim prim = stage->DefinePrim(kInterpolator,
-                                     TfToken("RigExecPoseInterpolator"));
+    UsdPrim prim =
+        stage->DefinePrim(kInterpolator, TfToken("RigExecPoseInterpolator"));
     RigExecPoseInterpolatorHandle interpolator(stage, kInterpolator);
     interpolator.SetSolver(TfToken(c.solver));
     interpolator.SetKernel(TfToken(c.kernel));
@@ -113,15 +119,17 @@ AuthorInterpolator(const UsdStageRefPtr &stage, const Case &c,
     desc->solverType = std::string(c.solver) == "interpolative"
                            ? RigExecRbfSolverType::Interpolative
                            : RigExecRbfSolverType::Additive;
-    desc->distanceMethod =
-        std::string(c.distance) == "euclidean" ? RigExecRbfDistanceMethod::Euclidean :
-        std::string(c.distance) == "swingAngle" ? RigExecRbfDistanceMethod::SwingAngle :
-        std::string(c.distance) == "twistAngle" ? RigExecRbfDistanceMethod::TwistAngle :
-        RigExecRbfDistanceMethod::Quaternion;
+    desc->distanceMethod = std::string(c.distance) == "euclidean"
+                               ? RigExecRbfDistanceMethod::Euclidean
+                           : std::string(c.distance) == "swingAngle"
+                               ? RigExecRbfDistanceMethod::SwingAngle
+                           : std::string(c.distance) == "twistAngle"
+                               ? RigExecRbfDistanceMethod::TwistAngle
+                               : RigExecRbfDistanceMethod::Quaternion;
     desc->weightFunction =
-        std::string(c.kernel) == "linear" ? RigExecRbfWeightFunction::Linear :
-        std::string(c.kernel) == "cubic" ? RigExecRbfWeightFunction::Cubic :
-        RigExecRbfWeightFunction::Gaussian;
+        std::string(c.kernel) == "linear"  ? RigExecRbfWeightFunction::Linear
+        : std::string(c.kernel) == "cubic" ? RigExecRbfWeightFunction::Cubic
+                                           : RigExecRbfWeightFunction::Gaussian;
     desc->normalizeMethod = RigExecRbfNormalizeMethod::Always;
     desc->twistAxis = 1;
     desc->radius = c.numeric ? 2.0f : 1.1f;
@@ -135,8 +143,16 @@ AuthorInterpolator(const UsdStageRefPtr &stage, const Case &c,
     };
     const PoseSpec poses[] = {
         {"neutral", About({0, 1, 0}, 0), About({1, 0, 0}, 0), {0, 0, 0}, 1.0f},
-        {"bend", About({0, 0.3, 1}, 70), About({1, 0.2, 0}, 15), {3, 0, 0}, 1.0f},
-        {"twist", About({0.3, 1, 0}, 80), About({0, 1, 0.4}, -40), {0, 2, 0}, 0.5f},
+        {"bend",
+         About({0, 0.3, 1}, 70),
+         About({1, 0.2, 0}, 15),
+         {3, 0, 0},
+         1.0f},
+        {"twist",
+         About({0.3, 1, 0}, 80),
+         About({0, 1, 0.4}, -40),
+         {0, 2, 0},
+         0.5f},
         {"both", About({1, 0, 1}, 60), About({1, 1, 0}, 35), {2, 2, 0}, 1.5f},
     };
     std::vector<SdfPath> weights;
@@ -146,8 +162,8 @@ AuthorInterpolator(const UsdStageRefPtr &stage, const Case &c,
         pose.SetTranslation(spec.values);
         pose.SetScale(spec.scale);
         if (c.numeric) {
-            desc->targets.insert(desc->targets.end(),
-                                 {double(spec.values[0]), double(spec.values[1])});
+            desc->targets.insert(desc->targets.end(), {double(spec.values[0]),
+                                                       double(spec.values[1])});
         } else {
             Push(&desc->targets, spec.elbow);
             Push(&desc->targets, spec.wrist);
@@ -246,7 +262,8 @@ TestCase(const Case &c)
     std::vector<std::string> errors;
     if (!evaluator.Compile(&errors)) {
         ++failures;
-        for (const auto &e : errors) std::printf("FAIL %s compile: %s\n", label.c_str(), e.c_str());
+        for (const auto &e : errors)
+            std::printf("FAIL %s compile: %s\n", label.c_str(), e.c_str());
         return;
     }
     CHECK(evaluator.GetSkippedOperations().empty());
@@ -258,13 +275,15 @@ TestCase(const Case &c)
     // rounding of the frames, not bit for bit.
     std::vector<RigExecRigPose> live;
     for (size_t f = 0; f < 4; ++f) {
-        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(double(f + 1)));
+        const RigExecRigPose pose =
+            evaluator.Evaluate(UsdTimeCode(double(f + 1)));
         CHECK(pose.valid);
         live.push_back(pose);
         const std::vector<double> row = ExpectedRow(c, f);
         std::vector<double> scratch(RigExecRbfMethodScratchSize(table));
         std::vector<double> expected(table.targetCount);
-        RigExecRbfMethodEvaluate(table, row.data(), scratch.data(), expected.data());
+        RigExecRbfMethodEvaluate(table, row.data(), scratch.data(),
+                                 expected.data());
         bool any = false;
         for (size_t p = 0; p < weights.size(); ++p) {
             const double got = Published(pose, weights[p]);
@@ -311,7 +330,8 @@ TestCase(const Case &c)
         return;
     }
     for (size_t f : {2u, 0u, 3u, 1u, 1u}) {
-        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(double(f + 1)));
+        const RigExecRigPose pose =
+            evaluator.Evaluate(UsdTimeCode(double(f + 1)));
         if (!player.Play(double(f + 1), &error)) {
             ++failures;
             std::printf("FAIL %s play: %s\n", label.c_str(), error.c_str());
@@ -321,19 +341,21 @@ TestCase(const Case &c)
         if (!RigExecCompareRuntimeRun(pose, player.Reader(), &diffs)) {
             ++failures;
             std::printf("FAIL %s runtime frame %zu:\n", label.c_str(), f + 1);
-            for (const auto &d : diffs) std::printf("    %s\n", d.c_str());
+            for (const auto &d : diffs)
+                std::printf("    %s\n", d.c_str());
         }
     }
 
     // A solve setting is compiled rig identity: an edit recompiles and changes the
     // weights, and evaluation never authors.
     const RigExecRigPose beforePose = evaluator.Evaluate(UsdTimeCode(3.0));
-    RigExecPoseInterpolatorHandle(stage, kInterpolator).SetRadius(
-        c.numeric ? 0.9f : 0.5f);
+    RigExecPoseInterpolatorHandle(stage, kInterpolator)
+        .SetRadius(c.numeric ? 0.9f : 0.5f);
     const RigExecRigPose afterPose = evaluator.Evaluate(UsdTimeCode(3.0));
     bool changed = false;
     for (const SdfPath &weight : weights) {
-        changed = changed || Published(beforePose, weight) != Published(afterPose, weight);
+        changed = changed ||
+                  Published(beforePose, weight) != Published(afterPose, weight);
         CHECK(std::isfinite(Published(afterPose, weight)));
     }
     if (!changed) {
@@ -372,7 +394,8 @@ CheckEvaluators(RigExecRigEvaluator &evaluator, const UsdStageRefPtr &stage,
         return;
     }
     for (size_t f : {2u, 0u, 3u, 1u, 1u}) {
-        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(double(f + 1)));
+        const RigExecRigPose pose =
+            evaluator.Evaluate(UsdTimeCode(double(f + 1)));
         if (!player.Play(double(f + 1), &error)) {
             ++failures;
             std::printf("FAIL %s play: %s\n", label.c_str(), error.c_str());
@@ -382,7 +405,8 @@ CheckEvaluators(RigExecRigEvaluator &evaluator, const UsdStageRefPtr &stage,
         if (!RigExecCompareRuntimeRun(pose, player.Reader(), &diffs)) {
             ++failures;
             std::printf("FAIL %s runtime frame %zu:\n", label.c_str(), f + 1);
-            for (const auto &d : diffs) std::printf("    %s\n", d.c_str());
+            for (const auto &d : diffs)
+                std::printf("    %s\n", d.c_str());
         }
     }
 }
@@ -408,19 +432,26 @@ MakeMlRig()
     MlRig rig;
     rig.stage = MakeStage();
     const UsdStageRefPtr &stage = rig.stage;
-    for (int i = 0; i < 6; ++i) rig.base.push_back(GfVec3f(float(i), 0.5f * i, 0.0f));
+    for (int i = 0; i < 6; ++i)
+        rig.base.push_back(GfVec3f(float(i), 0.5f * i, 0.0f));
     UsdPrim mesh = stage->DefinePrim(kMesh, TfToken("Mesh"));
-    mesh.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray).Set(rig.base);
+    mesh.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
+        .Set(rig.base);
     rig.indices = {VtIntArray{0, 2, 5}, VtIntArray{1, 2}};
-    rig.offsets = {VtVec3fArray{GfVec3f(0, 1, 0), GfVec3f(0.5f, 0, 0.25f), GfVec3f(0, 0, 2)},
+    rig.offsets = {VtVec3fArray{GfVec3f(0, 1, 0), GfVec3f(0.5f, 0, 0.25f),
+                                GfVec3f(0, 0, 2)},
                    VtVec3fArray{GfVec3f(-1, 0, 0), GfVec3f(0, 0.75f, -0.5f)}};
     std::vector<SdfPath> shapes;
     for (size_t k = 0; k < 2; ++k) {
         const SdfPath path("/Asset/Geom/Shape" + std::to_string(k));
         UsdPrim shape = stage->DefinePrim(path, TfToken("BlendShape"));
-        shape.CreateAttribute(TfToken("offsets"), SdfValueTypeNames->Vector3fArray)
+        shape
+            .CreateAttribute(TfToken("offsets"),
+                             SdfValueTypeNames->Vector3fArray)
             .Set(rig.offsets[k]);
-        shape.CreateAttribute(TfToken("pointIndices"), SdfValueTypeNames->IntArray)
+        shape
+            .CreateAttribute(TfToken("pointIndices"),
+                             SdfValueTypeNames->IntArray)
             .Set(rig.indices[k]);
         shapes.push_back(path);
     }
@@ -433,12 +464,13 @@ MakeMlRig()
     ml.SetDriverAttributes({kDial.AppendProperty(TfToken("avars:tx"))});
     const std::vector<float> weights = {
         // layer 1: 4 x 5
-        0.8f, -0.3f, 0.5f, 0.2f, 0.4f,   -0.6f, 0.9f, 0.1f, -0.2f, 0.3f,
-        0.3f, 0.3f, -0.7f, 0.5f, -0.5f,  0.1f, -0.4f, 0.6f, 0.9f, 0.2f,
+        0.8f, -0.3f, 0.5f, 0.2f, 0.4f, -0.6f, 0.9f, 0.1f, -0.2f, 0.3f, 0.3f,
+        0.3f, -0.7f, 0.5f, -0.5f, 0.1f, -0.4f, 0.6f, 0.9f, 0.2f,
         // layer 2: 2 x 4
-        1.2f, -0.8f, 0.5f, 0.3f,  -0.5f, 1.1f, 0.7f, -0.9f};
+        1.2f, -0.8f, 0.5f, 0.3f, -0.5f, 1.1f, 0.7f, -0.9f};
     const std::vector<float> biases = {0.1f, -0.2f, 0.05f, 0.0f, -0.3f, 0.2f};
-    ml.SetNetwork({4, 2}, {TfToken("tanh"), TfToken("sigmoid")}, {}, weights, biases);
+    ml.SetNetwork({4, 2}, {TfToken("tanh"), TfToken("sigmoid")}, {}, weights,
+                  biases);
     ml.SetInputNormalization({0, 0, 0, 0.9f, 1.0f}, {2, 2, 2, 3, 0.5f});
     ml.SetOutputDefaults({0.0f, 0.25f});
     std::string error;
@@ -448,12 +480,14 @@ MakeMlRig()
     rig.network.inputScale = {2, 2, 2, 3, 0.5f};
     rig.network.defaults = {0.0f, 0.25f};
     for (size_t k = 0; k < 2; ++k) {
-        rig.outputs.push_back(ml.AddMorph("out" + std::to_string(k), shapes[k]));
+        rig.outputs.push_back(
+            ml.AddMorph("out" + std::to_string(k), shapes[k]));
     }
     // A keyed mask: on, half, off (the defaults), on.
     const double masks[4] = {1.0, 0.5, 0.0, 1.0};
     for (size_t f = 0; f < 4; ++f) {
-        ml.GetPrim().GetAttribute(TfToken("inputs:mask"))
+        ml.GetPrim()
+            .GetAttribute(TfToken("inputs:mask"))
             .Set(float(masks[f]), UsdTimeCode(double(f + 1)));
     }
     KeyStage(stage);
@@ -468,7 +502,8 @@ TestMlMover()
     std::vector<std::string> errors;
     if (!evaluator.Compile(&errors)) {
         ++failures;
-        for (const auto &e : errors) std::printf("FAIL ml compile: %s\n", e.c_str());
+        for (const auto &e : errors)
+            std::printf("FAIL ml compile: %s\n", e.c_str());
         return;
     }
     CHECK(evaluator.GetSkippedOperations().empty());
@@ -477,7 +512,8 @@ TestMlMover()
     const SdfPath points = kMesh.AppendProperty(TfToken("points"));
     const double masks[4] = {1.0, 0.5, 0.0, 1.0};
     for (size_t f = 0; f < 4; ++f) {
-        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(double(f + 1)));
+        const RigExecRigPose pose =
+            evaluator.Evaluate(UsdTimeCode(double(f + 1)));
         CHECK(pose.valid);
         // The network on the row the evaluator should build: the elbow's
         // local rotation from rest, then the dial.
@@ -485,7 +521,8 @@ TestMlMover()
         row.resize(4);
         row.push_back(kKeys[f].dialX);
         std::vector<double> scratch(RigExecMlScratchSize(rig.network)), out(2);
-        RigExecMlEvaluate(rig.network, row.data(), masks[f], scratch.data(), out.data());
+        RigExecMlEvaluate(rig.network, row.data(), masks[f], scratch.data(),
+                          out.data());
         for (size_t k = 0; k < 2; ++k) {
             const double got = Published(pose, rig.outputs[k]);
             if (!(std::abs(got - out[k]) <= 2e-6)) {
@@ -503,14 +540,17 @@ TestMlMover()
         for (size_t k = 0; k < 2; ++k) {
             const double w = Published(pose, rig.outputs[k]);
             for (size_t e = 0; e < rig.indices[k].size(); ++e) {
-                expected[size_t(rig.indices[k][e])] += GfVec3f(rig.offsets[k][e] * float(w));
+                expected[size_t(rig.indices[k][e])] +=
+                    GfVec3f(rig.offsets[k][e] * float(w));
             }
         }
         const auto found = pose.movedProperties.find(points);
         CHECK(found != pose.movedProperties.end() &&
               found->second.IsHolding<VtVec3fArray>());
-        if (found != pose.movedProperties.end() && found->second.IsHolding<VtVec3fArray>()) {
-            const VtVec3fArray &moved = found->second.UncheckedGet<VtVec3fArray>();
+        if (found != pose.movedProperties.end() &&
+            found->second.IsHolding<VtVec3fArray>()) {
+            const VtVec3fArray &moved =
+                found->second.UncheckedGet<VtVec3fArray>();
             CHECK(moved.size() == expected.size());
             for (size_t i = 0; i < moved.size() && i < expected.size(); ++i) {
                 if ((moved[i] - expected[i]).GetLength() > 1e-5f) {
@@ -529,8 +569,9 @@ TestMlMover()
     CHECK(Published(half, rig.outputs[0]) == Published(full, rig.outputs[0]));
     const auto pointsOf = [&](const RigExecRigPose &pose) {
         const auto found = pose.movedProperties.find(points);
-        return found == pose.movedProperties.end() ? VtVec3fArray()
-                                                    : found->second.Get<VtVec3fArray>();
+        return found == pose.movedProperties.end()
+                   ? VtVec3fArray()
+                   : found->second.Get<VtVec3fArray>();
     };
     const VtVec3fArray fullPoints = pointsOf(full), halfPoints = pointsOf(half);
     CHECK(fullPoints.size() == 6 && halfPoints.size() == 6);
@@ -540,9 +581,13 @@ TestMlMover()
     }
     // A weight edit is compiled rig identity: it recompiles and moves the outputs.
     VtFloatArray weights;
-    rig.stage->GetPrimAtPath(rig.mover).GetAttribute(TfToken("rigExec:weights")).Get(&weights);
+    rig.stage->GetPrimAtPath(rig.mover)
+        .GetAttribute(TfToken("rigExec:weights"))
+        .Get(&weights);
     weights[20] += 1.0f;
-    rig.stage->GetPrimAtPath(rig.mover).GetAttribute(TfToken("rigExec:weights")).Set(weights);
+    rig.stage->GetPrimAtPath(rig.mover)
+        .GetAttribute(TfToken("rigExec:weights"))
+        .Set(weights);
     const RigExecRigPose edited = evaluator.Evaluate(UsdTimeCode(2.0));
     CHECK(Published(edited, rig.outputs[0]) != Published(half, rig.outputs[0]));
 
@@ -557,10 +602,9 @@ TestMlMover()
 
 const SdfPath kMapsMesh("/Asset/Geom/Brow");
 
-// The map_unclamped bytes of the first animated maps node \p evaluator
-// bakes at frame 1; false when it does not bake or holds no such node.
+// Whether \p evaluator bakes at frame 1 with an animated maps node.
 bool
-BakedMapUnclamped(RigExecRigEvaluator &evaluator, std::vector<uint8_t> *flags)
+BakesAnimatedMaps(RigExecRigEvaluator &evaluator)
 {
     std::vector<uint8_t> bytes;
     std::string error;
@@ -571,12 +615,9 @@ BakedMapUnclamped(RigExecRigEvaluator &evaluator, std::vector<uint8_t> *flags)
         std::printf("    bake: %s\n", error.c_str());
         return false;
     }
-    for (const auto &interp : file->pose->poseInterpolators) {
-        if (interp.maps) {
-            *flags = interp.maps->mapUnclamped;
+    for (const auto &interp : file->pose->poseInterpolators)
+        if (interp.solve == 3)
             return true;
-        }
-    }
     return false;
 }
 
@@ -592,11 +633,14 @@ TestAnimatedMaps()
     UsdAttribute blinkAttr = stage->GetPrimAtPath(kDial).CreateAttribute(
         blink.GetNameToken(), SdfValueTypeNames->Float);
     const float blinks[4] = {0.0f, 0.4f, 0.9f, 0.65f};
-    for (size_t f = 0; f < 4; ++f) blinkAttr.Set(blinks[f], UsdTimeCode(double(f + 1)));
+    for (size_t f = 0; f < 4; ++f)
+        blinkAttr.Set(blinks[f], UsdTimeCode(double(f + 1)));
     const VtVec3fArray base{GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(0, 1, 0)};
     stage->DefinePrim(kMapsMesh, TfToken("Mesh"))
-        .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray).Set(base);
-    UsdPrim shape = stage->DefinePrim(SdfPath("/Asset/Geom/BrowShape"), TfToken("BlendShape"));
+        .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
+        .Set(base);
+    UsdPrim shape = stage->DefinePrim(SdfPath("/Asset/Geom/BrowShape"),
+                                      TfToken("BlendShape"));
     shape.CreateAttribute(TfToken("offsets"), SdfValueTypeNames->Vector3fArray)
         .Set(VtVec3fArray{GfVec3f(0, 0, 1)});
     shape.CreateAttribute(TfToken("pointIndices"), SdfValueTypeNames->IntArray)
@@ -609,34 +653,35 @@ TestAnimatedMaps()
     maps.SetMeshes({kMapsMesh});
     // Map 0: tx ramps up over [0, 1] and back down over [1, 3] (a group
     // sharing the endpoint 1), plus ty over a reversed interval.
-    const SdfPath raise = maps.AddMap("raise", {0, 0, 1}, {0, 1, 2}, {1, 3, 0},
-                                      {1, -0.5f, 0.25f}, {0, 1.5f, 0},
-                                      "wrinkleBrowRaise");
+    const SdfPath raise =
+        maps.AddMap("raise", {0, 0, 1}, {0, 1, 2}, {1, 3, 0}, {1, -0.5f, 0.25f},
+                    {0, 1.5f, 0}, "wrinkleBrowRaise");
     // Map 1: the blink alone, steep, clamped to [0, 1].
-    const SdfPath squint = maps.AddMap("squint", {2}, {0.2f}, {1}, {2.5f}, {-0.5f});
-    // A clamped-only node bakes no map_unclamped, so its bytes are those
-    // of a bake from before the field existed.
+    const SdfPath squint =
+        maps.AddMap("squint", {2}, {0.2f}, {1}, {2.5f}, {-0.5f});
     {
         RigExecRigEvaluator clampedOnly(stage, kRig);
         std::vector<std::string> clampedErrors;
-        std::vector<uint8_t> flags{9};
         CHECK(clampedOnly.Compile(&clampedErrors) &&
-              BakedMapUnclamped(clampedOnly, &flags) && flags.empty());
+              BakesAnimatedMaps(clampedOnly));
     }
     // Map 2: a step table, unclamped (rigExec:clampOutput false), slope-0
     // rows over tx: 30 up to 1 (the first row owns the shared bound), -0.5
     // beyond, both out to the float limits.
-    const SdfPath step = maps.AddMap("step", {0, 0}, {-FLT_MAX, 1}, {1, FLT_MAX},
-                                     {0, 0}, {30, -0.5f}, "", false);
-    const UsdAttribute stepClamp = stage->GetPrimAtPath(step.GetPrimPath())
-                                       .GetAttribute(TfToken("rigExec:clampOutput"));
+    const SdfPath step =
+        maps.AddMap("step", {0, 0}, {-FLT_MAX, 1}, {1, FLT_MAX}, {0, 0},
+                    {30, -0.5f}, "", false);
+    const UsdAttribute stepClamp =
+        stage->GetPrimAtPath(step.GetPrimPath())
+            .GetAttribute(TfToken("rigExec:clampOutput"));
     CHECK(stepClamp && stepClamp.HasAuthoredValue());
     // The default, clampOutput true, authors nothing.
     CHECK(!stage->GetPrimAtPath(raise.GetPrimPath())
                .GetAttribute(TfToken("rigExec:clampOutput"))
                .HasAuthoredValue());
     RigExecBlendShapeMoverHandle morph =
-        builder.NewMoverChain("Brow", kMapsMesh.AppendProperty(TfToken("points")))
+        builder
+            .NewMoverChain("Brow", kMapsMesh.AppendProperty(TfToken("points")))
             .AddBlendShapeMover("Morph");
     RigExecBlendInputHandle input = morph.AddBlendInput("raiseMorph");
     input.ConnectWeight(raise);
@@ -644,7 +689,8 @@ TestAnimatedMaps()
 
     RigExecAnimatedMapsTable table;
     table.inputCount = 3;
-    CHECK(table.AddMap({{0, 0, 1, 1, 0}, {0, 1, 3, -0.5, 1.5}, {1, 2, 0, 0.25, 0}}));
+    CHECK(table.AddMap(
+        {{0, 0, 1, 1, 0}, {0, 1, 3, -0.5, 1.5}, {1, 2, 0, 0.25, 0}}));
     CHECK(table.AddMap({{2, 0.2f, 1, 2.5f, -0.5f}}));
     CHECK(table.AddMap({{0, -FLT_MAX, 1, 0, 30}, {0, 1, FLT_MAX, 0, -0.5}},
                        false));
@@ -658,22 +704,28 @@ TestAnimatedMaps()
     std::vector<std::string> errors;
     if (!evaluator.Compile(&errors)) {
         ++failures;
-        for (const auto &e : errors) std::printf("FAIL maps compile: %s\n", e.c_str());
+        for (const auto &e : errors)
+            std::printf("FAIL maps compile: %s\n", e.c_str());
         return;
     }
     CHECK(evaluator.GetSkippedOperations().empty());
     const std::vector<SdfPath> primvars = evaluator.GetAnimatedMapPrimvars();
     CHECK(primvars.size() == 3);
-    const SdfPath raisePrimvar = kMapsMesh.AppendProperty(TfToken("primvars:wrinkleBrowRaise"));
-    const SdfPath squintPrimvar = kMapsMesh.AppendProperty(TfToken("primvars:squint"));
-    const SdfPath stepPrimvar = kMapsMesh.AppendProperty(TfToken("primvars:step"));
+    const SdfPath raisePrimvar =
+        kMapsMesh.AppendProperty(TfToken("primvars:wrinkleBrowRaise"));
+    const SdfPath squintPrimvar =
+        kMapsMesh.AppendProperty(TfToken("primvars:squint"));
+    const SdfPath stepPrimvar =
+        kMapsMesh.AppendProperty(TfToken("primvars:step"));
     CHECK(primvars.size() == 3 && primvars[0] == squintPrimvar &&
           primvars[1] == stepPrimvar && primvars[2] == raisePrimvar);
     bool sawClamp = false, sawGroup = false, sawHigh = false, sawLow = false;
     for (size_t f = 0; f < 4; ++f) {
-        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(double(f + 1)));
+        const RigExecRigPose pose =
+            evaluator.Evaluate(UsdTimeCode(double(f + 1)));
         CHECK(pose.valid);
-        const double inputs[3] = {kKeys[f].dialX, kKeys[f].dialY, double(blinks[f])};
+        const double inputs[3] = {kKeys[f].dialX, kKeys[f].dialY,
+                                  double(blinks[f])};
         double values[3], clampedValues[3];
         RigExecAnimatedMapsEvaluate(table, inputs, values);
         RigExecAnimatedMapsEvaluate(clampedTable, inputs, clampedValues);
@@ -687,7 +739,8 @@ TestAnimatedMaps()
         sawHigh = sawHigh || values[2] == 30.0;
         sawLow = sawLow || values[2] == -0.5;
         const SdfPath outputs[3] = {raise, squint, step};
-        const SdfPath meshPrimvars[3] = {raisePrimvar, squintPrimvar, stepPrimvar};
+        const SdfPath meshPrimvars[3] = {raisePrimvar, squintPrimvar,
+                                         stepPrimvar};
         for (int m = 0; m < 3; ++m) {
             const double got = Published(pose, outputs[m]);
             if (!(std::abs(got - values[m]) <= 1e-6)) {
@@ -697,24 +750,23 @@ TestAnimatedMaps()
             }
             CHECK(Published(pose, meshPrimvars[m]) == got);
         }
-        const auto found = pose.movedProperties.find(kMapsMesh.AppendProperty(TfToken("points")));
+        const auto found = pose.movedProperties.find(
+            kMapsMesh.AppendProperty(TfToken("points")));
         CHECK(found != pose.movedProperties.end() &&
               found->second.IsHolding<VtVec3fArray>());
-        if (found != pose.movedProperties.end() && found->second.IsHolding<VtVec3fArray>()) {
-            const VtVec3fArray &moved = found->second.UncheckedGet<VtVec3fArray>();
+        if (found != pose.movedProperties.end() &&
+            found->second.IsHolding<VtVec3fArray>()) {
+            const VtVec3fArray &moved =
+                found->second.UncheckedGet<VtVec3fArray>();
             CHECK(moved.size() == 3 &&
-                  std::abs(moved[2][2] - float(Published(pose, raise))) < 1e-6f &&
+                  std::abs(moved[2][2] - float(Published(pose, raise))) <
+                      1e-6f &&
                   moved[0] == base[0] && moved[1] == base[1]);
         }
     }
     CHECK(sawClamp && sawGroup && sawHigh && sawLow);
     CheckEvaluators(evaluator, stage, "maps");
-    // The bake carries one flag per map, 1 on the unclamped step map.
-    {
-        std::vector<uint8_t> flags;
-        CHECK(BakedMapUnclamped(evaluator, &flags) &&
-              flags == std::vector<uint8_t>({0, 0, 1}));
-    }
+    CHECK(BakesAnimatedMaps(evaluator));
 
     // rigExec:clampOutput is compiled rig identity: a flip recompiles and
     // the step map clamps (30 -> 1 at frame 1, -0.5 -> 0 at frame 2), and
@@ -726,7 +778,8 @@ TestAnimatedMaps()
         stepClamp.Set(true);
         const RigExecRigPose high = evaluator.Evaluate(UsdTimeCode(1.0));
         CHECK(evaluator.GetCompiledRigSignature() != signature);
-        CHECK(Published(high, step) == 1.0 && Published(high, stepPrimvar) == 1.0);
+        CHECK(Published(high, step) == 1.0 &&
+              Published(high, stepPrimvar) == 1.0);
         const RigExecRigPose low = evaluator.Evaluate(UsdTimeCode(2.0));
         CHECK(Published(low, step) == 0.0);
         CheckEvaluators(evaluator, stage, "maps clamped");
@@ -737,7 +790,8 @@ TestAnimatedMaps()
     }
 
     // A row edit is compiled rig identity; a disabled node publishes zeros.
-    stage->GetPrimAtPath(raise.GetPrimPath()).GetAttribute(TfToken("rigExec:rowCut"))
+    stage->GetPrimAtPath(raise.GetPrimPath())
+        .GetAttribute(TfToken("rigExec:rowCut"))
         .Set(VtFloatArray{0.25f, 1.5f, 0.0f});
     const RigExecRigPose cut = evaluator.Evaluate(UsdTimeCode(2.0));
     CHECK(Published(cut, raise) != 0.0);
@@ -751,11 +805,75 @@ TestAnimatedMaps()
 
     // A row naming an input that does not exist sets the node aside alone.
     maps.SetEnabled(true);
-    stage->GetPrimAtPath(squint.GetPrimPath()).GetAttribute(TfToken("rigExec:rowInputs"))
+    stage->GetPrimAtPath(squint.GetPrimPath())
+        .GetAttribute(TfToken("rigExec:rowInputs"))
         .Set(VtIntArray{7});
     RigExecRigEvaluator refused(stage, kRig);
     CHECK(refused.Compile(&errors));
-    CHECK(refused.GetSkippedOperations().count(SdfPath("/Asset/Rig/AnimatedMaps/Wrinkles")) == 1);
+    CHECK(refused.GetSkippedOperations().count(
+              SdfPath("/Asset/Rig/AnimatedMaps/Wrinkles")) == 1);
+}
+
+// A frame driver with zero scale has no usable frame: the weights are zero
+// and every evaluator gives the interpolator's step the same line.
+void
+TestUnusableDriver()
+{
+    const Case c{"interpolative", "quaternion", "gaussian", false};
+    UsdStageRefPtr stage = MakeStage();
+    RigExecRbfMethodDesc desc;
+    const std::vector<SdfPath> weights = AuthorInterpolator(stage, c, &desc);
+    KeyStage(stage);
+    SetAvar(stage, kElbow, "avars:tx",
+            std::numeric_limits<double>::quiet_NaN());
+    RigExecRigEvaluator evaluator(stage, kRig);
+    CHECK(evaluator.Compile());
+    const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(2.0));
+    CHECK(pose.valid);
+    const std::string expected =
+        "pose interpolator " + kInterpolator.GetString() +
+        " has no usable frame for its driver " + kElbow.GetString() +
+        " after the pose walk; its weights are zero this generation";
+    CHECK(std::count(pose.diagnostics.begin(), pose.diagnostics.end(),
+                     expected) == 1);
+    for (const SdfPath &weight : weights)
+        CHECK(Published(pose, weight) == 0.0);
+
+    // The frame-cache worker gives the same line (the NaN control frame
+    // itself compares unequal to itself, so only the lines are compared).
+    std::shared_ptr<const RigExecFrozenProgram> frozen;
+    std::string error;
+    CHECK(RigExecFreezeProgram(evaluator, &frozen, &error) && frozen);
+    RigExecFrameInputs inputs;
+    CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(2.0), {}, &inputs,
+                                   &error));
+    if (frozen) {
+        RigExecCancellationSource cancellation;
+        RigExecFrozenEvalContext context;
+        context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+        context.generation = cancellation.Serial();
+        context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+        context.varyingInputCount = inputs.values.size();
+        context.frozen = frozen.get();
+        const RigExecRigPose warmed = RigExecEvaluateFrozen(
+            context, inputs, RigExecMakeProductionStepRunner(),
+            cancellation.Token(context.generation));
+        CHECK(warmed.valid && warmed.diagnostics == pose.diagnostics);
+    }
+
+    // The .rigexec runtime gives it too, on every frame.
+    std::vector<uint8_t> bytes;
+    RigExecTestPlayer player;
+    CHECK(RigExecTestBakeAt(evaluator, 1.0, &bytes, &error) &&
+          player.Open(bytes, stage, &error));
+    for (double frame : {2.0, 3.0, 2.0}) {
+        const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
+        CHECK(std::count(live.diagnostics.begin(), live.diagnostics.end(),
+                         expected) == 1);
+        CHECK(player.Play(frame, &error));
+        const std::vector<std::string> got = player.Reader().GetDiagnostics();
+        CHECK(got == live.diagnostics);
+    }
 }
 
 void
@@ -769,8 +887,8 @@ TestValidation()
     // about the twist axis has the neutral's swing.
     {
         UsdStageRefPtr coincident = MakeStage();
-        AuthorInterpolator(coincident,
-                           {"interpolative", "swingAngle", "cubic", false}, &desc);
+        AuthorInterpolator(
+            coincident, {"interpolative", "swingAngle", "cubic", false}, &desc);
         coincident->GetPrimAtPath(kInterpolator.AppendChild(TfToken("twist")))
             .GetAttribute(TfToken("rigExec:rotations"))
             .Set(VtQuatfArray{About({0, 1, 0}, 80), About({0, 1, 0}, -40)});
@@ -805,7 +923,8 @@ TestValidation()
     UsdStageRefPtr pose = MakeStage();
     AuthorInterpolator(pose, {"additive", "quaternion", "gaussian", false},
                        &desc);
-    RigExecPoseInterpolatorHandle(pose, kInterpolator).SetSolver(TfToken("pose"));
+    RigExecPoseInterpolatorHandle(pose, kInterpolator)
+        .SetSolver(TfToken("pose"));
     RigExecRigEvaluator third(pose, kRig);
     CHECK(third.Compile(&errors));
     CHECK(third.GetSkippedOperations().count(kInterpolator) == 1);
@@ -831,6 +950,7 @@ main()
     }
     TestMlMover();
     TestAnimatedMaps();
+    TestUnusableDriver();
     TestValidation();
     if (failures) {
         std::printf("%d FAILURE(S)\n", failures);

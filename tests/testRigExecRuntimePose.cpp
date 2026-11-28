@@ -6,13 +6,17 @@
 // an authored value, held to the evaluator with the same value authored in
 // the session layer.
 #include "rigExecBake/bake.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBinary/format.h"
 #include "rigExecMath/propertyMath.h"
 #include "rigExecRuntime/runtime.h"
 #include "rigExecRuntime/opGraph.h"
 #include "rigExecRuntime/poseInternal.h"
+#include "rigExecRuntime/poseMath.h"
+#include "rigExecEvalCore/opSteps.h"
+#include "rigExecEvalCore/pose.h"
+#include "rigExecRigTypes/rigTypes.h"
 #include "rigExecExampleFixtures.h"
 
 #include "pxr/base/gf/rotation.h"
@@ -56,6 +60,7 @@ static bool checkedRefreshRecords = false, checkedRefreshCarries = false,
 
 #include "rigExecFileEdit.h"
 #include "rigExecRuntimeDrive.h"
+#include "rigExecFrozenParity.h"
 
 static SdfPath
 _FindRig(const UsdStageRefPtr &stage)
@@ -219,15 +224,22 @@ _TestSolverSemanticRefusals(const std::vector<uint8_t> &bytes)
     if (!baseline)
         return;
     size_t owner = baseline->steps.size();
-    for (size_t i = 0; i < baseline->steps.size(); ++i)
-        if (baseline->steps[i].kind == fb::StepKind::Solve &&
-            !baseline->steps[i].semanticPredecessorKeys.empty()) {
-            owner = i;
-            break;
-        }
+    int64_t solver = -1;
+    for (size_t i = 0; i < baseline->steps.size() && solver < 0; ++i)
+        if (baseline->steps[i].kind == fb::StepKind::OpNode &&
+            !baseline->steps[i].semanticPredecessorKeys.empty() &&
+            baseline->opGraph)
+            for (const auto &output : baseline->opGraph->hostOutputs)
+                if (output &&
+                    output->node == uint64_t(baseline->steps[i].object) &&
+                    output->target ==
+                        uint8_t(eval::OpOutputTarget::SolverFrames)) {
+                    owner = i;
+                    solver = int64_t(output->object);
+                }
     if (owner == baseline->steps.size())
         return;
-    CHECK(!baseline->pose->solvers[size_t(baseline->steps[owner].object)]
+    CHECK(!baseline->pose->solvers[size_t(solver)]
                .relationshipRequirements.empty());
     std::vector<uint8_t> valid;
     std::string error;
@@ -349,6 +361,20 @@ _TestSolverSemanticRefusals(const std::vector<uint8_t> &bytes)
            "imported predecessor is not a typed or semantic requirement");
     checkedSolverSemanticRequirements = true;
 }
+// Whether step \p s runs provider refresh \p refresh as an op node.
+static bool
+_RunsRefresh(const fb::RigExecWireFile &f, const fb::RigExecWireStep &s,
+             int64_t refresh)
+{
+    if (s.kind != fb::StepKind::OpNode || !f.opGraph)
+        return false;
+    for (const auto &output : f.opGraph->hostOutputs)
+        if (output && output->node == uint64_t(s.object) &&
+            output->target == 24 && int64_t(output->object) == refresh)
+            return true;
+    return false;
+}
+
 static void
 _TestProviderRefreshRefusals(const std::vector<uint8_t> &bytes)
 {
@@ -410,8 +436,7 @@ _TestProviderRefreshRefusals(const std::vector<uint8_t> &bytes)
             [](auto &f) {
                 const auto value = f.pose->providerRefreshes[0].baseRead;
                 for (auto &s : f.steps)
-                    if (s.kind == fb::StepKind::ProviderRefresh &&
-                        s.object == 0)
+                    if (_RunsRefresh(f, s, 0))
                         s.reads.erase(
                             std::remove_if(
                                 s.reads.begin(), s.reads.end(),
@@ -423,13 +448,12 @@ _TestProviderRefreshRefusals(const std::vector<uint8_t> &bytes)
                                 }),
                             s.reads.end());
             },
-            "body SSA missing read PoseBase");
+            "which it does not read");
         expect(
             "body write",
             [](auto &f) {
                 for (auto &s : f.steps)
-                    if (s.kind == fb::StepKind::ProviderRefresh &&
-                        s.object == 0)
+                    if (_RunsRefresh(f, s, 0))
                         s.writes.clear();
             },
             "refresh write ownership differs");
@@ -479,8 +503,7 @@ _TestProviderRefreshRefusals(const std::vector<uint8_t> &bytes)
                         "blocker raw declaration",
                         [i, rawRow](auto &f) {
                             for (auto &s : f.steps)
-                                if (s.kind == fb::StepKind::ProviderRefresh &&
-                                    s.object == int(i))
+                                if (_RunsRefresh(f, s, int64_t(i)))
                                     s.reads.erase(
                                         std::remove_if(
                                             s.reads.begin(), s.reads.end(),
@@ -530,6 +553,22 @@ _TestProviderRefreshRefusals(const std::vector<uint8_t> &bytes)
         }
     }
 }
+// Whether \p pose failed with \p error among its lines.
+static bool
+_FailedWith(const RigExecRigPose &pose, const std::string &error)
+{
+    const bool found =
+        !pose.valid && !error.empty() &&
+        std::find(pose.diagnostics.begin(), pose.diagnostics.end(), error) !=
+            pose.diagnostics.end();
+    if (!found) {
+        std::printf("  reader error: %s\n", error.c_str());
+        for (const std::string &line : pose.diagnostics)
+            std::printf("  evaluator line: %s\n", line.c_str());
+    }
+    return found;
+}
+
 static void
 _TestStage(const std::string &name, const UsdStageRefPtr &stage,
            const std::vector<double> &frames,
@@ -571,11 +610,20 @@ _TestStage(const std::string &name, const UsdStageRefPtr &stage,
     for (double frame : times) {
         const RigExecRigPose pose = measured.Evaluate(UsdTimeCode(frame));
         if (!pose.valid) {
-            std::printf("%s frame %.17g: baked pose invalid\n", name.c_str(),
-                        frame);
-            CHECK(false);
-            failed = true;
-            break;
+            // A frame that fails fails in the reader with the same error.
+            const bool played = player.Play(frame, &error);
+            const bool same = !played && _FailedWith(pose, error);
+            if (!same) {
+                std::printf("%s frame %.17g: the baked pose failed, the "
+                            "reader %s\n",
+                            name.c_str(), frame,
+                            played ? "played" : error.c_str());
+                CHECK(false);
+                failed = true;
+                break;
+            }
+            ++compared;
+            continue;
         }
         const RigExecBakedProgram *program = measured.GetBakedProgram();
         if (!program) {
@@ -821,25 +869,25 @@ TestComputedEnvelopes()
     _CheckFramesDiffer("computed envelopes", rows);
 
     // The dynamic envelope driven to 1.6 at frame 10 breaks its strict
-    // range: the oracle's error passes the constraint through with the
-    // program's diagnostic (compared verbatim by the parity path).
+    // range, which stops that frame in both evaluators.
     rows.clear();
     _TestStage("computed envelopes, strict violation", _EnvelopeStage(1.6),
                frames, &rows);
     _CheckFramesDiffer("computed envelopes, strict violation", rows);
     // The violation happens at frame 10 alone: the driver reaches 1.6 there
     // and stays inside the range at frames 1 and 5.
-    const auto violates = [](const _PlayedFrame &row) {
-        for (const std::string &line : row.diagnostics) {
-            if (line.find("strict range violation") != std::string::npos) {
-                return true;
-            }
-        }
-        return false;
-    };
-    CHECK(rows.size() == frames.size());
-    if (rows.size() == frames.size()) {
-        CHECK(!violates(rows[0]) && !violates(rows[1]) && violates(rows[2]));
+    CHECK(rows.size() == 2);
+    const UsdStageRefPtr stage = _EnvelopeStage(1.6);
+    RigExecRigEvaluator evaluator(stage, _FindRig(stage));
+    for (const double frame : frames) {
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(frame));
+        CHECK(pose.valid == (frame != 10.0));
+        if (frame == 10.0)
+            CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                              [](const std::string &line) {
+                                  return line.find("outside [0, 1]") !=
+                                         std::string::npos;
+                              }));
     }
 }
 
@@ -1519,8 +1567,16 @@ _ChainsMatchLive(const std::string &name, const UsdStageRefPtr &stage,
     for (double frame : frames) {
         const RigExecRigPose want = baked.Evaluate(UsdTimeCode(frame));
         if (!want.valid) {
-            std::printf("%s frame %g: no live pose\n", name.c_str(), frame);
-            return false;
+            if (player.Play(frame, &error) || !_FailedWith(want, error)) {
+                std::printf("%s frame %g: the live pose failed, the runtime "
+                            "did not with its error\n",
+                            name.c_str(), frame);
+                return false;
+            }
+            _ChainFrame row;
+            row.lines = {error};
+            rows->push_back(std::move(row));
+            continue;
         }
         if (!player.Play(frame, &error)) {
             std::printf("%s frame %g: %s\n", name.c_str(), frame,
@@ -1682,9 +1738,10 @@ _DoubleChainStage()
 
 // A matrix chain: multiply by a rotation and translation under
 // inputs:defaultWeight 0.5, then blend toward a translation under 0.25,
-// then a multiply whose operand is not finite (inputs unusable).
+// then a multiply whose operand is not finite: disabled, or enabled to
+// fail the frame.
 static UsdStageRefPtr
-_MatrixChainStage()
+_MatrixChainStageWith(bool badEnabled)
 {
     const UsdStageRefPtr stage = _ChainBaseStage();
     const UsdAttribute local =
@@ -1700,6 +1757,8 @@ _MatrixChainStage()
     GfMatrix4d infinite(1.0);
     infinite[3][0] = std::numeric_limits<double>::infinity();
     _SetInput(bad, "inputs:value", SdfValueTypeNames->Matrix4d, infinite);
+    if (!badEnabled)
+        _SetInput(bad, "inputs:enabled", SdfValueTypeNames->Bool, false);
     const UsdPrim snap =
         _MathMover(stage, "Bad/Snap", "RigExecMatrixMathMover", "blend", local);
     _SetInput(snap, "inputs:value", SdfValueTypeNames->Matrix4d,
@@ -1712,6 +1771,12 @@ _MatrixChainStage()
         GfMatrix4d(GfRotation(GfVec3d(0, 0, 1), 30.0), GfVec3d(0.0, 5.0, 0.0)));
     _SetInput(offset, "inputs:defaultWeight", SdfValueTypeNames->Float, 0.5f);
     return stage;
+}
+
+static UsdStageRefPtr
+_MatrixChainStage()
+{
+    return _MatrixChainStageWith(false);
 }
 
 // A vec3f chain: add, then clamp per component, then remap under 0.5.
@@ -1770,11 +1835,12 @@ _DisabledStage()
 
 // Envelopes on property revisions: a blend under a StaticWeight 0.5, an add
 // under a clamped DynamicWeight an avar drives, an add under a strict one
-// the avar drives out of range from frame 8 (the oracle's error passes the
-// revision through), an add under inputs:defaultWeight 0.25, and three
-// whose defaultWeight is out of range: 1.5, -0.25 and NaN.
+// the avar drives out of range from frame 8 (the field's error fails the
+// frame), an add under inputs:defaultWeight 0.25, and three whose
+// defaultWeight is out of range: 1.5, -0.25 and NaN, disabled unless
+// \p outOfRangeEnabled.
 static UsdStageRefPtr
-_EnvelopeChainStage()
+_EnvelopeChainStageWith(bool outOfRangeEnabled)
 {
     const UsdStageRefPtr stage = _ChainBaseStage();
     const UsdPrim dial = stage->DefinePrim(SdfPath("/Asset/Rig/Controls/Dial"),
@@ -1858,7 +1924,16 @@ _EnvelopeChainStage()
     _SetInput(notANumber, "inputs:value", SdfValueTypeNames->Float, 100.0f);
     _SetInput(notANumber, "inputs:defaultWeight", SdfValueTypeNames->Float,
               std::numeric_limits<float>::quiet_NaN());
+    if (!outOfRangeEnabled)
+        for (const UsdPrim &prim : {over, negative, notANumber})
+            _SetInput(prim, "inputs:enabled", SdfValueTypeNames->Bool, false);
     return stage;
+}
+
+static UsdStageRefPtr
+_EnvelopeChainStage()
+{
+    return _EnvelopeChainStageWith(false);
 }
 
 // Phased consumers: a float chain (multiply by 2, then add 0.25) read at
@@ -1957,43 +2032,62 @@ _DefaultPhaseStage()
     return stage;
 }
 
-// Bases a chain cannot use and results it refuses: a float base keyed to
-// +inf at frame 3 and NaN at frame 5; a double base of 1e300, finite as a
-// double but not as the float it is tested through; a multiply that
-// overflows a float from frame 7 on; an add whose input is +inf.
+// Bases a chain cannot use and results that fail: a float base keyed to
+// +inf at frame 3 and NaN at frame 5 (\p bad); a double base of 1e300,
+// finite as a double but not as the float it is tested through (\p huge);
+// an add whose input is +inf, disabled unless \p infEnabled, then a
+// multiply that overflows a float from frame 5 on (\p blow).
 static UsdStageRefPtr
-_NonFiniteStage()
+_NonFiniteStageWith(bool bad, bool huge, bool blow, bool infEnabled)
 {
     const UsdStageRefPtr stage = _ChainBaseStage();
-    const UsdAttribute bad =
-        _Channel(stage, "Bad", "rigExec:amount", SdfValueTypeNames->Float);
-    bad.Set(0.5f, UsdTimeCode(1.0));
-    bad.Set(std::numeric_limits<float>::infinity(), UsdTimeCode(3.0));
-    bad.Set(std::numeric_limits<float>::quiet_NaN(), UsdTimeCode(5.0));
-    bad.Set(0.25f, UsdTimeCode(7.0));
-    const UsdPrim plus =
-        _MathMover(stage, "Plus", "RigExecFloatMathMover", "add", bad);
-    _SetInput(plus, "inputs:value", SdfValueTypeNames->Float, 1.0f);
-
-    const UsdAttribute huge =
-        _Channel(stage, "Huge", "rigExec:level", SdfValueTypeNames->Double);
-    huge.Set(1e300);
-    const UsdPrim keep =
-        _MathMover(stage, "Keep", "RigExecFloatMathMover", "multiply", huge);
-    _SetInput(keep, "inputs:value", SdfValueTypeNames->Float, 1.0f);
-
-    const UsdAttribute blow =
-        _Channel(stage, "Blow", "rigExec:amount", SdfValueTypeNames->Float);
-    blow.Set(0.5f, UsdTimeCode(1.0));
-    blow.Set(2.0f, UsdTimeCode(7.0));
-    const UsdPrim inf =
-        _MathMover(stage, "Inf", "RigExecFloatMathMover", "add", blow);
-    _SetInput(inf, "inputs:value", SdfValueTypeNames->Float,
-              std::numeric_limits<float>::infinity());
-    const UsdPrim overflow = _MathMover(
-        stage, "Inf/Overflow", "RigExecFloatMathMover", "multiply", blow);
-    _SetInput(overflow, "inputs:value", SdfValueTypeNames->Float, 3e38f);
+    if (bad) {
+        const UsdAttribute amount =
+            _Channel(stage, "Bad", "rigExec:amount", SdfValueTypeNames->Float);
+        amount.Set(0.5f, UsdTimeCode(1.0));
+        amount.Set(std::numeric_limits<float>::infinity(), UsdTimeCode(3.0));
+        amount.Set(std::numeric_limits<float>::quiet_NaN(), UsdTimeCode(5.0));
+        amount.Set(0.25f, UsdTimeCode(7.0));
+        const UsdPrim plus =
+            _MathMover(stage, "Plus", "RigExecFloatMathMover", "add", amount);
+        _SetInput(plus, "inputs:value", SdfValueTypeNames->Float, 1.0f);
+    }
+    if (huge) {
+        const UsdAttribute level =
+            _Channel(stage, "Huge", "rigExec:level", SdfValueTypeNames->Double);
+        level.Set(1e300);
+        const UsdPrim keep = _MathMover(stage, "Keep", "RigExecFloatMathMover",
+                                        "multiply", level);
+        _SetInput(keep, "inputs:value", SdfValueTypeNames->Float, 1.0f);
+    }
+    if (blow) {
+        const UsdAttribute amount =
+            _Channel(stage, "Blow", "rigExec:amount", SdfValueTypeNames->Float);
+        amount.Set(0.5f, UsdTimeCode(1.0));
+        amount.Set(2.0f, UsdTimeCode(7.0));
+        const UsdPrim inf =
+            _MathMover(stage, "Inf", "RigExecFloatMathMover", "add", amount);
+        _SetInput(inf, "inputs:value", SdfValueTypeNames->Float,
+                  std::numeric_limits<float>::infinity());
+        if (!infEnabled)
+            _SetInput(inf, "inputs:enabled", SdfValueTypeNames->Bool, false);
+        const UsdPrim overflow = _MathMover(
+            stage, "Inf/Overflow", "RigExecFloatMathMover", "multiply", amount);
+        _SetInput(overflow, "inputs:value", SdfValueTypeNames->Float, 3e38f);
+    }
     return stage;
+}
+
+static UsdStageRefPtr
+_NonFiniteBaseStage()
+{
+    return _NonFiniteStageWith(true, false, false, false);
+}
+
+static UsdStageRefPtr
+_NonFiniteResultStage()
+{
+    return _NonFiniteStageWith(false, false, true, false);
 }
 
 static float
@@ -2072,14 +2166,16 @@ TestOraclePublicationGeneration()
         int driverFinal = -1, receiverRevision = -1;
         for (size_t s = 0; s < file->steps.size(); ++s) {
             const auto &step = file->steps[s];
-            if (!step.isHead || step.kind != fb::StepKind::PropertyRevision)
+            size_t chainIndex = 0, part = 0;
+            if (!step.isHead ||
+                !RigExecFormatPropertyPart(*file, step, &chainIndex, &part))
                 continue;
-            const auto &chain = file->propertyChains[size_t(step.object)];
+            const auto &chain = file->propertyChains[chainIndex];
             const auto target =
                 RigExecFormatPathText(*file, file->inputs[chain.target].name());
-            if (target == driver && size_t(step.part) == chain.revisions.size())
+            if (target == driver && part == chain.revisions.size())
                 driverFinal = int(s);
-            if (target == receiver && step.part == 1)
+            if (target == receiver && part == 1)
                 receiverRevision = int(s);
         }
         CHECK(driverFinal >= 0 && receiverRevision >= 0);
@@ -2368,16 +2464,14 @@ TestMatrixChain()
         return;
     }
     // The evaluator's kernels over the authored base: multiply under 0.5,
-    // then blend under 0.25; the non-finite multiply passes through with its
-    // line.
+    // then blend under 0.25; the disabled non-finite multiply passes
+    // through.
     const UsdStageRefPtr stage = _MatrixChainStage();
     const UsdAttribute local = stage->GetAttributeAtPath(
         SdfPath("/Asset/Rig/Channels/Space.rigExec:local"));
     const GfMatrix4d offset(GfRotation(GfVec3d(0, 0, 1), 30.0),
                             GfVec3d(0.0, 5.0, 0.0));
     const GfMatrix4d snap = GfMatrix4d(1.0).SetTranslate(GfVec3d(2, 2, 2));
-    const std::string unusable =
-        "diag /Asset/Rig/Movers/Bad: inputs unusable; revision passed through";
     for (size_t f = 0; f < frames.size(); ++f) {
         GfMatrix4d base;
         CHECK(local.Get(&base, UsdTimeCode(frames[f])));
@@ -2390,7 +2484,26 @@ TestMatrixChain()
             rows[f].values.find("/Asset/Rig/Channels/Space.rigExec:local");
         CHECK(it != rows[f].values.end() &&
               _SamePropertyValue(VtValue(twice), it->second));
-        CHECK(_HasLine(rows[f], unusable));
+    }
+    // Enabled, its operand stops every frame with the op's error.
+    const UsdStageRefPtr failing = _MatrixChainStageWith(true);
+    RigExecRigEvaluator evaluator(failing, _FindRig(failing));
+    CHECK(evaluator.Compile(nullptr));
+    for (const double frame : frames) {
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(frame));
+        CHECK(!pose.valid);
+        const bool named = std::any_of(
+            pose.diagnostics.begin(), pose.diagnostics.end(),
+            [](const std::string &line) {
+                return line.find("/Asset/Rig/Movers/Bad") !=
+                           std::string::npos &&
+                       line.find("MatrixMath: value is not finite") !=
+                           std::string::npos;
+            });
+        CHECK(named);
+        if (!named)
+            for (const std::string &line : pose.diagnostics)
+                std::printf("matrix chain, enabled: %s\n", line.c_str());
     }
 }
 
@@ -2443,15 +2556,11 @@ TestDisabledRevision()
         return;
     }
     // Doubled where the toggle is on, passed through where it is off; the
-    // add of 100 never applies.
+    // add of 100 never applies. A disabled revision is a defined result and
+    // prints no line.
     const UsdStageRefPtr stage = _DisabledStage();
     const UsdAttribute amount = stage->GetAttributeAtPath(
         SdfPath("/Asset/Rig/Channels/Dial.rigExec:amount"));
-    const std::string off =
-        "diag /Asset/Rig/Movers/Off: disabled; revision passed through";
-    const std::string toggle =
-        "diag /Asset/Rig/Movers/Off/Toggle: disabled; revision passed "
-        "through";
     size_t passed = 0;
     for (size_t f = 0; f < frames.size(); ++f) {
         float base = 0.0f;
@@ -2461,8 +2570,11 @@ TestDisabledRevision()
         const float got =
             _Float(rows[f], "/Asset/Rig/Channels/Dial.rigExec:amount", &found);
         CHECK(found && got == (on ? base * 2.0f : base));
-        CHECK(_HasLine(rows[f], off));
-        CHECK(_HasLine(rows[f], toggle) == !on);
+        CHECK(std::none_of(rows[f].lines.begin(), rows[f].lines.end(),
+                           [](const std::string &line) {
+                               return line.find("disabled") !=
+                                      std::string::npos;
+                           }));
         passed += !on;
     }
     CHECK(passed == 4);
@@ -2473,34 +2585,163 @@ TestEnvelopeRevisions()
 {
     const std::vector<double> frames = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
     std::vector<_ChainFrame> rows;
+    // The strict weight leaves [0, 1] from frame 8 (ty 7/3 times 0.45),
+    // which fails frames 8 to 10 in both evaluators.
     if (!_RunChainCase("envelope-weighted revisions", _EnvelopeChainStage,
-                       frames, frames.size(), &rows)) {
+                       frames, 7, &rows)) {
         return;
     }
-    // The strict weight leaves [0, 1] from frame 8 (ty 7/3 times 0.45);
-    // the out-of-range defaultWeights refuse at every frame.
-    const std::string strict =
-        "diag /Asset/Rig/Movers/Over/Soft/Kick: strict range violation on "
-        "/Asset/Rig/Weights/Steep; revision passed through";
-    const auto outOfRange = [](const std::string &mover) {
-        return "diag /Asset/Rig/Movers/" + mover +
-               ": inputs:defaultWeight must be finite and in [0, 1]; "
-               "revision passed through";
-    };
-    const std::string over = outOfRange("Over");
-    const std::string negative =
-        outOfRange("Over/Soft/Kick/Nudge/Fade/Negative");
-    const std::string notANumber =
-        outOfRange("Over/Soft/Kick/Nudge/Fade/Negative/NotANumber");
-    size_t refused = 0;
+    size_t failed = 0;
     for (size_t f = 0; f < frames.size(); ++f) {
-        CHECK(_HasLine(rows[f], over));
-        CHECK(_HasLine(rows[f], negative));
-        CHECK(_HasLine(rows[f], notANumber));
-        CHECK(_HasLine(rows[f], strict) == (frames[f] >= 8.0));
-        refused += _HasLine(rows[f], strict);
+        const bool strict =
+            rows[f].lines.size() == 1 &&
+            rows[f].lines[0].find("/Asset/Rig/Weights/Steep") !=
+                std::string::npos &&
+            rows[f].lines[0].find("outside [0, 1]") != std::string::npos;
+        CHECK(strict == (frames[f] >= 8.0));
+        CHECK(rows[f].values.empty() == (frames[f] >= 8.0));
+        failed += strict;
     }
-    CHECK(refused == 3);
+    CHECK(failed == 3);
+    // Enabled, a defaultWeight out of [0, 1] fails every frame.
+    const UsdStageRefPtr stage = _EnvelopeChainStageWith(true);
+    RigExecRigEvaluator evaluator(stage, _FindRig(stage));
+    CHECK(evaluator.Compile(nullptr));
+    const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(1.0));
+    CHECK(!pose.valid);
+    CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                      [](const std::string &line) {
+                          return line.find("weight must be finite and in "
+                                           "[0, 1]") != std::string::npos;
+                      }));
+}
+
+// The cases computed_chains no longer holds, each on its own rig: a target
+// whose authored value is blocked from frame 3, and an inputs:defaultWeight
+// keyed past 1 at frame 3. Both run at frame 1, fail frame 3 in the native
+// evaluator, the frozen job and the .rigexec (native and the .rigexec with
+// the same line) and recover at frame 2.
+static UsdStageRefPtr
+_BlockedBaseStage()
+{
+    const UsdStageRefPtr stage = _ChainBaseStage();
+    const UsdAttribute none =
+        _Channel(stage, "Missing", "rigExec:none", SdfValueTypeNames->Float);
+    none.Set(2.0f, UsdTimeCode(1.0));
+    none.Set(2.5f, UsdTimeCode(2.0));
+    none.Set(SdfValueBlock(), UsdTimeCode(3.0));
+    const UsdPrim unset =
+        _MathMover(stage, "Unset", "RigExecFloatMathMover", "add", none);
+    _SetInput(unset, "inputs:value", SdfValueTypeNames->Float, 1.0f);
+    return stage;
+}
+
+static UsdStageRefPtr
+_KeyedOverWeightStage()
+{
+    const UsdStageRefPtr stage = _ChainBaseStage();
+    const UsdAttribute amount =
+        _Channel(stage, "Dial", "rigExec:amount", SdfValueTypeNames->Float);
+    amount.Set(0.1f, UsdTimeCode(1.0));
+    amount.Set(0.4f, UsdTimeCode(3.0));
+    const UsdPrim over =
+        _MathMover(stage, "Over", "RigExecFloatMathMover", "add", amount);
+    _SetInput(over, "inputs:value", SdfValueTypeNames->Float, 100.0f);
+    const UsdAttribute weight = over.CreateAttribute(
+        TfToken("inputs:defaultWeight"), SdfValueTypeNames->Float);
+    weight.Set(0.25f, UsdTimeCode(1.0));
+    weight.Set(0.5f, UsdTimeCode(2.0));
+    weight.Set(1.5f, UsdTimeCode(3.0));
+    return stage;
+}
+
+static void
+TestRunTimeChainFailuresRoundTrip()
+{
+    const std::vector<double> frames = {1, 3, 2};
+    const std::pair<const char *, UsdStageRefPtr (*)()> stages[] = {
+        {"blocked base", &_BlockedBaseStage},
+        {"keyed defaultWeight past 1", &_KeyedOverWeightStage}};
+    const std::string errors[] = {
+        "diag /Asset/Rig/Movers/Unset: property chain "
+        "/Asset/Rig/Channels/Missing.rigExec:none: target has no authored "
+        "value",
+        "diag /Asset/Rig/Movers/Over: node 0 (rig:FloatMath) failed: "
+        "FloatMath: weight must be finite and in [0, 1]"};
+    for (size_t i = 0; i < 2; ++i) {
+        const auto &[name, build] = stages[i];
+        std::vector<_ChainFrame> rows;
+        CHECK(_RunChainCase(name, build, frames, 2, &rows));
+        CHECK(rows.size() == 3);
+        if (rows.size() == 3) {
+            CHECK(rows[0].values.size() == 1 && rows[2].values.size() == 1);
+            CHECK(rows[1].values.empty() &&
+                  rows[1].lines == std::vector<std::string>{errors[i]});
+        }
+        const UsdStageRefPtr stage = build();
+        RigExecRigEvaluator evaluator(stage, _FindRig(stage));
+        CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
+        std::shared_ptr<const RigExecFrozenProgram> frozen;
+        std::string error;
+        CHECK(RigExecFreezeProgram(evaluator, &frozen, &error));
+        for (const double frame : {3.0, 2.0}) {
+            RigExecFrameInputs inputs;
+            CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame), {},
+                                           &inputs, &error));
+            RigExecFrozenEvalContext context;
+            context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+            context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+            context.varyingInputCount = inputs.values.size();
+            context.frozen = frozen.get();
+            RigExecFrozenRunnerVerdict verdict;
+            const RigExecRigPose pose = RigExecEvaluateFrozen(
+                context, inputs, RigExecRecordingStepRunner(&verdict));
+            const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(frame));
+            if (frame == 3.0) {
+                CHECK(!live.valid &&
+                      live.diagnostics ==
+                          std::vector<std::string>(
+                              {errors[i], "native program did not complete "
+                                          "generation"}));
+                CHECK(RigExecFrozenFailedInTheWorker(pose, verdict, live));
+            } else {
+                CHECK(live.valid && pose.valid && verdict.ran);
+                CHECK(pose.movedProperties == live.movedProperties);
+            }
+        }
+    }
+    // A target that does not exist: decision 45 makes it a compile error.
+    const UsdStageRefPtr stage = _BlockedBaseStage();
+    const UsdPrim unset =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Unset/Absent"),
+                          TfToken("RigExecFloatMathMover"));
+    CHECK(unset.ApplyAPI(TfToken("RigExecMoverAPI")));
+    unset
+        .CreateAttribute(TfToken("rigExec:operation"), SdfValueTypeNames->Token)
+        .Set(TfToken("add"));
+    unset.CreateRelationship(TfToken("rigExec:moves"))
+        .SetTargets({SdfPath("/Asset/Rig/Channels/Missing.rigExec:absent")});
+    _SetInput(unset, "inputs:value", SdfValueTypeNames->Float, 1.0f);
+    const std::string missing =
+        "Mover /Asset/Rig/Movers/Unset/Absent targets missing property "
+        "/Asset/Rig/Channels/Missing.rigExec:absent";
+    RigExecRigEvaluator evaluator(stage, _FindRig(stage));
+    std::vector<std::string> notices;
+    CHECK(!evaluator.Compile(&notices));
+    CHECK(notices == std::vector<std::string>{missing});
+    CHECK(evaluator.GetSkippedOperations().empty());
+    std::vector<std::string> reasons;
+    CHECK(!evaluator.IsBakeable(&reasons));
+    CHECK(reasons == std::vector<std::string>{"the rig is not compiled"});
+    const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(1.0));
+    CHECK(!pose.valid && pose.movedProperties.empty());
+    CHECK(std::find(pose.diagnostics.begin(), pose.diagnostics.end(),
+                    missing) != pose.diagnostics.end());
+    std::shared_ptr<const RigExecFrozenProgram> frozen;
+    std::string error;
+    CHECK(!RigExecFreezeProgram(evaluator, &frozen, &error) && !frozen);
+    std::vector<uint8_t> bytes;
+    CHECK(!RigExecTestBakeAt(evaluator, 1, &bytes, &error));
 }
 
 static void
@@ -2636,27 +2877,29 @@ TestDefaultReadPhaseRoundTrip()
 static void
 TestNonFiniteBase()
 {
-    const char *const name = "non-finite bases and results";
-    // Bad's base is +inf at frame 3 and NaN at frame 5. The sampler hands
-    // the reader the stage's own values, non-finite ones included, so one
-    // bake at frame 1 plays all four frames. Bad publishes at frames 1 and
-    // 7, Huge never, Blow at every frame.
+    // Bad's base is +inf at frame 3 and NaN at frame 5: those frames fail
+    // in both evaluators, and frames 1 and 7 publish.
     std::vector<_ChainFrame> rows;
-    if (!_RunChainCase(name, _NonFiniteStage, {1, 3, 5, 7}, 6, &rows)) {
+    if (!_RunChainCase("non-finite bases", _NonFiniteBaseStage, {1, 3, 5, 7}, 2,
+                       &rows)) {
         return;
     }
-    // A bake at frame 3 or 5 holds the non-finite base as its default.
-    for (const double frame : {3.0, 5.0}) {
-        std::vector<_ChainFrame> baked;
-        if (!_RunChainCase(name, _NonFiniteStage, {frame}, 1, &baked)) {
-            return;
-        }
-    }
     const std::string badPath = "/Asset/Rig/Channels/Bad.rigExec:amount";
+    const auto failedWith = [](const _ChainFrame &row, const char *a,
+                               const char *b) {
+        return row.values.empty() && row.lines.size() == 1 &&
+               row.lines[0].find(a) != std::string::npos &&
+               row.lines[0].find(b) != std::string::npos;
+    };
+    bool found = false;
+    CHECK(_Float(rows[0], badPath, &found) == 1.5f && found);
+    CHECK(failedWith(rows[1], badPath.c_str(), "authored base is not finite"));
+    CHECK(failedWith(rows[2], badPath.c_str(), "authored base is not finite"));
+    CHECK(_Float(rows[3], badPath, &found) == 1.25f && found);
     {
         // A host's set takes finite values only; the stage's +inf reaches
-        // the reader through the sampler alone.
-        const UsdStageRefPtr stage = _NonFiniteStage();
+        // the reader through the sampler alone, and fails its frame.
+        const UsdStageRefPtr stage = _NonFiniteBaseStage();
         RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
         std::vector<uint8_t> bytes;
         std::string error;
@@ -2667,43 +2910,51 @@ TestNonFiniteBase()
         CHECK(!player->SetInput(
             badPath, double(std::numeric_limits<float>::infinity()), &error));
         CHECK(error == badPath + " takes finite values only");
-        CHECK(player.Play(3.0, &error));
+        CHECK(!player.Play(3.0, &error));
         size_t index = 0;
         CHECK(player->FindInput(badPath, &index));
         const RrInputValue &held = player->GetInputValue(index);
         CHECK(held.tag == RrInputTag::Float && std::isinf(held.f32));
     }
-    const std::string hugePath = "/Asset/Rig/Channels/Huge.rigExec:level";
-    const std::string blowPath = "/Asset/Rig/Channels/Blow.rigExec:amount";
-    const std::string hugeLine = "property chain " + hugePath +
-                                 ": authored base is not finite; chain skipped";
-    const std::string infLine =
-        "diag /Asset/Rig/Movers/Inf: inputs unusable; revision passed through";
-    bool found = false;
-    CHECK(_Float(rows[0], badPath, &found) == 1.5f && found);
-    CHECK(!rows[1].values.count(badPath) && !rows[2].values.count(badPath));
-    CHECK(_Float(rows[3], badPath, &found) == 1.25f && found);
-    for (const _ChainFrame &row : rows) {
-        CHECK(!row.values.count(hugePath));
-        CHECK(_HasLine(row, hugeLine));
-        CHECK(_HasLine(row, infLine));
+    // 0.5 and 1.0 times 3e38 stay finite; 1.5 and 2.0 overflow and fail
+    // the frame.
+    rows.clear();
+    if (!_RunChainCase("non-finite results", _NonFiniteResultStage,
+                       {1, 3, 5, 7}, 2, &rows)) {
+        return;
     }
-    const std::string notFinite =
-        "property chain " + badPath +
-        ": authored base is not finite; chain skipped";
-    CHECK(!_HasLine(rows[0], notFinite) && _HasLine(rows[1], notFinite) &&
-          _HasLine(rows[2], notFinite) && !_HasLine(rows[3], notFinite));
-    // 0.5 and 1.0 times 3e38 stay finite; 1.5 and 2.0 overflow, and the
-    // revision passes the base through.
-    const std::string overflow =
-        "diag /Asset/Rig/Movers/Inf/Overflow: produced a non-finite value; "
-        "revision passed through";
+    const std::string blowPath = "/Asset/Rig/Channels/Blow.rigExec:amount";
     CHECK(_Float(rows[0], blowPath, &found) == 0.5f * 3e38f && found);
     CHECK(_Float(rows[1], blowPath, &found) == 1.0f * 3e38f && found);
-    CHECK(_Float(rows[2], blowPath, &found) == 1.5f && found);
-    CHECK(_Float(rows[3], blowPath, &found) == 2.0f && found);
-    CHECK(!_HasLine(rows[0], overflow) && !_HasLine(rows[1], overflow) &&
-          _HasLine(rows[2], overflow) && _HasLine(rows[3], overflow));
+    for (const size_t f : {size_t(2), size_t(3)})
+        CHECK(failedWith(rows[f], "/Asset/Rig/Movers/Inf/Overflow",
+                         "produced a non-finite value"));
+    // A double base past float's range and a non-finite operand fail every
+    // frame, so no bake holds them.
+    const auto failsEveryFrame = [](const UsdStageRefPtr &stage, const char *a,
+                                    const char *b) {
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        CHECK(evaluator.Compile(nullptr));
+        for (const double frame : {1.0, 3.0}) {
+            const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(frame));
+            CHECK(!pose.valid);
+            const bool named =
+                std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                            [&](const std::string &line) {
+                                return line.find(a) != std::string::npos &&
+                                       line.find(b) != std::string::npos;
+                            });
+            CHECK(named);
+            if (!named)
+                for (const std::string &line : pose.diagnostics)
+                    std::printf("non-finite, every frame: %s\n", line.c_str());
+        }
+    };
+    failsEveryFrame(_NonFiniteStageWith(false, true, false, false),
+                    "/Asset/Rig/Channels/Huge.rigExec:level",
+                    "authored base is not finite");
+    failsEveryFrame(_NonFiniteStageWith(false, false, true, true),
+                    "/Asset/Rig/Movers/Inf", "is not finite");
 }
 
 // tests/fixtures/computed_chains.usda: the chain cases together (a curve
@@ -2995,10 +3246,8 @@ _EveryFrameSays(const std::vector<_PlayedFrame> &played,
 }
 
 // A constraint's source or pole weights table with the wrong cardinality:
-// the bake keeps the read's line beside the arrays, and the constraint step
-// replays it where the baked one does, ahead of its pass-through. The
-// played diagnostics match the baked program's verbatim (_TestStage), and
-// carry the line on every frame.
+// the constraint's op node stops the frame with the read's line, so no
+// frame bakes.
 static void
 TestConstraintArrayDiagnostics(const std::string &examplesDir)
 {
@@ -3026,18 +3275,17 @@ TestConstraintArrayDiagnostics(const std::string &examplesDir)
         pos.CreateAttribute(TfToken("inputs:sourceWeights"),
                             SdfValueTypeNames->FloatArray)
             .Set(VtFloatArray{1, 2});
-        std::vector<_PlayedFrame> played;
-        _TestStage("constraint source weights cardinality", stage, {1.0, 2.0},
-                   &played);
-        const bool said = _EveryFrameSays(
-            played,
-            "/Asset/Rig/Movers/Pos inputs:sourceWeights has 2 entries for "
-            "1 sources");
-        CHECK(said);
-        if (!said) {
-            std::printf("constraint source weights cardinality: the line "
-                        "is not played\n");
-        }
+        // The constraint's op node stops the frame, so no frame bakes.
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1.0));
+        CHECK(!native.valid);
+        CHECK(!native.diagnostics.empty() &&
+              native.diagnostics.front() ==
+                  "/Asset/Rig/Movers/Pos: inputs:sourceWeights has 2 entries "
+                  "for 1 sources");
+        std::vector<uint8_t> bytes;
+        std::string error;
+        CHECK(!RigExecTestBakeAt(evaluator, 1.0, &bytes, &error));
     }
     {
         const UsdStageRefPtr stage = UsdStage::Open(
@@ -3051,22 +3299,20 @@ TestConstraintArrayDiagnostics(const std::string &examplesDir)
             .CreateAttribute(TfToken("inputs:poleVectorWeights"),
                              SdfValueTypeNames->FloatArray)
             .Set(VtFloatArray{1, 1});
-        std::vector<_PlayedFrame> played;
-        _TestStage("constraint pole weights cardinality", stage,
-                   {1001.0, 1012.0}, &played);
-        const bool said = _EveryFrameSays(
-            played,
-            "/ScIkAsset/Rig/Movers/Pose/ArmIK inputs:poleVectorWeights has "
-            "2 entries for 1 sources");
-        CHECK(said);
-        if (!said) {
-            std::printf("constraint pole weights cardinality: the line is "
-                        "not played\n");
-        }
+        RigExecRigEvaluator evaluator(stage, SdfPath("/ScIkAsset/Rig"));
+        const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1001.0));
+        CHECK(!native.valid);
+        CHECK(!native.diagnostics.empty() &&
+              native.diagnostics.front() ==
+                  "/ScIkAsset/Rig/Movers/Pose/ArmIK: inputs:poleVectorWeights "
+                  "has 2 entries for 1 sources");
+        std::vector<uint8_t> bytes;
+        std::string error;
+        CHECK(!RigExecTestBakeAt(evaluator, 1001.0, &bytes, &error));
     }
     if (failures == failuresBefore) {
-        std::printf("constraint array diagnostics: source and pole lines "
-                    "replayed as the baked program replays them\n");
+        std::printf("constraint array diagnostics: source and pole tables "
+                    "stop the frame\n");
     }
 }
 
@@ -4055,6 +4301,21 @@ TestRegisteredReadRefusals()
     std::printf("%s: checked\n", name);
 }
 
+// Whether \p step runs an op node storing host output target \p target:
+// 43 a RestCompose node, 44 a LadderCompose node.
+static bool
+_RunsComposeOp(const fb::RigExecWireFile &file, const fb::RigExecWireStep &step,
+               uint8_t target)
+{
+    if (step.kind != fb::StepKind::OpNode || !file.opGraph)
+        return false;
+    for (const auto &output : file.opGraph->hostOutputs)
+        if (output && output->node == uint64_t(step.object) &&
+            output->target == target)
+            return true;
+    return false;
+}
+
 // tests/fixtures/<file>.
 static std::string
 _FixturePath(const char *file)
@@ -4850,7 +5111,7 @@ TestPhasedRigsRunCones(const std::string &examplesDir)
          {{"/ReadPhaseAsset/Rig/Controls/LiftCtl.avars:ty", 0.25}}},
         {_FixturePath("frame_record_fallbacks.usda"),
          1.0,
-         {{"/RecordAsset/Rig/Controls/Dial.avars:amount", 1.25},
+         {{"/RecordAsset/Rig/Controls/Dial.avars:amount", 0.5},
           {"/RecordAsset/Rig/Controls/Late.avars:tz", 0.25}}},
         {_FixturePath("solver_checkpoint.usda"),
          1.0,
@@ -5017,10 +5278,6 @@ TestFrameMatrixGates()
         record.position = row[2];
         record.version = uint32_t(row[3]);
         baked.push_back(record);
-        fb::RigExecWireStep step;
-        step.kind = fb::StepKind::FrameMatrix;
-        step.object = int32_t(r);
-        file.steps.push_back(std::move(step));
     }
 
     RrProgram program;
@@ -5074,10 +5331,74 @@ TestFrameMatrixGates()
     };
     setRest(rest);
 
+    // A record runs as its FrameMatrix op node does: its inputs through the
+    // runtime's lookups, the record kernel, its outputs through its stores.
+    const auto runRecord = [&](size_t r, std::string *why) {
+        const fb::FrameRecord &record = file.pose->frameRecords[r];
+        const bool solver = file.pose->commits[record.commit()].solverOutput;
+        RigExecTypeDesc frameType;
+        frameType.size = sizeof(rigExecRig::PointFrame);
+        RigExecTypeDesc gateType;
+        gateType.size = sizeof(uint8_t);
+        RigExecTypeDesc presentType;
+        presentType.borrow = [](void *value, const void *data, size_t count) {
+            *static_cast<std::pair<const char *, size_t> *>(value) = {
+                static_cast<const char *>(data), count};
+        };
+        using S = eval::OpLookupSource;
+        rigExecRig::PointFrame restValue, frameValue;
+        std::pair<const char *, size_t> present(nullptr, 0);
+        uint8_t after = 0, every = 0;
+        if (!RrLookUpSpace(&program,
+                           {uint8_t(S::RestFrame), record.slot(), -1, 0},
+                           frameType, &restValue, why) ||
+            !RrLookUpPoseVersion(
+                &program, {uint8_t(S::PoseVersion), record.version(), 0, 0},
+                frameType, &frameValue, why))
+            return false;
+        const auto runtimeValue = [](const rigExecRig::PointFrame &value) {
+            RrPointFrame out;
+            for (size_t i = 0; i < out.points.size(); ++i)
+                out.points[i] = RrVec3d(value.points[i][0], value.points[i][1],
+                                        value.points[i][2]);
+            out.flags = value.flags;
+            return out;
+        };
+        const RrPointFrame restFrame = runtimeValue(restValue);
+        const RrPointFrame frame = runtimeValue(frameValue);
+        const eval::OpLookup gate{uint8_t(S::CommitRecordGate), record.commit(),
+                                  -1, 0};
+        if (solver ? !RrLookUpSpace(&program, gate, presentType, &present, why)
+                   : !RrLookUpSpace(&program, {gate.source, gate.object, -1, 1},
+                                    gateType, &after, why) ||
+                         !RrLookUpSpace(&program,
+                                        {gate.source, gate.object, -1, 2},
+                                        gateType, &every, why))
+            return false;
+        RrMat4d matrix(1.0);
+        bool valid = false;
+        if (eval::FrameRecordRecorded(solver, record.position(),
+                                      record.target(), present.first,
+                                      present.second, after != 0, every != 0))
+            valid = eval::FrameRecordMatrix<RrPoseMathT<RrPointFrame>>(
+                restFrame.points, restFrame.flags, frame.points, frame.flags,
+                &matrix);
+        const uint8_t validByte = valid ? 1 : 0;
+        return RrStoreSpace(&program, size_t(-1),
+                            {0, 0, uint8_t(eval::OpOutputTarget::FrameMatrix),
+                             uint32_t(r)},
+                            &matrix, why) &&
+               RrStoreSpace(&program, size_t(-1),
+                            {0, 0,
+                             uint8_t(eval::OpOutputTarget::FrameMatrixValid),
+                             uint32_t(r)},
+                            &validByte, why);
+    };
+
     int cases = 0;
     int recorded = 0;
-    // Runs record \p r's step over a poisoned entry and compares it with
-    // the program's evaluation of the same record.
+    // Runs record \p r over a poisoned entry and compares it with the
+    // program's evaluation of the same record.
     const auto agree = [&](size_t r, const char *what) {
         ++cases;
         RrMat4d poison(1.0);
@@ -5085,7 +5406,7 @@ TestFrameMatrixGates()
         store.frameMatrix[r] = poison;
         store.frameMatrixValid[r] = 2;
         error.clear();
-        const bool ran = RrRunPoseStep(&program, r, &error);
+        const bool ran = runRecord(r, &error);
         CHECK(ran);
         GfMatrix4d expected(0.0);
         const bool valid = RigExecBakedEvalFrameRecord(B, baked[r], &expected);
@@ -5544,16 +5865,16 @@ TestRepeatedSetRunsNothing()
     const Row rows[] = {
         {"oneloop_two_limbs.usda", "/LimbsAsset/Rig",
          "/LimbsAsset/Rig/Solvers/LimbBIK.inputs:softness", 0.5, false,
-         fb::StepKind::Solve, "/LimbsAsset/Rig/Solvers/LimbBIK", false},
+         fb::StepKind::OpNode, "/LimbsAsset/Rig/Solvers/LimbBIK", false},
         {"oneloop_two_limbs.usda", "/LimbsAsset/Rig",
          "/LimbsAsset/Rig/Controls/A0.avars:rz", 15.0, true,
-         fb::StepKind::ComposeSubtree, "/LimbsAsset/Rig/Controls/A0", false},
+         fb::StepKind::OpNode, "/LimbsAsset/Rig/Controls/A0", false},
         {"computed_ik_space.usda", "/IkSpaceAsset/Rig",
          "/IkSpaceAsset/Rig/Solvers/ArmIK.inputs:softness", 0.35, false,
-         fb::StepKind::Solve, "/IkSpaceAsset/Rig/Solvers/ArmIK", false},
+         fb::StepKind::OpNode, "/IkSpaceAsset/Rig/Solvers/ArmIK", false},
         {"upstream_inputs.usda", "/LimbsAsset/Rig",
-         "/LimbsAsset/Upstream.inputs:space", 0.0, false,
-         fb::StepKind::RestCompose, "/LimbsAsset/Rig/Controls/BRoot", true},
+         "/LimbsAsset/Upstream.inputs:space", 0.0, false, fb::StepKind::OpNode,
+         "/LimbsAsset/Rig/Controls/BRoot", true},
     };
     const double frame = 1.0;
     for (const Row &row : rows) {
@@ -5620,6 +5941,8 @@ TestRepeatedSetRunsNothing()
             for (const int32_t step : player->GetLastRunTraceForTesting()) {
                 if (step >= 0 && size_t(step) < file->steps.size() &&
                     file->steps[size_t(step)].kind == row.readerKind &&
+                    (!row.matrix ||
+                     _RunsComposeOp(*file, file->steps[size_t(step)], 43)) &&
                     player->GetStepLabelForTesting(size_t(step)) ==
                         row.reader) {
                     return true;
@@ -5675,7 +5998,7 @@ TestRepeatedSetRunsNothing()
 // keyed avar its verify_binary entry drags, and LimbBIK's softness, a
 // Solve's declared input that reaches MeshB's skin; and the Dial drag of
 // frame_record_fallbacks, which reaches R2's revision through its
-// defaultWeight.
+// defaultWeight (a value past 1 stops the frame: TestHeldDragPastAWeightStops).
 static void
 TestHeldDragCountsValueEditWork()
 {
@@ -5693,7 +6016,7 @@ TestHeldDragCountsValueEditWork()
         {"oneloop_two_limbs.usda", "/LimbsAsset/Rig", 1.0,
          "/LimbsAsset/Rig/Solvers/LimbBIK.inputs:softness", 0.5},
         {"frame_record_fallbacks.usda", "/RecordAsset/Rig", 1.0,
-         "/RecordAsset/Rig/Controls/Dial.avars:amount", 1.25},
+         "/RecordAsset/Rig/Controls/Dial.avars:amount", 0.5},
     };
     for (const Row &row : rows) {
         const std::string what =
@@ -5765,6 +6088,85 @@ TestHeldDragCountsValueEditWork()
         // The first run executes the revisions; the second executes none.
         CHECK(liveOps[0] > 0);
         CHECK(liveOps[1] == 0);
+    }
+    std::printf("%s: checked\n", name);
+}
+
+// The Dial drag of frame_record_fallbacks held at 1.25 takes R2's
+// defaultWeight past 1: the native evaluator, the frozen job and the
+// .rigexec stop the frame with R2's error and publish nothing, and the next
+// valid value recovers in all three.
+static void
+TestHeldDragPastAWeightStops()
+{
+    const char *const name = "held drag past a weight stops";
+    const std::string input = "/RecordAsset/Rig/Controls/Dial.avars:amount";
+    const std::string mover = "/RecordAsset/Rig/Movers/Geometry/R2: ";
+    const std::string why =
+        "MatrixDeform: a default weight is not finite or outside [0, 1]";
+    const SdfPath moved("/RecordAsset/Geom/P2.points");
+    const UsdStageRefPtr stage =
+        UsdStage::Open(_FixturePath("frame_record_fallbacks.usda"));
+    CHECK(stage);
+    if (!stage) {
+        return;
+    }
+    const SdfPath rigPath("/RecordAsset/Rig");
+    std::vector<uint8_t> bytes;
+    std::unique_ptr<fb::RigExecWireFile> file;
+    if (!_BakeAndOpen(name, stage, rigPath, 1.0, &bytes, &file)) {
+        return;
+    }
+    const auto stops = [&](const std::vector<std::string> &lines) {
+        return std::any_of(lines.begin(), lines.end(),
+                           [&](const std::string &line) {
+                               return line.rfind(mover, 0) == 0 &&
+                                      line.find(why) != std::string::npos;
+                           });
+    };
+    RigExecRigEvaluator evaluator(stage, rigPath);
+    std::vector<std::string> notices;
+    CHECK(evaluator.Compile(&notices));
+    CHECK(evaluator.Evaluate(UsdTimeCode(1.0)).valid);
+    RigExecTestPlayer player;
+    std::string error;
+    CHECK(player.Open(bytes, stage, &error));
+    CHECK(player.Play(1.0, &error));
+    for (const double value : {1.25, 0.5}) {
+        const bool fails = value > 1.0;
+        RigExecTestSessionEdit edit(stage->GetAttributeAtPath(SdfPath(input)),
+                                    value);
+        CHECK(edit.IsSet());
+        const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(1.0));
+        CHECK(live.valid == !fails);
+        CHECK(stops(live.diagnostics) == fails);
+        CHECK((live.movedProperties.count(moved) == 0) == fails);
+        std::string why;
+        CHECK(fails
+                  ? RigExecFrozenFailsAsLive(&evaluator, UsdTimeCode(1.0), &why)
+                  : RigExecFrozenMatchesLive(&evaluator, rigPath,
+                                             UsdTimeCode(1.0), &why));
+        if (!why.empty()) {
+            std::printf("FAILED: %s, %g: frozen: %s\n", name, value,
+                        why.c_str());
+        }
+        CHECK(player.Hold(input, value, &error));
+        error.clear();
+        CHECK(player.Play(1.0, &error) == !fails);
+        CHECK(player->IsValid() == !fails);
+        CHECK(stops(player->GetDiagnostics()) == fails);
+        if (fails) {
+            CHECK(error.find(why) != std::string::npos);
+            CHECK(player->GetPoints().empty());
+        } else {
+            std::vector<std::string> diffs;
+            CHECK(RigExecCompareRuntimeOutputs(live, player.Reader(), &diffs));
+            for (const std::string &diff : diffs) {
+                std::printf("  %s: %s\n", name, diff.c_str());
+            }
+        }
+        std::printf("%s, %g: live %zu line(s), runtime: %s\n", name, value,
+                    live.diagnostics.size(), error.c_str());
     }
     std::printf("%s: checked\n", name);
 }
@@ -5917,8 +6319,8 @@ _RefusesSmall(const RrProgram &program, RigExecWireSlotDomain domain,
 
 // The runtime's fixed-size values publish in place with RrOpValue's bytes,
 // the same flags and revisions, over a hand-assembled store: signed zeros
-// and NaN payloads in every floating field kind, the staged frame of a
-// split commit, and every unboxed provider alternative. Avars, strings,
+// and NaN payloads in every floating field kind, and every unboxed provider
+// alternative. Avars, strings,
 // vectors, error text and slots past the tables go through the key.
 static void
 TestSmallValuePublication()
@@ -5933,12 +6335,8 @@ TestSmallValuePublication()
     std::memcpy(&floats[3], &fnan1, sizeof(float));
     std::memcpy(&floats[4], &fnan2, sizeof(float));
 
-    // Staging slot 4 is the second pair of commit 1, based at 3; commit 0
-    // propagates nothing and owns no slot.
     fb::RigExecWireDomainPose pose;
     pose.commits.resize(2);
-    pose.commits[1].split = true;
-    pose.commits[1].stagingBase = 3;
     pose.commits[1].propagate.resize(2);
     RrProgram program;
     program.poses = &pose;
@@ -5985,14 +6383,6 @@ TestSmallValuePublication()
             "WeightFramesBase");
     flagged(D::FrameMatrix, &s.frameMatrixValid, &s.frameMatrix, "FrameMatrix");
     s.commits.resize(2);
-    s.commits[0].staged.resize(8);
-    s.commits[0].outcome.assign(8, 0);
-    s.commits[1].staged.resize(2);
-    s.commits[1].outcome.assign(2, 0);
-    _CheckSmallValue(
-        program, D::CommitStaging, 4,
-        [&](int k) { s.commits[1].staged[1].points[3][2] = doubles[k]; },
-        [&] { s.commits[1].outcome[1] = 2; }, "CommitStaging");
 
     // A provider value per unboxed alternative, then its flags.
     s.providerValues.resize(2);
@@ -6067,9 +6457,6 @@ TestSmallValuePublication()
           _RefusesSmall(program, D::PosedM, 2) &&
           _RefusesSmall(program, D::PoseWeight, 2) &&
           _RefusesSmall(program, D::FrameMatrix, 2));
-    CHECK(_RefusesSmall(program, D::CommitStaging, 7) &&
-          _RefusesSmall(program, D::CommitStaging, 2));
-    s.commits[1].outcome.resize(1);
     CHECK(_RefusesSmall(program, D::CommitStaging, 4));
 }
 
@@ -6205,11 +6592,12 @@ def Xform "Asset"
     // The step of \p kind that \p owner's compose group or solver owns.
     const auto stepOf = [&](RigExecBakedStepKind kind, const SdfPath &owner) {
         for (size_t i = 0; i < B->steps.size(); ++i) {
-            const RigExecBakedStep &step = B->steps[i];
-            if (step.kind != kind || step.object < 0) {
+            const RigExecBakedStepIdentity id =
+                RigExecBakedIdentityOf(*B, B->steps[i]);
+            if (id.kind != kind || id.object < 0) {
                 continue;
             }
-            const size_t object = size_t(step.object);
+            const size_t object = size_t(id.object);
             const bool owns =
                 kind == RigExecBakedStepKind::Solve
                     ? object < B->solvers.size() &&
@@ -6236,14 +6624,6 @@ def Xform "Asset"
     const auto moved = [](const std::vector<int> &slots, int slot) {
         return std::find(slots.begin(), slots.end(), slot) != slots.end();
     };
-    const auto refreshes = [&]() -> long long {
-        for (const auto &solver : B->solvers) {
-            if (solver.path == chain) {
-                return (long long)solver.restRefreshes;
-            }
-        }
-        return -1;
-    };
     const int heldSlot = slotOf(held);
     const int heldDefaultSlot = slotOf(heldDefault);
     const int freeSlot = slotOf(freeJoint);
@@ -6253,7 +6633,6 @@ def Xform "Asset"
     const int solveOp = stepOf(RigExecBakedStepKind::Solve, chain);
     CHECK(heldSlot >= 0 && heldDefaultSlot >= 0 && freeSlot >= 0);
     CHECK(restOp >= 0 && ladderOp >= 0 && solveOp >= 0);
-    CHECK(refreshes() >= 0);
     if (heldSlot < 0 || heldDefaultSlot < 0 || freeSlot < 0) {
         return;
     }
@@ -6265,8 +6644,7 @@ def Xform "Asset"
     CHECK(moved(B->restMoved, heldSlot));
     CHECK(moved(B->ladderMoved, heldDefaultSlot));
     CHECK(moved(B->restMoved, freeSlot));
-    const long long arrived = refreshes();
-    CHECK(arrived > 0);
+    CHECK(ran(solveOp));
 
     // Held: the composes run over the held NaN and find the same bits.
     if (!stay(3.0)) {
@@ -6280,7 +6658,6 @@ def Xform "Asset"
     CHECK(!B->ladderChanged[size_t(heldDefaultSlot)]);
     CHECK(!moved(B->ladderMoved, heldDefaultSlot));
     CHECK(moved(B->restMoved, freeSlot));
-    CHECK(refreshes() == arrived);
 
     // The same frame as a cone run, then forced from where it left off.
     if (!stay(3.0)) {
@@ -6297,7 +6674,6 @@ def Xform "Asset"
     CHECK(B->ladderMoved == coneLadders);
     CHECK(!B->restChanged[size_t(heldSlot)]);
     CHECK(!B->ladderChanged[size_t(heldDefaultSlot)]);
-    const long long forced = refreshes();
 
     // The NaN leaves: a move again.
     if (!stay(1.0)) {
@@ -6306,7 +6682,7 @@ def Xform "Asset"
     CHECK(moved(B->restMoved, heldSlot));
     CHECK(moved(B->ladderMoved, heldDefaultSlot));
     CHECK(moved(B->restMoved, freeSlot));
-    CHECK(refreshes() > forced);
+    CHECK(ran(solveOp));
 
     // The runtime, over the same history. Its compose steps record the
     // moves its Solve steps refresh from.
@@ -6335,12 +6711,11 @@ def Xform "Asset"
         return std::find(paths.begin(), paths.end(), path.GetString()) !=
                paths.end();
     };
-    const auto headRan = [&](fb::StepKind kind, const SdfPath &owner) {
+    const auto headRan = [&](uint8_t target, const std::string &owner) {
         for (const int32_t step : player->GetLastRunTraceForTesting()) {
             if (step >= 0 && size_t(step) < file->steps.size() &&
-                file->steps[size_t(step)].kind == kind &&
-                player->GetStepLabelForTesting(size_t(step)) ==
-                    owner.GetString()) {
+                _RunsComposeOp(*file, file->steps[size_t(step)], target) &&
+                player->GetStepLabelForTesting(size_t(step)) == owner) {
                 return true;
             }
         }
@@ -6352,8 +6727,8 @@ def Xform "Asset"
     CHECK(moves(true, heldDefault));
     CHECK(moves(false, freeJoint));
     play(3.0);
-    CHECK(headRan(fb::StepKind::RestCompose, held));
-    CHECK(headRan(fb::StepKind::LadderCompose, heldDefault));
+    CHECK(headRan(43, held.GetString()));
+    CHECK(headRan(44, heldDefault.GetString()));
     CHECK(!moves(false, held));
     CHECK(!moves(true, heldDefault));
     CHECK(moves(false, freeJoint));
@@ -6418,6 +6793,7 @@ main(int argc, char **argv)
     TestVec3fChain();
     TestDisabledRevision();
     TestEnvelopeRevisions();
+    TestRunTimeChainFailuresRoundTrip();
     TestPhasedConsumers();
     TestOraclePublicationGeneration();
     TestScalarRawKindPreservesRecords();
@@ -6433,6 +6809,7 @@ main(int argc, char **argv)
     TestSpaceRestMovesWithItsRests();
     TestRepeatedSetRunsNothing();
     TestHeldDragCountsValueEditWork();
+    TestHeldDragPastAWeightStops();
     TestRunTraceOrder();
     TestAvarReadsInAnyFileOrder();
     TestHeldNaNRestDoesNotMove();

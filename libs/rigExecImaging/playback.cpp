@@ -4,10 +4,10 @@
 #include "rigExecRuntime/runtime.h"
 #include "rigExecSampler/inputSampler.h"
 #include "rigExecMath/pointFrame.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedSchedule.h"
-#include "rigExec/movers/moverRegistry.h"
-#include "rigExec/parallel.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/api/moverRegistry.h"
+#include "rigExec/internal/parallel.h"
 
 #include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/staticTokens.h"
@@ -439,8 +439,8 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
     }
     if (ran && _dispatchExecute && !RigExecFrozenSerialActive()) {
         // The dispatcher lives for this Execute only, in its own arena; the
-        // reader forgets it before it goes. A frozen serial scope keeps
-        // the reader serial, as it keeps the native schedule.
+        // reader forgets it before it goes. A frozen serial scope keeps the
+        // reader serial.
         pxr::WorkWithScopedParallelism([&] {
             pxr::WorkDispatcher dispatcher;
             _reader->SetTaskDispatch(

@@ -31,18 +31,49 @@ target_link_libraries(testRigExecInstalledBinaryHeaders PRIVATE rigExec::rigExec
 add_test(NAME testRigExecInstalledBinaryHeaders
     COMMAND testRigExecInstalledBinaryHeaders)
 
-# The sealed compiled-program view is the SDK's route to a compiled rig: the
-# queries answer, and the evaluator's execution records are not nameable from
-# the installed headers.
+# The installed SDK surface: RigExecProgramView answers its queries, the
+# evaluator's execution records are not nameable, and include/rigExec holds
+# api/ plus exactly the internal headers tools/rigexec_installed_internal.txt
+# lists.
+get_target_property(_rigexec_include_dirs rigExec::rigExecGraph
+                    INTERFACE_INCLUDE_DIRECTORIES)
+list(GET _rigexec_include_dirs 0 _rigexec_include_dir)
 add_executable(testRigExecInstalledSeal ../testRigExecInstalledSeal.cpp)
 target_compile_features(testRigExecInstalledSeal PRIVATE cxx_std_17)
 target_link_libraries(testRigExecInstalledSeal PRIVATE
     rigExec::rigExec rigExec::rigExecScene plug usd usdGeom)
-add_test(NAME testRigExecInstalledSeal COMMAND testRigExecInstalledSeal)
+add_test(NAME testRigExecInstalledSeal COMMAND testRigExecInstalledSeal
+    "${_rigexec_include_dir}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/rigexec_installed_internal.txt")
 set_tests_properties(testRigExecInstalledSeal PROPERTIES
     ENVIRONMENT "PXR_PLUGINPATH_NAME=${rigExec_PLUGIN_DIR}/rigExecSchema/resources"
     ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:${rigExec_LIBRARY_DIR};PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/bin;PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;LD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};LD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib")
+
+# The background scheduler links from rigExecPlayback, not from the engine.
+add_executable(testRigExecInstalledPlayback ../testRigExecInstalledPlayback.cpp)
+target_compile_features(testRigExecInstalledPlayback PRIVATE cxx_std_17)
+target_link_libraries(testRigExecInstalledPlayback PRIVATE
+    rigExec::rigExecPlayback)
+add_test(NAME testRigExecInstalledPlayback COMMAND testRigExecInstalledPlayback)
+set_tests_properties(testRigExecInstalledPlayback PROPERTIES
+    ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:${rigExec_LIBRARY_DIR};PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/bin;PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;LD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};LD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib")
+
+# Each op-core API header compiles on its own against the installed op core,
+# which carries no OpenUSD include path.
+set(_rigexec_op_core_tus)
+foreach(_header registry opPorts rigDesc compile taps taskSystem evaluator
+                view inputWriter runState)
+    set(_tu "${CMAKE_CURRENT_BINARY_DIR}/opCoreHeaders/${_header}.cpp")
+    file(CONFIGURE OUTPUT "${_tu}"
+        CONTENT "#include \"rigExec/api/${_header}.h\"\n")
+    list(APPEND _rigexec_op_core_tus "${_tu}")
+endforeach()
+add_library(testRigExecInstalledOpCoreHeaders OBJECT ${_rigexec_op_core_tus})
+target_compile_features(testRigExecInstalledOpCoreHeaders PRIVATE cxx_std_17)
+target_link_libraries(testRigExecInstalledOpCoreHeaders PRIVATE
+    rigExec::rigExecOpCore)
 
 add_executable(testRigExecInstalledOracle ../testRigExecOracleDependency.cpp)
 target_compile_features(testRigExecInstalledOracle PRIVATE cxx_std_17)
@@ -87,6 +118,54 @@ add_test(NAME testRigExecInstalledMover
     COMMAND testRigExecInstalledMover "${installedExternalMoverResources}")
 set_tests_properties(testRigExecInstalledMover PROPERTIES
     ENVIRONMENT "PXR_PLUGINPATH_NAME=${rigExec_PLUGIN_DIR}/rigExecSchema/resources;${installedExternalMoverResources}"
+    ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:${rigExec_LIBRARY_DIR};PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/bin;PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;LD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};LD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib")
+
+# An op plugin built by the installed rigexec_add_op_plugin against the
+# installed headers, then discovered by the installed rigExecScene.
+rigexec_add_op_plugin(testOffsetOps NO_INSTALL BINDERS
+    PLUGIN_ROOT "${CMAKE_BINARY_DIR}/test-op-plugins"
+    SOURCES ../opPlugins/offsetOps.cpp
+    SCHEMA ../opPlugins/schema.usda
+    SCHEMA_TYPE TestOffsetMover)
+get_target_property(installedOffsetOpsResources testOffsetOps
+                    RIGEXEC_PLUGIN_RESOURCE_DIR)
+add_executable(testRigExecInstalledOpPlugins ../testRigExecOpPlugins.cpp)
+target_compile_features(testRigExecInstalledOpPlugins PRIVATE cxx_std_17)
+target_link_libraries(testRigExecInstalledOpPlugins PRIVATE
+    rigExec::rigExec rigExec::rigExecScene rigExec::rigExecBuiltins plug usd)
+add_dependencies(testRigExecInstalledOpPlugins testOffsetOps)
+add_test(NAME testRigExecInstalledOpPlugins
+    COMMAND testRigExecInstalledOpPlugins good "${installedOffsetOpsResources}"
+        "$<TARGET_FILE:testOffsetOps>"
+        "${CMAKE_CURRENT_BINARY_DIR}/testRigExecInstalledOpPlugins-scratch")
+set_tests_properties(testRigExecInstalledOpPlugins PROPERTIES
+    ENVIRONMENT "PXR_PLUGINPATH_NAME=${rigExec_PLUGIN_DIR}/rigExecSchema/resources"
+    ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:${rigExec_LIBRARY_DIR};PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/bin;PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;LD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};LD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib")
+
+# The fixture mover's op plugin, built against the installed SDK beside the
+# mover: its binder runs the mover on its op through the installed op core.
+rigexec_add_op_plugin(testQuadraticOps NO_INSTALL BINDERS
+    BINDS ExternalQuadraticMover
+    PLUGIN_ROOT "${CMAKE_BINARY_DIR}/test-op-plugins"
+    SOURCES ../externalMovers/quadraticOps.cpp
+    LIBRARIES testExternalMoverKernel)
+target_include_directories(testQuadraticOps PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../externalMovers")
+get_target_property(installedQuadraticOpsResources testQuadraticOps
+                    RIGEXEC_PLUGIN_RESOURCE_DIR)
+add_executable(testRigExecInstalledOpPluginScene ../testRigExecOpPluginScene.cpp)
+target_compile_features(testRigExecInstalledOpPluginScene PRIVATE cxx_std_17)
+target_link_libraries(testRigExecInstalledOpPluginScene PRIVATE
+    rigExec::rigExec rigExec::rigExecScene rigExec::rigExecBuiltins plug usd)
+add_dependencies(testRigExecInstalledOpPluginScene testExternalMover
+    testQuadraticOps)
+add_test(NAME testRigExecInstalledOpPluginScene
+    COMMAND testRigExecInstalledOpPluginScene
+        "${installedExternalMoverResources}" "${installedQuadraticOpsResources}")
+set_tests_properties(testRigExecInstalledOpPluginScene PROPERTIES
+    ENVIRONMENT "PXR_PLUGINPATH_NAME=${rigExec_PLUGIN_DIR}/rigExecSchema/resources"
     ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:${rigExec_LIBRARY_DIR};PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/bin;PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;LD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};LD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib;DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_LIBRARY_DIR};DYLD_LIBRARY_PATH=path_list_prepend:${rigExec_USD_INSTALL_DIR}/lib")
 

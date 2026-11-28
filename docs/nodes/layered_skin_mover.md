@@ -107,6 +107,8 @@ every application of the atomic mover.
 
 *Type:* `uniform token`. *Default:* `"classicLinear"`.
 
+Valid values: `classicLinear`, `dualQuaternion`.
+
 #### `inputs:mask`
 
 *Type:* `float[]`. *Default:* `[]`.

@@ -1,9 +1,9 @@
 // .rigexec array inputs.
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecBake/arrayReads.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/moverGraph.h"
-#include "rigExec/rigEvaluatorInternal.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/moverGraph.h"
+#include "rigExec/internal/rigEvaluatorInternal.h"
 
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3f.h"
@@ -15,6 +15,7 @@
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/stage.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/usd/timeCode.h"
 
 #include <map>
@@ -25,6 +26,10 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExec {
 namespace {
+
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    ((offsets, BlendShapeText::offsets))
+    ((pointIndices, BlendShapeText::pointIndices)));
 
 using Consumer = RigExecBakeArrayConsumer;
 using Role = RigExecRevisionLeafRole;
@@ -167,10 +172,10 @@ struct _Lister {
                 if (!sample.blendShape.IsEmpty()) {
                     const auto shape = sample.blendShape.GetPrimPath();
                     sparseSources.emplace(
-                        shape.AppendProperty(TfToken("offsets")),
+                        shape.AppendProperty(_tokens->offsets),
                         RigExecRevisionLeafType::Vec3fArray);
                     sparseSources.emplace(
-                        shape.AppendProperty(TfToken("pointIndices")),
+                        shape.AppendProperty(_tokens->pointIndices),
                         RigExecRevisionLeafType::IntArray);
                 }
             }
@@ -336,7 +341,7 @@ struct _Lister {
     // _ReadTargetPoints' attribute: the relationship's one target, as
     // _ResolveGeometryInput resolves it. A typed missing value still needs
     // storage so later successful stage samples can recover.
-    SdfPath OraclePoints(const UsdPrim &prim, const char *relationship) const
+    SdfPath FieldPointsPath(const UsdPrim &prim, const char *relationship) const
     {
         SdfPathVector targets;
         if (const UsdRelationship rel =
@@ -353,7 +358,7 @@ struct _Lister {
     }
 
     // One weight object entry: its painted arrays, read at Default, and,
-    // where the oracle resolves it, the points its volume samples and a
+    // where the weight field resolves it, the points its volume samples and a
     // curve weight's curve, read raw at the time.
     void Object(const RigExecBakeArrayObject &object, uint32_t index) const
     {
@@ -379,7 +384,7 @@ struct _Lister {
         const bool volume =
             curve || object.type == SchemaTypeName::RigExecSphereWeight ||
             object.type == SchemaTypeName::RigExecPlaneWeight;
-        if (!object.oracle || !volume) {
+        if (!object.fieldResolves || !volume) {
             return;
         }
         const auto add = [&](const SdfPath &path, Consumer consumer) {
@@ -392,18 +397,18 @@ struct _Lister {
         };
         if (!object.samplesInFlight) {
             SdfPath samples =
-                OraclePoints(prim, SchemaAttrText::rigExecSampleSource);
+                FieldPointsPath(prim, SchemaAttrText::rigExecSampleSource);
             if (samples.IsEmpty()) {
                 samples =
-                    OraclePoints(prim, SchemaAttrText::rigExecWeightTarget);
+                    FieldPointsPath(prim, SchemaAttrText::rigExecWeightTarget);
             }
-            add(samples, Consumer::OracleSamples);
-            add(OraclePoints(prim, SchemaAttrText::rigExecWeightTarget),
-                Consumer::OracleFallback);
+            add(samples, Consumer::FieldSamples);
+            add(FieldPointsPath(prim, SchemaAttrText::rigExecWeightTarget),
+                Consumer::FieldFallback);
         }
         if (curve) {
-            add(OraclePoints(prim, SchemaAttrText::rigExecCurve),
-                Consumer::OracleCurve);
+            add(FieldPointsPath(prim, SchemaAttrText::rigExecCurve),
+                Consumer::FieldCurve);
         }
     }
 };

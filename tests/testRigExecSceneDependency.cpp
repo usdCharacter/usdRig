@@ -1,9 +1,9 @@
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #ifdef RIGEXEC_EXPLICIT_SCENE_REGISTRATION
 #include "rigExecScene/registerScene.h"
 #endif
 #ifdef RIGEXEC_TEST_SCENE_RECOVERY
-#include "rigExec/sceneDispatch.h"
+#include "rigExec/api/sceneDispatch.h"
 #include "rigExecScene/registerScene.h"
 #endif
 
@@ -17,24 +17,31 @@
 using namespace rigExec;
 
 namespace {
-bool HasMissingScene(const std::vector<std::string> &messages)
+bool
+HasMissingScene(const std::vector<std::string> &messages)
 {
-    return std::any_of(messages.begin(), messages.end(), [](const std::string &s) {
-        return s.find("RigExec scene library is unavailable") != std::string::npos;
-    });
+    return std::any_of(
+        messages.begin(), messages.end(), [](const std::string &s) {
+            return s.find("RigExec scene library is unavailable") !=
+                   std::string::npos;
+        });
 }
 
-int Fail(const char *message, const std::vector<std::string> &details = {})
+int
+Fail(const char *message, const std::vector<std::string> &details = {})
 {
     std::fprintf(stderr, "%s\n", message);
-    for (const auto &detail : details) std::fprintf(stderr, "  %s\n", detail.c_str());
+    for (const auto &detail : details)
+        std::fprintf(stderr, "  %s\n", detail.c_str());
     return 1;
 }
-}
+} // namespace
 
-int main(int argc, char **argv)
+int
+main(int argc, char **argv)
 {
-    if (argc != 2) return Fail("Expected schema resource directory");
+    if (argc != 2)
+        return Fail("Expected schema resource directory");
     PlugRegistry::GetInstance().RegisterPlugins(argv[1]);
 #ifdef RIGEXEC_EXPLICIT_SCENE_REGISTRATION
     RigExecRegisterScene();
@@ -54,31 +61,38 @@ def RigExecRoot "Rig"
         double avars:tx = 3
     }
 }
-)USD")) return Fail("Could not create test rig");
+)USD"))
+        return Fail("Could not create test rig");
     RigExecRigEvaluator evaluator(stage, SdfPath("/Rig"));
     std::vector<std::string> errors;
     const bool compiled = evaluator.Compile(&errors);
 #if defined(RIGEXEC_EXPECT_SCENE) && !defined(RIGEXEC_TEST_SCENE_RECOVERY)
-    if (!compiled) return Fail("Linked scene library did not compile", errors);
+    if (!compiled)
+        return Fail("Linked scene library did not compile", errors);
     const auto pose = evaluator.Evaluate(UsdTimeCode::Default());
-    if (!pose.valid) return Fail("Linked scene library did not evaluate", pose.diagnostics);
+    if (!pose.valid)
+        return Fail("Linked scene library did not evaluate", pose.diagnostics);
     const auto control = pose.controlFrames.find(SdfPath("/Rig/Input"));
-    if (control == pose.controlFrames.end() || control->second.points[0][0] != 3.0)
+    if (control == pose.controlFrames.end() ||
+        control->second.points[0][0] != 3.0)
         return Fail("Scene evaluation lost the authored control input");
 #else
     if (compiled || !HasMissingScene(errors))
         return Fail("Compile must report the missing scene library", errors);
-    if (evaluator.Compile()) return Fail("Compile without an error sink must fail");
+    if (evaluator.Compile())
+        return Fail("Compile without an error sink must fail");
     // Evaluate compiles implicitly and must preserve the same recoverable error.
     const auto pose = evaluator.Evaluate(UsdTimeCode::Default());
     if (pose.valid || !HasMissingScene(pose.diagnostics))
-        return Fail("Evaluate must report the missing scene library", pose.diagnostics);
+        return Fail("Evaluate must report the missing scene library",
+                    pose.diagnostics);
 #endif
 #ifdef RIGEXEC_TEST_SCENE_RECOVERY
     RigExecRegisterScene();
     const auto recovered = evaluator.Evaluate(UsdTimeCode::Default());
     if (!recovered.valid || HasMissingScene(recovered.diagnostics))
-        return Fail("Evaluate cached a missing scene dependency", recovered.diagnostics);
+        return Fail("Evaluate cached a missing scene dependency",
+                    recovered.diagnostics);
 #endif
     return 0;
 }

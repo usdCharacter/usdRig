@@ -8,9 +8,13 @@
 # Kept out of the root list: tools/select_affected_tests.py reads that file
 # as text and follows INTERFACE links, and this is not a dependency edge for
 # test selection.
-if (WIN32)
-    target_link_libraries(rigExec INTERFACE rigExecGraph rigExecMath
+if (WIN32 AND RIGEXEC_WITH_USD)
+    target_link_libraries(rigExec INTERFACE rigExecGraph rigExecMathGf
         rigExecEvalCore)
     # The GPU worker's hidden OpenGL context.
     target_link_libraries(rigExecGpu PRIVATE opengl32 user32 gdi32)
+endif()
+if (WIN32)
+    # WaitOnAddress and WakeByAddressAll for the op core's task system.
+    target_link_libraries(rigExecOpCore PRIVATE synchronization)
 endif()

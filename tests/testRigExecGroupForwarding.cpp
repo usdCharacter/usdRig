@@ -8,12 +8,14 @@
 // program, a frame-cache worker and the binary runtime, and on the biped,
 // where an arm edit moves shoulder-corrective points that share index
 // ranges with the face clusters.
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/valueAddress.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/valueAddress.h"
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecEvalCore/gate.h"
+#include "rigExec/api/runState.h"
+#include "rigExecStdTypes/stdTypes.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3f.h"
@@ -64,6 +66,7 @@ namespace {
 using Program = RigExecBakedProgramImpl;
 using Chain = Program::GeomChain;
 using Revision = Program::GeomRevision;
+using Memo = RigExecSparseWalkMemo<rigExecStd::Vec3f>;
 
 void
 CheckCompiledGroupProof()
@@ -135,6 +138,26 @@ WalksSparse(const Program &B, const Revision &revision)
            !B.weightObjects[size_t(revision.weightObject)].indices.empty();
 }
 
+/// The walk memo the MatrixDeform node standing in for revision \p id keeps
+/// for group \p g (its range scratch); null when there is none.
+const Memo *
+WalkOf(const Program &B, int id, size_t g)
+{
+    if (!B.opProgram || !B.opState || !B.opState->run)
+        return nullptr;
+    const std::vector<int> &chains = B.opProgram->chainRevision;
+    for (size_t c = 0; c < chains.size(); ++c) {
+        RigExecChainDesc desc;
+        if (chains[c] != id ||
+            !RigExecProgramChainAt(*B.opProgram->layout.program, c, &desc) ||
+            desc.members.empty())
+            continue;
+        return static_cast<const Memo *>(
+            B.opState->run->GetRangeScratch(desc.members[0], uint32_t(g)));
+    }
+    return nullptr;
+}
+
 /// The chain index of the last revision before \p r that writes group \p g,
 /// or -1 when the group enters \p r from the chain base.
 int
@@ -150,34 +173,38 @@ EnteringWriter(const Chain &chain, size_t r, size_t g)
 }
 
 /// What a chain published, copied: every group of every revision and of the
-/// base, each revision's walk inputs, and whether each group's walk memo
-/// held recorded entries.
+/// base, and each group's walk memo: the walk inputs it last saw and whether
+/// it held recorded entries.
 struct Snapshot {
     std::vector<std::vector<std::vector<GfVec3f>>> groups;
     std::vector<std::vector<char>> recorded;
+    std::vector<std::vector<std::vector<unsigned char>>> params;
     std::vector<std::vector<GfVec3f>> base;
-    std::vector<GfMatrix4d> transforms;
-    std::vector<char> radial;
 
     static std::vector<GfVec3f> Copy(const RigExecPointsRef<GfVec3f> &ref)
     {
         return ref.data ? std::vector<GfVec3f>(ref.data, ref.data + ref.count)
                         : std::vector<GfVec3f>();
     }
-    explicit Snapshot(const Chain &chain)
+    Snapshot(const Program &B, int c)
     {
+        const Chain &chain = B.chains[size_t(c)];
         for (const auto &state : chain.baseGroups) {
             base.push_back(Copy(state.published));
         }
-        for (const Revision &revision : chain.revisions) {
+        for (size_t r = 0; r < chain.revisions.size(); ++r) {
+            const Revision &revision = chain.revisions[r];
             groups.emplace_back();
             recorded.emplace_back();
-            for (const auto &state : revision.groups) {
-                groups.back().push_back(Copy(state.published));
-                recorded.back().push_back(state.walk.indices.empty() ? 0 : 1);
+            params.emplace_back();
+            for (size_t g = 0; g < revision.groups.size(); ++g) {
+                groups.back().push_back(Copy(revision.groups[g].published));
+                const Memo *walk =
+                    WalkOf(B, B.chainRevisionBegin[size_t(c)] + int(r), g);
+                recorded.back().push_back(walk && !walk->indices.empty());
+                params.back().push_back(walk ? walk->params
+                                             : std::vector<unsigned char>());
             }
-            transforms.push_back(revision.parameters.transform);
-            radial.push_back(revision.parameters.radialWeight ? 1 : 0);
         }
     }
     const std::vector<GfVec3f> &Entering(const Chain &chain, size_t r,
@@ -188,7 +215,8 @@ struct Snapshot {
     }
 };
 
-/// The steps of \p kind the last run executed, as (revision id, part).
+/// The steps of identity \p kind the last run executed, as (revision id,
+/// part): an op range chain's group step is its revision's chunk step.
 std::set<std::pair<int, int>>
 RanSteps(const Program &B, RigExecBakedStepKind kind)
 {
@@ -198,9 +226,10 @@ RanSteps(const Program &B, RigExecBakedStepKind kind)
         if (!B.opExecution.ran[c]) {
             continue;
         }
-        const RigExecBakedStep &step = B.steps[B.opGraph.ops[c].originalIndex];
-        if (step.kind == kind) {
-            ran.emplace(step.object, step.part);
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(B, B.steps[B.opGraph.ops[c].originalIndex]);
+        if (identity.kind == kind) {
+            ran.emplace(identity.object, identity.part);
         }
     }
     return ran;
@@ -246,15 +275,17 @@ CheckWalks(const Program &B, int c, const Snapshot &before,
         }
         const std::vector<int> &indices =
             B.weightObjects[size_t(revision.weightObject)].indices;
-        const bool paramsMoved =
-            std::memcmp(&before.transforms[r], &revision.parameters.transform,
-                        sizeof(GfMatrix4d)) != 0 ||
-            (before.radial[r] != 0) != revision.parameters.radialWeight;
         for (size_t g = 0; g < revision.groups.size(); ++g) {
             if (!ran.count({first + int(r), int(g)})) {
                 continue;
             }
             const auto &state = revision.groups[g];
+            const Memo *walk = WalkOf(B, first + int(r), g);
+            CHECK(walk);
+            if (!walk) {
+                continue;
+            }
+            const bool paramsMoved = before.params[r][g] != walk->params;
             const int begin = chain.groupBounds[g];
             const int end = chain.groupBounds[g + 1];
             const int writer = EnteringWriter(chain, r, g);
@@ -272,9 +303,9 @@ CheckWalks(const Program &B, int c, const Snapshot &before,
             if (!sized) {
                 continue;
             }
-            if (state.ownPublished < 0) {
-                // Passed through whole (an identity transform): no walk.
-                CHECK(state.walk.computed == 0 && state.walk.reused == 0);
+            if (walk->computed == 0 && walk->reused == 0) {
+                // An identity transform: passed through whole, no walk.
+                CHECK(state.ownPublished < 0);
                 continue;
             }
             size_t entries = 0, moved = 0, wrongForward = 0, wrongReuse = 0;
@@ -302,24 +333,23 @@ CheckWalks(const Program &B, int c, const Snapshot &before,
             }
             const bool reusing = !paramsMoved && before.recorded[r][g];
             const size_t expected = reusing ? moved : entries;
-            const bool ok =
-                state.walk.computed == expected &&
-                state.walk.computed + state.walk.reused == entries &&
-                state.walk.indices.empty() == paramsMoved &&
-                wrongForward == 0 && wrongReuse == 0;
+            const bool ok = walk->computed == expected &&
+                            walk->computed + walk->reused == entries &&
+                            walk->indices.empty() == paramsMoved &&
+                            wrongForward == 0 && wrongReuse == 0;
             if (!ok) {
                 std::printf("  %s: %s group %zu computed %u and reused %u of "
                             "%zu entries, expected %zu computed; %zu point(s) "
                             "not forwarded, %zu reused result(s) moved\n",
                             what, revision.moverPath.GetText(), g,
-                            state.walk.computed, state.walk.reused, entries,
-                            expected, wrongForward, wrongReuse);
+                            walk->computed, walk->reused, entries, expected,
+                            wrongForward, wrongReuse);
             }
             CHECK(ok);
             ++totals.steps;
-            totals.forwards += state.walk.computed == 0 ? 1 : 0;
-            totals.computed += state.walk.computed;
-            totals.reused += state.walk.reused;
+            totals.forwards += walk->computed == 0 ? 1 : 0;
+            totals.computed += walk->computed;
+            totals.reused += walk->reused;
         }
     }
     return totals;
@@ -582,19 +612,29 @@ TestTwoGroupGate()
         evaluator.GetBakedProgram()->RequestFullRun();
         const UsdTimeCode time(index + 1);
         const auto pose = evaluator.Evaluate(time);
-        CHECK(pose.valid);
         CHECK(&rigExec::RigExecBakedProgramAccess::StepGraph(
                   *evaluator.GetBakedProgram()) == &program);
         CHECK(revision.groupWritten == std::vector<char>({1, 0}));
-        const bool refused = std::any_of(
-            pose.diagnostics.begin(), pose.diagnostics.end(),
-            [](const std::string &line) {
-                return line.find("MoverFailed /Asset/Rig/Movers/Gated:") == 0;
-            });
-        CHECK(refused == (index == 5));
-        const auto &points =
-            pose.movedProperties.at(chain.target).Get<VtVec3fArray>();
-        CHECK(points[1] == GfVec3f(index == 1 ? 2 : 1, 0, 0));
+        // Weights reaching a group the revision does not write stop the
+        // frame with an error, live and frozen alike.
+        if (index == 5) {
+            CHECK(!pose.valid && pose.movedProperties.empty());
+            const std::string &first =
+                pose.diagnostics.empty() ? std::string() : pose.diagnostics[0];
+            CHECK(first.rfind("/Asset/Rig/Movers/Gated: node ", 0) == 0 &&
+                  first.find("(rig:MatrixDeform) failed: MatrixDeform: the "
+                             "weights reach a vertex group the revision does "
+                             "not write") != std::string::npos);
+            CHECK(RigExecFrozenFailsAsLive(&evaluator, time, &error));
+            continue;
+        }
+        CHECK(pose.valid);
+        const auto found = pose.movedProperties.find(chain.target);
+        CHECK(found != pose.movedProperties.end());
+        if (found == pose.movedProperties.end())
+            continue;
+        const auto &points = found->second.Get<VtVec3fArray>();
+        CHECK(points[1] == GfVec3f(2, 0, 0));
         CHECK(points[5] == GfVec3f(5, 0, 0));
         CHECK(
             RigExecFrozenMatchesLive(&evaluator, SdfPath(kRig), time, &error));
@@ -641,8 +681,14 @@ TestAGatedChainForwards()
         return;
     }
     const Revision &mover = chain.revisions[size_t(gated)];
-    CHECK(WalksSparse(B, mover) && mover.parameters.radialWeight);
-    CHECK(!(mover.parameters.transform == GfMatrix4d(1.0)));
+    // Its walks run the radial arm at a moved transform.
+    const Memo *walk = WalkOf(B, B.chainRevisionBegin[size_t(c)] + gated, 0);
+    const GfMatrix4d identity(1.0);
+    CHECK(WalksSparse(B, mover) && walk &&
+          walk->params.size() == 1 + sizeof(GfMatrix4d) &&
+          walk->params[0] == 1 &&
+          std::memcmp(walk->params.data() + 1, identity.data(),
+                      sizeof(GfMatrix4d)) != 0);
     // Gated to the three groups holding its support: 50, 100 and 50 entries.
     for (size_t g = 0; g < mover.groupWritten.size(); ++g) {
         CHECK(bool(mover.groupWritten[g]) == (g < 3));
@@ -689,7 +735,7 @@ TestAGatedChainForwards()
     };
     for (const Step &step : steps) {
         const GatedValues &v = step.values;
-        const Snapshot before(chain);
+        const Snapshot before(B, c);
         evaluator.SetInteractiveOverrides(
             {Override(kRaise, "inputs:weight", VtValue(v.raise)),
              Override(kLift, "inputs:weight", VtValue(v.lift)),
@@ -922,7 +968,8 @@ TestSparseBlendChunks()
         for (size_t g = 0; g < 10; ++g)
             if (g != 1)
                 CHECK(!ran.count({id, int(g)}));
-        CHECK(!RanFor(RanSteps(B, RigExecBakedStepKind::RevisionStatic), id));
+        // The head looks the weights up; only the reached group reruns.
+        CHECK(RanFor(RanSteps(B, RigExecBakedStepKind::RevisionStatic), id));
         CHECK(B.rangeVerifyMismatches == 0);
         if (baked) {
             if (!std::isfinite(weight)) {
@@ -1207,12 +1254,12 @@ TestTheBipedArmEditForwards(const std::string &examplesDir)
     };
     const auto edit = [&](const std::vector<RigExecValueOverride> &overrides,
                           Snapshot *before) {
-        *before = Snapshot(chain);
+        *before = Snapshot(B, c);
         evaluator.SetInteractiveOverrides(overrides);
         CHECK(evaluator.Evaluate(time).valid);
         CHECK(B.rangeVerifyMismatches == 0);
     };
-    Snapshot before(chain);
+    Snapshot before(B, c);
 
     // An arm-only edit, warmed: the first step records the walks it reruns.
     // The cheek cluster's own inputs stand; the groups it reruns enter with

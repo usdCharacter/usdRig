@@ -1,5 +1,6 @@
 // Runtime pose scratch allocation, input prologue, and ladder composition.
 
+#include "rigExecMath/avarScale.h"
 #include "rigExecSchema/schemaNames.h"
 #include "poseEvalHost.h"
 #include "poseInternal.h"
@@ -14,22 +15,6 @@ namespace rigExec {
 using namespace runtimePoseDetail;
 
 namespace {
-
-// Smallest supported avar scale magnitude, in avarScale.h terms.
-constexpr double _RrAvarScaleFloor = 1e-4;
-
-// RigExecNormalizeAvarScale, verbatim: non-finite resolves to identity,
-// magnitudes below the floor are raised to it with the sign intact.
-double
-_RrNormalizeAvarScale(double value)
-{
-    if (!std::isfinite(value)) {
-        return 1.0;
-    }
-    return std::abs(value) < _RrAvarScaleFloor
-               ? std::copysign(_RrAvarScaleFloor, value)
-               : value;
-}
 
 RrMat4d
 _RrWireMatrix(const RigExecWireMatrix4d &wire)
@@ -82,9 +67,9 @@ _RrComposeAvars(double tx, double ty, double tz, double sx, double sy,
     }
     RrMat4d m;
     m.SetIdentity();
-    m[0][0] = _RrNormalizeAvarScale(sx);
-    m[1][1] = _RrNormalizeAvarScale(sy);
-    m[2][2] = _RrNormalizeAvarScale(sz);
+    m[0][0] = RigExecNormalizeAvarScale(sx);
+    m[1][1] = RigExecNormalizeAvarScale(sy);
+    m[2][2] = RigExecNormalizeAvarScale(sz);
     for (const char axis : sequence) {
         const int index = axis == 'X' ? 0 : axis == 'Y' ? 1 : 2;
         if (angles[index] != 0.0) {
@@ -169,10 +154,6 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
     }
     auto scratch = std::make_shared<RrPoseScratch>();
     const RrMat4d identity = _RrIdentity();
-    scratch->checkpointInputs.resize(poses.spaceCheckpoints.size());
-    for (size_t i = 0; i < poses.spaceCheckpoints.size(); ++i)
-        scratch->checkpointInputs[i].resize(
-            poses.spaceCheckpoints[i].recompose.size());
     scratch->restM.assign(slots, identity);
     scratch->selfD.assign(slots, identity);
     scratch->posedD.assign(slots, identity);
@@ -221,94 +202,6 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
     scratch->lastParentSpaceM = scratch->parentSpaceM;
     scratch->lastParentSpaceAuthored = scratch->parentSpaceAuthored;
     scratch->lastRotationSign = scratch->rotationSign;
-    scratch->interpEnabled.assign(poses.poseInterpolators.size(), 0);
-    scratch->interpValues.assign(poses.poseInterpolators.size(), {});
-    scratch->interpMasks.assign(poses.poseInterpolators.size(), 1.0);
-    scratch->interpNetworks.assign(poses.poseInterpolators.size(), {});
-    scratch->interpMaps.assign(poses.poseInterpolators.size(), {});
-    for (size_t i = 0; i < poses.poseInterpolators.size(); ++i) {
-        scratch->interpValues[i].assign(
-            poses.poseInterpolators[i].valueInputs.size(), 0.0);
-    }
-    scratch->interpSolvers.assign(poses.poseInterpolators.size(),
-                                  _RrRbfSolver());
-    scratch->interpScratch.assign(poses.poseInterpolators.size(), {});
-    scratch->interpMethods.assign(poses.poseInterpolators.size(), {});
-    for (size_t i = 0; i < poses.poseInterpolators.size(); ++i) {
-        const RigExecWireRbf &wire = *poses.poseInterpolators[i].solver;
-        std::vector<RrVec3d> rbfPoses;
-        for (const RigExecWireVec3d &p : wire.poses) {
-            rbfPoses.push_back(RrVec3d(p[0], p[1], p[2]));
-        }
-        std::vector<RrVec3d> rbfTranslations;
-        for (const RigExecWireVec3d &p : wire.translations) {
-            rbfTranslations.push_back(RrVec3d(p[0], p[1], p[2]));
-        }
-        std::vector<_RrRbfPoseType> rbfPoseTypes;
-        for (uint8_t type : wire.poseTypes) {
-            rbfPoseTypes.push_back(_RrRbfPoseType(type));
-        }
-        scratch->interpSolvers[i] = _RrRbfSolver(
-            rbfPoses, rbfTranslations, rbfPoseTypes,
-            RrVec3d(wire.twistAxis[0], wire.twistAxis[1], wire.twistAxis[2]),
-            _RrRbfKernel(wire.kernel), wire.radius, wire.translationRadius,
-            wire.normalize, wire.enableRotation, wire.enableTranslation);
-        std::vector<std::vector<double>> weights;
-        weights.reserve(wire.weights.size());
-        for (const fb::RigExecWireDoubleList &row : wire.weights) {
-            weights.push_back(row.v);
-        }
-        scratch->interpSolvers[i].SetSolvedTable(
-            wire.radii, wire.translationRadii, weights);
-        if (const auto &m = poses.poseInterpolators[i].maps) {
-            // Open validated the rows (format.cpp).
-            RigExecAnimatedMapsTable &table = scratch->interpMaps[i];
-            table.inputCount = m->inputCount;
-            for (size_t map = 0; map + 1 < m->mapBegin.size(); ++map) {
-                std::vector<RigExecConditionalRow> rows;
-                for (size_t r = m->mapBegin[map]; r < m->mapBegin[map + 1];
-                     ++r) {
-                    rows.push_back({m->rowInputs[r], m->rowFrom[r], m->rowTo[r],
-                                    m->rowSlope[r], m->rowCut[r]});
-                }
-                // Absent map_unclamped: every map clamps.
-                table.AddMap(std::move(rows), !(map < m->mapUnclamped.size() &&
-                                                m->mapUnclamped[map] != 0));
-            }
-        }
-        if (const auto &n = poses.poseInterpolators[i].network) {
-            // Open validated it (format.cpp), so the build succeeds.
-            std::vector<int> activations(n->layerActivations.begin(),
-                                         n->layerActivations.end());
-            std::vector<float> alphas;
-            for (double alpha : n->layerAlphas) {
-                alphas.push_back(float(alpha));
-            }
-            RigExecMlNetwork &net = scratch->interpNetworks[i];
-            RigExecMlBuildNetwork(n->inputCount, n->layerSizes, activations,
-                                  alphas, n->weights, n->biases, &net, nullptr);
-            net.inputMean = n->inputMean;
-            net.inputScale = n->inputScale;
-            net.defaults = n->outputDefaults;
-        }
-        if (const auto &m = poses.poseInterpolators[i].method) {
-            RigExecRbfMethodTable &table = scratch->interpMethods[i];
-            table.solverType = RigExecRbfSolverType(m->solverType);
-            table.distanceMethod = RigExecRbfDistanceMethod(m->distanceMethod);
-            table.weightFunction = RigExecRbfWeightFunction(m->weightFunction);
-            table.normalizeMethod =
-                RigExecRbfNormalizeMethod(m->normalizeMethod);
-            table.twistAxis = int(m->twistAxis);
-            table.rawCount = m->rawCount;
-            table.targetCount = m->targetCount;
-            table.radius = m->radius;
-            table.weightThreshold = m->weightThreshold;
-            table.targets = m->targets;
-            table.distanceTargets = m->distanceTargets;
-            table.targetScales = m->targetScales;
-            table.coefficients = m->coefficients;
-        }
-    }
     scratch->solvers.resize(poses.solvers.size());
     for (size_t s = 0; s < poses.solvers.size(); ++s) {
         const RigExecWireSolver &wire = poses.solvers[s];
@@ -316,97 +209,12 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
         for (const auto &rest : wire.jointRests) {
             state.jointRests.push_back(_RrWireLandmarks(rest));
         }
-        for (const auto &rest : wire.controlRests) {
-            state.controlRests.push_back(_RrWireLandmarks(rest));
-        }
-        state.startRest = _RrWireLandmarks(wire.startRest);
-        const size_t base = wire.start >= 0 ? 1 : 0;
-        state.elements.resize(wire.controls.size() + base);
-        for (size_t k = 0; k < wire.controls.size(); ++k) {
-            const size_t e = k + base;
-            if (k < state.controlRests.size()) {
-                state.elements[e].restPoints = state.controlRests[k];
-            } else {
-                state.elements[e].restPoints = RrIdentityLandmarks();
-            }
-            state.elements[e].posePoints = RrIdentityLandmarks();
-            state.elements[e].outRestPoints = RrIdentityLandmarks();
-        }
         for (size_t k = 0; k < 3; ++k) {
             state.ikRests[k] = _RrWireLandmarks(wire.ikRests[k]);
         }
-        state.ikParams.upperLength = wire.ikParams.upperLength;
-        state.ikParams.lowerLength = wire.ikParams.lowerLength;
-        state.ikParams.stretch = wire.ikParams.stretch;
-        state.ikParams.softness = wire.ikParams.softness;
-        state.ikParams.preferredBendRadians =
-            wire.ikParams.preferredBendRadians;
-        state.upperLengthBase = wire.upperLengthBase;
-        state.lowerLengthBase = wire.lowerLengthBase;
-        state.spaceRest = _RrWireLandmarks(wire.spaceRest);
-        state.splineRest.cvs = _RrWireLandmarks(wire.splineRest->cvs);
-        state.splineRest.rootControl =
-            RrWireToFrame(wire.splineRest->rootControl);
-        state.splineRest.midControl =
-            RrWireToFrame(wire.splineRest->midControl);
-        state.splineRest.endControl =
-            RrWireToFrame(wire.splineRest->endControl);
-        for (const RigExecWireFrame &joint : wire.splineRest->joints) {
-            state.splineRest.joints.push_back(RrWireToFrame(joint));
-        }
-        state.splineRest.segmentLengths = wire.splineRest->segmentLengths;
-        state.splineRest.restArcLength = wire.splineRest->restArcLength;
-        state.splineRest.volumeWeights = wire.splineRest->volumeWeights;
         for (const auto &rest : wire.splineJointRests) {
             state.splineJointRests.push_back(_RrWireLandmarks(rest));
         }
-        state.twistStartRest = _RrWireLandmarks(wire.twistStartRest);
-        state.twistEndRest = _RrWireLandmarks(wire.twistEndRest);
-        state.twistWeights = wire.twistWeights;
-        for (const RigExecWireVec3f &p : wire.ribbonRestPoints) {
-            state.ribbonRestPoints.push_back(RrVec3f(p[0], p[1], p[2]));
-        }
-        if (const auto *skeleton = wire.skeleton2d.get()) {
-            const size_t bones = skeleton->solveOrder.size();
-            state.bone2dOrder = skeleton->solveOrder;
-            state.bone2dSetup.resize(bones);
-            for (size_t e = 0; e < bones; ++e) {
-                RigExecBone2dSetup &bone = state.bone2dSetup[e];
-                bone.parent = skeleton->parent[e];
-                bone.flags = skeleton->flags[e];
-                bone.minAngle = skeleton->limits[2 * e];
-                bone.maxAngle = skeleton->limits[2 * e + 1];
-                bone.scaling = RigExecBone2dScaling(skeleton->scaling[e]);
-                bone.squashFactor = skeleton->squashFactor[e];
-                bone.maxStretch = skeleton->maxStretch[e];
-                bone.tipBone = skeleton->tipBone[e];
-                bone.tipX = skeleton->tip[2 * e];
-                bone.tipY = skeleton->tip[2 * e + 1];
-                bone.spaceBegin = skeleton->spaceBegin[e];
-                bone.spaceCount = skeleton->spaceCount[e];
-                bone.spaceSelector = skeleton->spaceSelector[e];
-                bone.targetBegin = skeleton->targetBegin[e];
-                bone.targetCount = skeleton->targetCount[e];
-                bone.angleController = skeleton->angleController[e];
-                bone.posController = skeleton->posController[e];
-                bone.scaleController = skeleton->scaleController[e];
-                bone.angleFactor = skeleton->controlFactors[4 * e];
-                bone.posFactorX = skeleton->controlFactors[4 * e + 1];
-                bone.posFactorY = skeleton->controlFactors[4 * e + 2];
-                bone.scaleFactor = skeleton->controlFactors[4 * e + 3];
-            }
-            state.bone2dSpaceSources = skeleton->spaceSources;
-            state.bone2dTargetCandidates = skeleton->targetCandidates;
-        }
-        state.jointGroups.resize(wire.jointGroups.size());
-        for (size_t g = 0; g < wire.jointGroups.size(); ++g) {
-            state.jointGroups[g].memberBegin = wire.jointGroups[g].memberBegin;
-            state.jointGroups[g].memberCount = wire.jointGroups[g].memberCount;
-            state.jointGroups[g].enabled = wire.jointGroups[g].enabled;
-        }
-        state.jointGroupMembers.assign(wire.jointGroupMembers.begin(),
-                                       wire.jointGroupMembers.end());
-        state.jointGroupParents = wire.jointGroupParents;
     }
     scratch->recordAfter.assign(poses.commits.size(), 1);
     scratch->recordEveryTarget.assign(poses.commits.size(), 1);
@@ -428,57 +236,6 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
     }
     program->pose = scratch;
     return true;
-}
-
-bool
-RrRunRestHead(RrProgram *program, size_t group, bool ladder)
-{
-    RrPoseHost host(program);
-    eval::StepRef ref;
-    ref.kind = uint32_t(ladder ? eval::StepKind::LadderCompose
-                               : eval::StepKind::RestCompose);
-    ref.object = int32_t(group);
-    ref.part = eval::kNoStepPart;
-    ref.slot = 0;
-    if (eval::RunValueStep(host, ref).outcome == eval::Outcome::Invalid) {
-        return false;
-    }
-    if (ladder) {
-        // The live ladder echo, kept adapter-local: the inputs the
-        // ladder just composed from, re-read. Only the ladder head
-        // publishes it, for active pose slots only.
-        const auto &range = program->poses->composeGroups[group];
-        const RigExecWireSlotMeta &meta = *program->slotMeta;
-        RrStore &store = program->store;
-        const size_t slots = meta.paths.size();
-        for (size_t i = size_t(range.begin);
-             i < std::min(size_t(range.end), slots); ++i) {
-            if (i >= meta.slotKind.size() ||
-                meta.slotKind[i] != RigExecWireSlotKind::FirstFramePose) {
-                continue;
-            }
-            if (!meta.providerActive.empty() && !meta.providerActive[i]) {
-                continue;
-            }
-            if (i >= store.ladders.size()) {
-                continue;
-            }
-            RrLadderLive &live = store.ladders[i];
-            live.restSpace = program->ReadLadder(i, RrLadderRestSpace).matrix;
-            live.defaultSpace =
-                program->ReadLadder(i, RrLadderDefaultSpace).matrix;
-            live.posedSpace = program->ReadLadder(i, RrLadderPosedSpace).matrix;
-            for (int k = 0; k < 6; ++k) {
-                live.restAvars[size_t(k)] =
-                    program->ReadLadder(i, RrLadderRestAvar0 + k).f64;
-                live.defaultAvars[size_t(k)] =
-                    program->ReadLadder(i, RrLadderDefaultAvar0 + k).f64;
-            }
-            live.rotationOrder =
-                program->ReadLadder(i, RrLadderRotationOrder).token;
-        }
-    }
-    return host.state().movedAny();
 }
 
 void

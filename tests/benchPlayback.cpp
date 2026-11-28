@@ -22,8 +22,8 @@
 // honored) and RIGEXEC_ENABLE_PARALLEL_EVAL (the process default).
 
 #include "rigExecImaging/registry.h"
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/frameCache.h"
+#include "rigExecPlayback/backgroundScheduler.h"
+#include "rigExec/api/frameCache.h"
 
 #include "pxr/usd/sdf/path.h"
 #include "pxr/usd/usd/prim.h"

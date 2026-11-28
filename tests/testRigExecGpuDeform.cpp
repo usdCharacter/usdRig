@@ -7,9 +7,9 @@
 // layout, and that a refused packet passes its points through. Where a GPU
 // device is available the same frames run through the compute executor,
 // which must agree with the CPU judge to float rounding.
-#include "rigExec/gpuDeformTranslation.h"
-#include "rigExec/moverGraph.h"
-#include "rigExec/types.h"
+#include "rigExec/internal/gpuDeformTranslation.h"
+#include "rigExec/internal/moverGraph.h"
+#include "rigExec/api/types.h"
 #include "rigExecGpu/gpuDeformExecutor.h"
 #include "rigExecMath/gpuDeformProgram.h"
 

@@ -50,11 +50,11 @@ LAYER_CMAKE = (
     "cmake/rigExecVerifySources.cmake",
 )
 
-# Imported OpenUSD/OpenExec targets. A test that reaches one of these
+# Imported OpenUSD targets. A test that reaches one of these
 # cannot be built or run without the USD prefix.
 PXR_LIBS = {
-    "arch", "tf", "gf", "vt", "sdf", "ts", "usd", "usdGeom", "usdSkel",
-    "plug", "work", "exec", "execUsd", "ef", "vdf", "esf", "hd",
+    "arch", "tf", "gf", "vt", "sdf", "ts", "usd", "usdGeom",
+    "plug", "work", "hd",
     "usdImaging", "usdUtils", "hio", "sdr", "js", "garch", "glf", "hf",
     "hdSt", "hgi", "trace",
 }
@@ -62,7 +62,8 @@ PXR_LIBS = {
 # Project libraries whose PUBLIC interface does not pull pxr, from the
 # target_link_libraries edges in CMakeLists.txt. Recomputed after parse
 # when the file says otherwise.
-USD_FREE_SEEDS = {"rigExecGraph", "rigExecBinary", "rigExecRuntime", "rigExecLzma", "rigExecFlatBuffers"}
+USD_FREE_SEEDS = {"rigExecGraph", "rigExecOpCore", "rigExecBinary", "rigExecRuntime",
+                  "rigExecLzma", "rigExecFlatBuffers"}
 
 # Script tests (add_test ... COMMAND cmake -P script.cmake) have no
 # executable, so the link graph never selects them; their -P script is an
@@ -148,10 +149,15 @@ def split_args(body: str) -> list[str]:
     cur = []
     depth = 0
     in_str = False
+    escaped = False
     for c in body:
         if in_str:
             cur.append(c)
-            if c == '"':
+            if escaped:
+                escaped = False
+            elif c == "\\":
+                escaped = True
+            elif c == '"':
                 in_str = False
             continue
         if c == '"':
@@ -200,7 +206,9 @@ def iter_commands(text: str):
         while k < n:
             c = text[k]
             if in_str:
-                if c == '"':
+                if c == "\\":
+                    k += 1
+                elif c == '"':
                     in_str = False
             elif c == '"':
                 in_str = True
@@ -311,6 +319,17 @@ def parse(cmake_text: str) -> dict:
     executables = {}  # name -> {sources, links, link_vis}
     tests = []  # {name, command, executable}
 
+    source_vars = {}  # variable -> library whose SOURCES it was read from
+
+    def borrowed_sources(args: list[str]) -> list[str]:
+        """Sources of the libraries whose SOURCES a ${var} argument holds."""
+        borrowed = []
+        for arg in args:
+            m = re.fullmatch(r"\$\{([A-Za-z0-9_]+)\}", arg)
+            if m and source_vars.get(m.group(1)) in libraries:
+                borrowed.extend(libraries[source_vars[m.group(1)]]["sources"])
+        return borrowed
+
     current_kind = None
     for name, args in iter_commands(text):
         if name == "add_library" and args:
@@ -321,12 +340,31 @@ def parse(cmake_text: str) -> dict:
                 kind = rest[0]
                 rest = rest[1:]
             sources = [a for a in rest if not a.startswith("$")]
+            sources += borrowed_sources(rest)
             objects = object_refs(rest)
             libraries[lib] = {"kind": kind, "sources": sources, "objects": objects,
                               "links": [], "link_vis": {}}
+        elif name == "rigexec_add_op_library" and args:
+            # A STATIC op library over its SOURCES, linking the op core and
+            # its USES_TYPE_LIBRARIES publicly.
+            fields = defaultdict(list)
+            field = None
+            for arg in args[1:]:
+                if arg in {"SOURCES", "USES_TYPE_LIBRARIES"}:
+                    field = arg
+                elif field:
+                    fields[field].append(arg)
+            links = ["rigExecOpCore"] + fields["USES_TYPE_LIBRARIES"]
+            libraries[args[0]] = {
+                "kind": "STATIC", "sources": fields["SOURCES"], "objects": [],
+                "links": links, "link_vis": {l: "PUBLIC" for l in links}}
+        elif name == "get_target_property" and len(args) == 3 \
+                and args[2] == "SOURCES":
+            source_vars[args[0]] = args[1]
         elif name == "add_executable" and args:
             exe = args[0]
             sources = [a for a in args[1:] if not a.startswith("$")]
+            sources += borrowed_sources(args[1:])
             objects = object_refs(args[1:])
             executables[exe] = {"sources": sources, "objects": objects,
                                 "links": [], "link_vis": {}}
@@ -369,7 +407,7 @@ def parse(cmake_text: str) -> dict:
             if bucket is not None:
                 bucket["links"].extend(named)
                 bucket["link_vis"].update(visibility)
-        elif name == "add_test":
+        elif name in ("add_test", "rigexec_add_test"):
             if "NAME" in args and "COMMAND" in args:
                 tname = args[args.index("NAME") + 1]
                 command = args[args.index("COMMAND") + 1 :]
@@ -511,7 +549,7 @@ def usd_free_exes(model: dict, index: dict) -> list[str]:
     for exe, reached in index["exe_closure"].items():
         pxr = [lib for lib in reached if lib in PXR_LIBS or lib.startswith("usd")]
         project = [lib for lib in reached if lib in model["libraries"]]
-        # rigExecMath's link line carries gf/vt/tf/arch. Catch that via closure.
+        # rigExecMathGf's link line carries gf/vt/tf/arch. Catch that via closure.
         if pxr:
             continue
         if any(lib not in USD_FREE_SEEDS and lib in model["libraries"] for lib in project):
@@ -702,11 +740,13 @@ def ctest_regex(names: list[str]) -> str:
 
 # Labels cmake/TestLabels.cmake writes from an executable's own link line.
 PROJECT_LIBS = {
-    "rigExec", "rigExecCompile", "rigExecEval", "rigExecSchedule",
-    "rigExecVerify",
+    "rigExec", "rigExecOpCore", "rigExecCompile", "rigExecEval",
+    "rigExecSchedule", "rigExecVerify",
     "rigExecScene", "rigExecOracle", "rigExecRuntime", "rigExecMath",
+    "rigExecMathGf",
     "rigExecGraph", "rigExecBinary", "rigExecBake", "rigExecImaging",
-    "rigExecAuthoring", "rigExecStandalone", "rigExecSampler", "rigExecLzma",
+    "rigExecAuthoring", "rigExecSampler", "rigExecLzma",
+    "rigExecPlayback",
 }
 
 
@@ -778,6 +818,13 @@ target_link_libraries(selPrivParent PRIVATE selPrivDep)
 add_executable(testSelPriv tests/testSelPriv.cpp)
 target_link_libraries(testSelPriv PRIVATE selPrivParent)
 add_test(NAME testSelPriv COMMAND testSelPriv)
+rigexec_add_op_library(selOps SOURCES libs/sel/op_alpha.cpp
+    USES_TYPE_LIBRARIES selTypes)
+get_target_property(_sel_ops selOps SOURCES)
+add_library(selBuiltins SHARED libs/sel/builtins.cpp ${_sel_ops})
+add_executable(testSelOps tests/testSelOps.cpp)
+target_link_libraries(testSelOps PRIVATE selBuiltins)
+add_test(NAME testSelOps COMMAND testSelOps)
 add_test(NAME testSelScript COMMAND ${CMAKE_COMMAND} -DSCRATCH_DIR=x
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/checkSelScript.cmake")
 """
@@ -839,6 +886,11 @@ IMAGING_TESTS = [
     "testRigExecStepMapsChannels_serial",
     "testRigExecTouchPose",
     "testRigExecUpstreamInputs",
+    "testRigExecUpstreamInputsCones_grain0_parallel",
+    "testRigExecUpstreamInputsCones_grain0_serial",
+    "testRigExecUpstreamInputsCones_parallel",
+    "testRigExecUpstreamInputsCones_serial",
+    "testRigExecUpstreamInputsGraph_serial",
     "testRigExecWeightOverlay",
 ]
 
@@ -881,10 +933,21 @@ def self_test() -> int:
     check("private SHARED dependency selects no test",
           res["direct_tests"], [])
 
+    # (c2) An op library's source selects the tests of the module that
+    # compiles its SOURCES, read through get_target_property.
+    res = select(["libs/sel/op_alpha.cpp"], model, index, False)
+    check("op library source selects the composing module's tests",
+          res["direct_tests"], ["testSelOps"])
+
     # (d) The real repository: every moved imaging domain source still
     # resolves to the pre-split 15-executable / 18-test inventory.
     real_model = parse_cmake_files()
     real_index = build_index(real_model)
+    res = select(["libs/rigExecOps/deform/matrixDeformOp.cpp"], real_model,
+                 real_index, False)
+    parity = ["testRigExecBakedOpParity", "testRigExecBakedOpParityScalar"]
+    check("a built-in op source selects the baked-vs-op probes",
+          [t for t in parity if t in res["direct_tests"]], parity)
     for src in IMAGING_SOURCES:
         res = select([src], real_model, real_index, False)
         check(f"{src} selects the imaging executables",

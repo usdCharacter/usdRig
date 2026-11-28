@@ -5,14 +5,14 @@
 // Held runs retain prior answers without executing clean reader bodies.
 //
 // argv[1] = path to the examples directory.
-#include "rigExec/inputReplay.h"
+#include "rigExec/internal/inputReplay.h"
 #include "rigExecFrameRecordCheck.h"
 
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedSchedule.h"
-#include "rigExec/bakedTrace.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/scalarReferenceAdapter.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/internal/bakedTrace.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/scalarReferenceAdapter.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"
@@ -99,8 +99,19 @@ Bindings(const RigExecBakedProgramImpl &B)
     };
     const auto readerStep = [&B](RigExecBakedStepKind kind, size_t chain,
                                  size_t index) {
+        std::vector<int> members;
         for (size_t s = 0; s < B.steps.size(); ++s) {
             const RigExecBakedStep &step = B.steps[s];
+            // An op chain's head reads its member revisions' inputs.
+            if (kind == RigExecBakedStepKind::RevisionStatic &&
+                step.kind == RigExecBakedStepKind::OpChainHead) {
+                RigExecBakedOpStepRevisions(B, step, &members);
+                if (std::find(members.begin(), members.end(),
+                              B.chainRevisionBegin[chain] + int(index)) !=
+                    members.end())
+                    return int(s);
+                continue;
+            }
             if (step.kind != kind || step.object < 0) {
                 continue;
             }
@@ -498,8 +509,13 @@ CheckSlabAssembleEdges(const std::string &where,
     int status = -1;
     for (size_t s = 0; s < B.steps.size(); ++s) {
         const RigExecBakedStep &step = B.steps[s];
-        if (step.kind == RigExecBakedStepKind::RevisionStatic &&
-            step.object == slabRevision) {
+        std::vector<int> members;
+        if (step.kind == RigExecBakedStepKind::OpChainHead)
+            RigExecBakedOpStepRevisions(B, step, &members);
+        if ((step.kind == RigExecBakedStepKind::RevisionStatic &&
+             step.object == slabRevision) ||
+            std::find(members.begin(), members.end(), slabRevision) !=
+                members.end()) {
             assemble = int(s);
         } else if (step.kind == RigExecBakedStepKind::ChainStatus &&
                    step.object == cageChain) {
@@ -941,13 +957,13 @@ TestPrecedingOwnChainFixture(const std::string &examples)
             CHECK_AT(where, own->step >= 0);
             if (own->step >= 0 && own->binding->candidates.size() == 1) {
                 RigExecBakedStep &assemble = B.steps[size_t(own->step)];
+                // Echo, a whole lattice member, heads an op chain of its own.
                 CHECK_AT(where,
-                         assemble.kind == RigExecBakedStepKind::RevisionStatic);
-                const auto &[chain, r] =
-                    B.revisionIndex[size_t(assemble.object)];
-                CHECK_AT(where, !B.chains[size_t(chain)]
-                                     .revisions[size_t(r)]
-                                     .weightCurrentPhase);
+                         assemble.kind == RigExecBakedStepKind::OpChainHead);
+                for (const auto &revision :
+                     B.chains[own->readerChain].revisions)
+                    if (revision.moverPath == own->reader)
+                        CHECK_AT(where, !revision.weightCurrentPhase);
                 const RigExecBakedSlotRange done =
                     RigExecBakedOne(RigExecBakedSlotDomain::RevisionDone,
                                     B.chainRevisionBegin[own->readerChain] + 1);
@@ -1028,58 +1044,43 @@ TestAChainWithoutABaseFallsThrough(const std::string &examples)
     const std::string line = "diag " + kSlabLattice.GetString() +
                              ": read phase 'final' for " + kCage.GetString() +
                              " resolved to nothing; read the authored base";
-    const std::string nativeFailure =
-        "MoverFailed " + kSlabLattice.GetString() +
-        ": execution rejected its inputs; revision passed through";
-    const std::string oracleOnly = "MoverFailed " + kSlabLattice.GetString() +
-                                   ": lattice cage/divisions mismatch";
+    // The authored base the miss falls to is blocked too: the lattice's
+    // cage holds no point per node, an error that stops the frame in both.
+    const std::string failure = kSlabLattice.GetString() + ": ";
     for (const double frame : {1001.0, 1002.0, 1003.0}) {
         const std::string where = "blocked cage at " + std::to_string(frame);
+        const bool blocked = frame == 1002.0;
+        if (blocked) {
+            for (RigExecRigEvaluator *evaluator :
+                 {baked.get(), reference.get()}) {
+                const RigExecRigPose pose =
+                    evaluator->Evaluate(UsdTimeCode(frame));
+                CHECK_AT(where, !pose.valid);
+                CHECK_AT(where, Mentions(pose.diagnostics, line));
+                CHECK_AT(where, std::any_of(pose.diagnostics.begin(),
+                                            pose.diagnostics.end(),
+                                            [&](const std::string &text) {
+                                                return text.rfind(failure, 0) ==
+                                                           0 &&
+                                                       text.find("cage") !=
+                                                           std::string::npos;
+                                            }));
+            }
+            continue;
+        }
         Tally tally;
         const RigExecRigPose pose =
             EvaluateCaptured(where, baked.get(), UsdTimeCode(frame), &tally);
         const RigExecRigPose walk = reference->Evaluate(UsdTimeCode(frame));
         CHECK_AT(where, walk.valid);
-        const bool blocked = frame == 1002.0;
-        CHECK_AT(where, Mentions(pose.diagnostics, line) == blocked);
-        CHECK_AT(where, Mentions(walk.diagnostics, line) == blocked);
+        CHECK_AT(where, !Mentions(pose.diagnostics, line));
+        CHECK_AT(where, !Mentions(walk.diagnostics, line));
         CHECK_AT(where, Moved(pose, kSlab) == Moved(walk, kSlab));
         CHECK_AT(where, pose.referenceMismatches == 0 &&
                             walk.referenceMismatches == 0);
-        CHECK_AT(where, Mentions(pose.diagnostics, nativeFailure) == blocked);
-        CHECK_AT(where, Mentions(walk.diagnostics, nativeFailure) == blocked);
-        CHECK_AT(where, !Mentions(pose.diagnostics, oracleOnly));
-        CHECK_AT(where, !Mentions(walk.diagnostics, oracleOnly));
-        CHECK_AT(where, baked->GetBakedProgram() != nullptr);
-        if (blocked && baked->GetBakedProgram()) {
-            auto &B = const_cast<RigExecBakedProgramImpl &>(
-                rigExec::RigExecBakedProgramAccess::StepGraph(
-                    *baked->GetBakedProgram()));
-            const auto chain = std::find_if(
-                B.chains.begin(), B.chains.end(),
-                [](const auto &item) { return item.target == kSlab; });
-            CHECK_AT(where, chain != B.chains.end());
-            CHECK_AT(where, chain != B.chains.end() && !chain->result.empty());
-            if (chain != B.chains.end() && !chain->result.empty()) {
-                const GfVec3f saved = chain->result[0];
-                chain->result[0] = GfVec3f(1234, 5678, 9012);
-                RigExecRigPose mismatch;
-                mismatch.diagnostics = pose.diagnostics;
-                const bool agreed = RigExecBakedRunScalarReference(
-                    &B, UsdTimeCode(frame), &mismatch);
-                chain->result[0] = saved;
-                CHECK_AT(where, !agreed && mismatch.referenceMismatches > 0);
-                CHECK_AT(where, Mentions(mismatch.diagnostics, nativeFailure));
-                CHECK_AT(where, Mentions(mismatch.diagnostics, oracleOnly));
-                CHECK_AT(where,
-                         Mentions(mismatch.diagnostics,
-                                  "cpu reference parity: value mismatch on " +
-                                      kSlab.GetString()));
-            }
-        }
         if (SerialSchedule()) {
             CHECK_AT(where, tally.read == 1);
-            CHECK_AT(where, tally.tails == (blocked ? 1u : 0u));
+            CHECK_AT(where, tally.tails == 0u);
         }
     }
 }
@@ -1333,19 +1334,18 @@ CheckFrameRecordSteps(const std::string &where,
     std::vector<int> commitLast(B.commits.size(), -1);
     for (size_t s = 0; s < B.steps.size(); ++s) {
         const RigExecBakedStep &step = B.steps[s];
-        switch (step.kind) {
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        switch (id.kind) {
         case RigExecBakedStepKind::SolverCommit:
         case RigExecBakedStepKind::Constraint:
-        case RigExecBakedStepKind::CommitDelta:
-        case RigExecBakedStepKind::PropagateChunk:
         case RigExecBakedStepKind::CommitApply:
-            commitLast[size_t(step.object)] = int(s);
+            commitLast[size_t(id.object)] = int(s);
             break;
         case RigExecBakedStepKind::FrameMatrix:
-            CHECK_AT(where, size_t(step.object) < stepOf.size());
-            if (size_t(step.object) < stepOf.size()) {
-                CHECK_AT(where, stepOf[size_t(step.object)] < 0);
-                stepOf[size_t(step.object)] = int(s);
+            CHECK_AT(where, size_t(id.object) < stepOf.size());
+            if (size_t(id.object) < stepOf.size()) {
+                CHECK_AT(where, stepOf[size_t(id.object)] < 0);
+                stepOf[size_t(id.object)] = int(s);
             }
             break;
         default:
@@ -1392,10 +1392,12 @@ CheckFrameRecordSteps(const std::string &where,
     int fold = -1;
     for (size_t s = 0; s < B.steps.size(); ++s) {
         const RigExecBakedStep &step = B.steps[s];
-        if (step.kind == RigExecBakedStepKind::InfluenceFold &&
-            B.chains[size_t(B.revisionIndex[size_t(step.object)].first)]
+        // A matrix's fold is its MoverTransform op node.
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        if (id.kind == RigExecBakedStepKind::InfluenceFold &&
+            B.chains[size_t(B.revisionIndex[size_t(id.object)].first)]
                     .revisions[size_t(
-                        B.revisionIndex[size_t(step.object)].second)]
+                        B.revisionIndex[size_t(id.object)].second)]
                     .moverPath == reader) {
             fold = int(s);
         }
@@ -1433,15 +1435,19 @@ CheckRecordStepsRan(const std::string &where,
     const RigExecBakedProgramImpl &B =
         rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     const auto moverOf = [&B](const RigExecBakedStep &step) {
-        const auto [c, r] = B.revisionIndex[size_t(step.object)];
+        const auto [c, r] =
+            B.revisionIndex[size_t(RigExecBakedIdentityOf(B, step).object)];
         return B.chains[size_t(c)].revisions[size_t(r)].moverPath;
     };
     size_t frameSteps = 0;
     bool foldRan = false;
     for (const RigExecBakedStep &step : B.steps) {
-        if (step.kind == RigExecBakedStepKind::FrameMatrix) {
+        if (RigExecBakedIdentityOf(B, step).kind ==
+            RigExecBakedStepKind::FrameMatrix) {
             ++frameSteps;
-            const SdfPath &mover = B.frameRecords[size_t(step.object)].mover;
+            const SdfPath &mover =
+                B.frameRecords[size_t(RigExecBakedIdentityOf(B, step).object)]
+                    .mover;
             const bool expected =
                 std::find(movers.begin(), movers.end(), mover) != movers.end();
             CHECK_AT(
@@ -1450,7 +1456,8 @@ CheckRecordStepsRan(const std::string &where,
                   B.opExecution.ran[size_t(&step - B.steps.data())])) ==
                     expected);
         } else if (*folded &&
-                   step.kind == RigExecBakedStepKind::InfluenceFold &&
+                   RigExecBakedIdentityOf(B, step).kind ==
+                       RigExecBakedStepKind::InfluenceFold &&
                    moverOf(step) == RecordReader(folded)) {
             foldRan =
                 (size_t(&step - B.steps.data()) < B.opExecution.ran.size() &&
@@ -1699,8 +1706,9 @@ TestTheFoldReadsItsRecords(const std::string &examples)
     CHECK_AT(where, error.find("without declaring it") != std::string::npos);
     int reboundStep = -1;
     for (size_t s = 0; s < B.steps.size(); ++s)
-        if (B.steps[s].kind == RigExecBakedStepKind::FrameMatrix &&
-            B.steps[s].object == 2)
+        if (RigExecBakedIdentityOf(B, B.steps[s]).kind ==
+                RigExecBakedStepKind::FrameMatrix &&
+            RigExecBakedIdentityOf(B, B.steps[s]).object == 2)
             reboundStep = int(s);
     CHECK_AT(where, reboundStep >= 0);
     if (reboundStep < 0) {
@@ -1720,6 +1728,20 @@ TestTheFoldReadsItsRecords(const std::string &examples)
             ++replaced;
         }
     CHECK_AT(where, replaced == 1);
+    // The record's op node reads its version through a lookup.
+    eval::OpLookup *frameLookup = nullptr;
+    if (B.opProgram) {
+        auto &layout = const_cast<eval::OpStepLayout &>(B.opProgram->layout);
+        for (const auto &input : layout.hostInputs)
+            if (input.node == uint32_t(declared.object) &&
+                input.source == eval::OpHostSource::Lookup &&
+                layout.lookups[input.object].source ==
+                    uint8_t(eval::OpLookupSource::PoseVersion))
+                frameLookup = &layout.lookups[input.object];
+    }
+    CHECK_AT(where, frameLookup && frameLookup->object == bound);
+    if (frameLookup)
+        frameLookup->object = reboundVersion;
     size_t producers = 0;
     std::vector<std::pair<int, std::vector<int>>> originalSuccessors;
     struct SavedClusterEdges {
@@ -1804,6 +1826,8 @@ TestTheFoldReadsItsRecords(const std::string &examples)
     }
 
     B.frameRecords[2].version = bound;
+    if (frameLookup)
+        frameLookup->object = bound;
     declared.reads = originalReads;
     declared.preds = originalPreds;
     for (const auto &saved : originalClusterEdges) {
@@ -1944,8 +1968,9 @@ TestAPhasedRigSkipsOnRepeat(const std::string &examples)
             SdfPath("/ReadPhaseAsset/Rig/Joints").AppendChild(TfToken(joint));
         for (size_t s = 0; s < B.steps.size(); ++s) {
             const RigExecBakedStep &step = B.steps[s];
-            if (step.kind == RigExecBakedStepKind::ProviderMatrix &&
-                B.paths[size_t(step.object)] == path) {
+            const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+            if (id.kind == RigExecBakedStepKind::ProviderMatrix &&
+                B.paths[size_t(id.object)] == path) {
                 out.push_back(int(s));
             }
         }
@@ -2049,11 +2074,12 @@ TestSolverCheckpointSteps(const std::string &examples)
     int recordStep = -1;
     int commitStep = -1;
     for (size_t s = 0; s < B.steps.size(); ++s) {
-        const RigExecBakedStep &step = B.steps[s];
-        if (step.kind == RigExecBakedStepKind::FrameMatrix &&
-            B.frameRecords[size_t(step.object)].mover == legFk) {
+        const RigExecBakedStepIdentity id =
+            RigExecBakedIdentityOf(B, B.steps[s]);
+        if (id.kind == RigExecBakedStepKind::FrameMatrix &&
+            B.frameRecords[size_t(id.object)].mover == legFk) {
             recordStep = int(s);
-            const auto &record = B.frameRecords[size_t(step.object)];
+            const auto &record = B.frameRecords[size_t(id.object)];
             CHECK_AT(where,
                      B.paths[size_t(record.slot)] ==
                          SdfPath("/CheckpointAsset/Rig/Joints/Hip/Knee"));
@@ -2078,14 +2104,16 @@ TestSolverCheckpointSteps(const std::string &examples)
     if (recordStep < 0) {
         return;
     }
-    const int commit =
-        B.frameRecords[size_t(B.steps[size_t(recordStep)].object)].commit;
+    const RigExecBakedStepIdentity record =
+        RigExecBakedIdentityOf(B, B.steps[size_t(recordStep)]);
+    const int commit = B.frameRecords[size_t(record.object)].commit;
     CHECK_AT(where, B.commits[size_t(commit)].solverOutput);
     for (size_t s = 0; s < B.steps.size(); ++s) {
         const RigExecBakedStep &step = B.steps[s];
-        if (step.object == commit &&
-            (step.kind == RigExecBakedStepKind::SolverCommit ||
-             step.kind == RigExecBakedStepKind::CommitApply)) {
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        if (id.object == commit &&
+            (id.kind == RigExecBakedStepKind::SolverCommit ||
+             id.kind == RigExecBakedStepKind::CommitApply)) {
             commitStep = int(s);
         }
     }

@@ -3,10 +3,11 @@
 // sequential evaluation agreeing bit for bit, the drag reading the authored
 // history, the measuring space, the envelope, and the history memo.
 #include "rigExecRuntimeDrive.h"
-#include "rigExecSceneProgramDrive.h"
-#include "rigExec/frameCache.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/frameCache.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/evaluatorTesting.h"
 #include "rigExecMath/harmonicsKernel.h"
 
 #include "pxr/base/plug/registry.h"
@@ -26,12 +27,12 @@ namespace {
 
 int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 const SdfPath kRig("/Asset/Rig");
@@ -46,10 +47,12 @@ double
 AuthoredTx(double t)
 {
     const size_t n = sizeof(kKeys) / sizeof(kKeys[0]);
-    if (t <= kKeys[0][0]) return kKeys[0][1];
+    if (t <= kKeys[0][0])
+        return kKeys[0][1];
     for (size_t k = 1; k < n; ++k) {
         if (t <= kKeys[k][0]) {
-            const double u = (t - kKeys[k - 1][0]) / (kKeys[k][0] - kKeys[k - 1][0]);
+            const double u =
+                (t - kKeys[k - 1][0]) / (kKeys[k][0] - kKeys[k - 1][0]);
             return kKeys[k - 1][1] + (kKeys[k][1] - kKeys[k - 1][1]) * u;
         }
     }
@@ -61,7 +64,8 @@ StageText(const std::string &jiggleBody)
 {
     std::string samples;
     for (const auto &key : kKeys) {
-        samples += std::to_string(int(key[0])) + ": " + std::to_string(key[1]) + ", ";
+        samples +=
+            std::to_string(int(key[0])) + ": " + std::to_string(key[1]) + ", ";
     }
     return R"(#usda 1.0
 (
@@ -83,7 +87,8 @@ def Xform "Asset"
             )
             {
                 double avars:tx = 0
-                double avars:tx.timeSamples = { )" + samples + R"( }
+                double avars:tx.timeSamples = { )" +
+           samples + R"( }
                 matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
                 def RigExecControl "Tip" (
                     prepend apiSchemas = ["RigExecControlAPI"]
@@ -120,7 +125,8 @@ def Xform "Asset"
             )
             {
                 rel rigExec:moves = </Asset/Rig/Controls/Root/Tip>
-)" + jiggleBody + R"(
+)" + jiggleBody +
+           R"(
             }
         }
     }
@@ -150,7 +156,8 @@ GfVec3d
 TipAt(const RigExecRigPose &pose)
 {
     const auto found = pose.controlFrames.find(kTip);
-    if (found == pose.controlFrames.end()) return GfVec3d(std::nan(""));
+    if (found == pose.controlFrames.end())
+        return GfVec3d(std::nan(""));
     return found->second.Origin();
 }
 
@@ -169,9 +176,10 @@ Expected(double t, TxAt txAt, double weight = 1.0,
     }
     positions.insert(positions.end(), {txAt(t), 5.0, 0.0});
     double ring[3];
-    RigExecHarmonicsOffset(settings, params,
-                           reinterpret_cast<const double(*)[3]>(positions.data()),
-                           positions.size() / 3, ring);
+    RigExecHarmonicsOffset(
+        settings, params,
+        reinterpret_cast<const double(*)[3]>(positions.data()),
+        positions.size() / 3, ring);
     return GfVec3d(txAt(t) + weight * ring[0], 5.0 + weight * ring[1],
                    weight * ring[2]);
 }
@@ -189,20 +197,22 @@ TestMatchesKernel()
     RigExecRigEvaluator evaluator(stage, kRig);
     std::vector<std::string> errors;
     CHECK(evaluator.Compile(&errors));
-    for (const std::string &e : errors) std::printf("compile: %s\n", e.c_str());
+    for (const std::string &e : errors)
+        std::printf("compile: %s\n", e.c_str());
     bool moved = false;
     for (int t = 1; t <= 70; ++t) {
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(t));
         CHECK(pose.valid);
         if (!pose.valid) {
-            for (const auto &d : pose.diagnostics) std::printf("  %s\n", d.c_str());
+            for (const auto &d : pose.diagnostics)
+                std::printf("  %s\n", d.c_str());
             return;
         }
         const GfVec3d got = TipAt(pose);
         const GfVec3d want = Expected(double(t), AuthoredTx);
         if ((got - want).GetLength() > 1e-9) {
-            std::printf("t=%d got (%g %g %g) want (%g %g %g)\n", t, got[0], got[1],
-                        got[2], want[0], want[1], want[2]);
+            std::printf("t=%d got (%g %g %g) want (%g %g %g)\n", t, got[0],
+                        got[1], got[2], want[0], want[1], want[2]);
             CHECK(false);
         }
         moved = moved || std::fabs(got[0] - AuthoredTx(double(t))) > 1e-3;
@@ -220,22 +230,25 @@ TestRandomAccessAgrees()
     CHECK(sequential.Compile());
     CHECK(jumping.Compile());
     std::vector<GfVec3d> ordered(71);
-    for (int t = 1; t <= 70; ++t) ordered[size_t(t)] = TipAt(sequential.Evaluate(UsdTimeCode(t)));
+    for (int t = 1; t <= 70; ++t)
+        ordered[size_t(t)] = TipAt(sequential.Evaluate(UsdTimeCode(t)));
     for (int t : {44, 12, 70, 33, 1, 34, 33, 25, 60}) {
-        CHECK(Same(TipAt(jumping.Evaluate(UsdTimeCode(t))), ordered[size_t(t)]));
+        CHECK(
+            Same(TipAt(jumping.Evaluate(UsdTimeCode(t))), ordered[size_t(t)]));
     }
     // A second visit runs no history: the memo holds every tick.
-    const size_t before = sequential.GetHistoryTickCountForTesting();
+    const size_t before = RigExecEvaluatorTesting::HistoryTickCount(sequential);
     CHECK(Same(TipAt(sequential.Evaluate(UsdTimeCode(40))), ordered[40]));
-    CHECK(sequential.GetHistoryTickCountForTesting() == before);
+    CHECK(RigExecEvaluatorTesting::HistoryTickCount(sequential) == before);
     // Sequential playback costs no history tick per frame: each frame's
     // own captures become the next one's history.
     RigExecRigEvaluator playback(stage, kRig);
     CHECK(playback.Compile());
     playback.Evaluate(UsdTimeCode(10));
-    const size_t first = playback.GetHistoryTickCountForTesting();
-    for (int t = 11; t <= 20; ++t) playback.Evaluate(UsdTimeCode(t));
-    CHECK(playback.GetHistoryTickCountForTesting() == first);
+    const size_t first = RigExecEvaluatorTesting::HistoryTickCount(playback);
+    for (int t = 11; t <= 20; ++t)
+        playback.Evaluate(UsdTimeCode(t));
+    CHECK(RigExecEvaluatorTesting::HistoryTickCount(playback) == first);
 }
 
 void
@@ -253,7 +266,9 @@ TestDragReadsAuthoredHistory()
     const GfVec3d dragged = TipAt(evaluator.Evaluate(UsdTimeCode(25)));
     // The earlier frames stay the authored animation; the current frame is
     // the drag, so the tip lags behind the jump.
-    const auto draggedTx = [](double t) { return t == 25.0 ? 20.0 : AuthoredTx(t); };
+    const auto draggedTx = [](double t) {
+        return t == 25.0 ? 20.0 : AuthoredTx(t);
+    };
     CHECK((dragged - Expected(25.0, draggedTx)).GetLength() < 1e-9);
     CHECK(std::fabs(dragged[0] - 20.0) > 1e-3);
     // Releasing restores the authored frame exactly.
@@ -266,13 +281,14 @@ TestSpaceAndEnvelope()
 {
     // Measured in the root, the tip never moves: nothing rings.
     {
-        UsdStageRefPtr stage =
-            MakeStage("                rel rigExec:space = </Asset/Rig/Controls/Root>");
+        UsdStageRefPtr stage = MakeStage(
+            "                rel rigExec:space = </Asset/Rig/Controls/Root>");
         RigExecRigEvaluator evaluator(stage, kRig);
         CHECK(evaluator.Compile());
         for (int t : {5, 12, 31}) {
             const GfVec3d got = TipAt(evaluator.Evaluate(UsdTimeCode(t)));
-            CHECK((got - GfVec3d(AuthoredTx(double(t)), 5, 0)).GetLength() < 1e-9);
+            CHECK((got - GfVec3d(AuthoredTx(double(t)), 5, 0)).GetLength() <
+                  1e-9);
         }
     }
     // Half the envelope, and the ring's own inputs.
@@ -290,54 +306,8 @@ TestSpaceAndEnvelope()
         params.axisAmplitude[1] = 0;
         for (int t : {8, 14, 33}) {
             const GfVec3d got = TipAt(evaluator.Evaluate(UsdTimeCode(t)));
-            CHECK((got - Expected(double(t), AuthoredTx, 0.5, params)).GetLength() < 1e-9);
-        }
-    }
-}
-
-// The scene program runs the same window: sequential play pushing each
-// frame, and jumps that rebuild the history, match the native evaluator.
-void
-TestSceneProgramMatchesNative()
-{
-    using rigExecSceneProgramDrive::SceneRun;
-    for (const char *body : {"",
-             "                rel rigExec:space = </Asset/Rig/Controls/Root>",
-             "                float inputs:defaultWeight = 0.5\n"
-             "                double inputs:amplitude = 2\n"
-             "                double3 inputs:axisAmplitude = (1, 0, 1)\n"}) {
-        UsdStageRefPtr stage = MakeStage(body);
-        RigExecRigEvaluator native(stage, kRig);
-        CHECK(native.Compile());
-        std::vector<GfVec3d> want(71);
-        for (int t = 1; t <= 70; ++t) want[size_t(t)] = TipAt(native.Evaluate(UsdTimeCode(t)));
-        SceneRun scene(stage, kRig, -40, 70);
-        CHECK(scene.ok);
-        if (!scene.ok) return;
-        CHECK(scene.program.windowedOps.size() == 1);
-        const auto tip = [&]() {
-            const VtValue frame = scene.Final(kTip, RigExecSceneValueDomain::Pose);
-            return frame.IsHolding<RigExecPointFrame>() ? frame.UncheckedGet<RigExecPointFrame>().Origin()
-                                                        : GfVec3d(std::nan(""));
-        };
-        for (int t = -40; t <= 70; ++t) {
-            CHECK(scene.Evaluate(t));
-            scene.runtime.PushHistory();
-            if (t >= 1 && !Same(tip(), want[size_t(t)])) {
-                const GfVec3d got = tip();
-                std::printf("t=%d scene (%g %g %g) native (%g %g %g)\n", t, got[0], got[1], got[2],
-                            want[size_t(t)][0], want[size_t(t)][1], want[size_t(t)][2]);
-                CHECK(false);
-                break;
-            }
-        }
-        SceneRun jumping(stage, kRig, -40, 70);
-        for (int t : {44, 12, 70, 33, 1, 34}) {
-            CHECK(jumping.Jump(t));
-            CHECK(Same(TipAt(native.Evaluate(UsdTimeCode(t))), want[size_t(t)]));
-            const VtValue frame = jumping.Final(kTip, RigExecSceneValueDomain::Pose);
-            CHECK(frame.IsHolding<RigExecPointFrame>() &&
-                  Same(frame.UncheckedGet<RigExecPointFrame>().Origin(), want[size_t(t)]));
+            CHECK((got - Expected(double(t), AuthoredTx, 0.5, params))
+                      .GetLength() < 1e-9);
         }
     }
 }
@@ -349,16 +319,20 @@ TestEditClearsHistory()
     RigExecRigEvaluator evaluator(stage, kRig);
     CHECK(evaluator.Compile());
     evaluator.Evaluate(UsdTimeCode(35));
-    const size_t before = evaluator.GetHistoryTickCountForTesting();
+    const size_t before = RigExecEvaluatorTesting::HistoryTickCount(evaluator);
     // Move the drop: the history before frame 35 changes.
-    UsdAttribute tx = stage->GetPrimAtPath(kRoot).GetAttribute(TfToken("avars:tx"));
+    UsdAttribute tx =
+        stage->GetPrimAtPath(kRoot).GetAttribute(TfToken("avars:tx"));
     CHECK(tx.Set(-8.0, UsdTimeCode(30)));
     const GfVec3d got = TipAt(evaluator.Evaluate(UsdTimeCode(35)));
-    CHECK(evaluator.GetHistoryTickCountForTesting() > before);
+    CHECK(RigExecEvaluatorTesting::HistoryTickCount(evaluator) > before);
     const auto edited = [](double t) {
-        if (t <= 20) return AuthoredTx(t);
-        if (t <= 30) return 10.0 + (-8.0 - 10.0) * (t - 20.0) / 10.0;
-        if (t <= 40) return -8.0 + (-4.0 + 8.0) * (t - 30.0) / 10.0;
+        if (t <= 20)
+            return AuthoredTx(t);
+        if (t <= 30)
+            return 10.0 + (-8.0 - 10.0) * (t - 20.0) / 10.0;
+        if (t <= 40)
+            return -8.0 + (-4.0 + 8.0) * (t - 30.0) / 10.0;
         return -4.0;
     };
     CHECK((got - Expected(35.0, edited)).GetLength() < 1e-9);
@@ -393,10 +367,12 @@ TestFrozenJobsMatchLive()
     const RigExecFrozenStepRunner runner = RigExecMakeProductionStepRunner();
     for (int t : {12, 31, 5, 47}) {
         RigExecFrameInputs inputs;
-        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(t), {}, &inputs, &why));
+        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(t), {}, &inputs,
+                                       &why));
         CHECK(inputs.windowRings.size() == 1);
         context.varyingInputCount = inputs.values.size();
-        const RigExecRigPose job = RigExecEvaluateFrozen(context, inputs, runner);
+        const RigExecRigPose job =
+            RigExecEvaluateFrozen(context, inputs, runner);
         CHECK(job.valid);
         const RigExecRigPose live = evaluator.Evaluate(UsdTimeCode(t));
         CHECK(Same(TipAt(job), TipAt(live)));
@@ -409,7 +385,8 @@ TestFrozenJobsMatchLive()
     CHECK(RigExecControlStateDigest(a) != RigExecControlStateDigest(b));
     // The same frame sampled twice digests the same.
     RigExecFrameInputs again;
-    CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(16), {}, &again, &why));
+    CHECK(
+        RigExecSampleFrameInputs(evaluator, UsdTimeCode(16), {}, &again, &why));
     CHECK(RigExecControlStateDigest(a) == RigExecControlStateDigest(again));
 }
 
@@ -435,10 +412,11 @@ SameAsNative(const RigExecRigPose &pose, const RigExecRuntimeReader &reader,
     const bool outputs = RigExecCompareRuntimeOutputs(pose, reader, &diffs);
     const bool tip = Same(TipAt(pose), ReaderTip(reader));
     if (!outputs || !tip) {
-        std::printf("t=%d native tip (%.17g %.17g) reader tip (%.17g %.17g)\n", t,
-                    TipAt(pose)[0], TipAt(pose)[1], ReaderTip(reader)[0],
+        std::printf("t=%d native tip (%.17g %.17g) reader tip (%.17g %.17g)\n",
+                    t, TipAt(pose)[0], TipAt(pose)[1], ReaderTip(reader)[0],
                     ReaderTip(reader)[1]);
-        for (const std::string &d : diffs) std::printf("  %s\n", d.c_str());
+        for (const std::string &d : diffs)
+            std::printf("  %s\n", d.c_str());
     }
     return outputs && tip;
 }
@@ -476,14 +454,16 @@ TestBinaryParity()
     for (int t = 1; t <= 70; ++t) {
         CHECK(RigExecTestDrive(reader.get(), &sampler, double(t), &why));
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(t));
-        if (size_t(t) > depth + 1) CHECK(SameAsNative(pose, *reader, t));
+        if (size_t(t) > depth + 1)
+            CHECK(SameAsNative(pose, *reader, t));
         reader->PushHistory();
     }
     // Random access: rebuild the history from the stage, then the frame.
     for (int t : {40, 12, 55, 33, 3}) {
         reader->ClearHistory();
         for (size_t k = depth; k >= 1; --k) {
-            CHECK(sampler.Apply(UsdTimeCode(double(t) - double(k)), reader.get(), &why));
+            CHECK(sampler.Apply(UsdTimeCode(double(t) - double(k)),
+                                reader.get(), &why));
             CHECK(reader->ExecuteHistory(&why));
         }
         CHECK(RigExecTestDrive(reader.get(), &sampler, double(t), &why));
@@ -510,7 +490,8 @@ TestBinaryParity()
 void
 TestValidation()
 {
-    UsdStageRefPtr stage = MakeStage("                uniform double rigExec:waves = 0");
+    UsdStageRefPtr stage =
+        MakeStage("                uniform double rigExec:waves = 0");
     RigExecRigEvaluator evaluator(stage, kRig);
     std::vector<std::string> errors;
     const bool compiled = evaluator.Compile(&errors);
@@ -520,18 +501,18 @@ TestValidation()
           !pose.valid);
 }
 
-}  // namespace
+} // namespace
 
 int
 main()
 {
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
+    rigExec::RigExecBakedProgramTesting::SetPoisonReleasedGathers(true);
     TestMatchesKernel();
     TestRandomAccessAgrees();
     TestDragReadsAuthoredHistory();
     TestSpaceAndEnvelope();
     TestEditClearsHistory();
-    TestSceneProgramMatchesNative();
     TestFrozenJobsMatchLive();
     TestBinaryParity();
     TestValidation();

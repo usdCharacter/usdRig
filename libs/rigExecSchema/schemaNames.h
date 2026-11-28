@@ -34,6 +34,19 @@ inline constexpr const char *const membershipExpression =
     "collection:members:membershipExpression";
 } // namespace CollectionMemberText
 
+// BlendShape names. These come from OpenUSD's UsdSkel schema, not the RigExec
+// schema; a sparse blend sample names a prim of this type and its attributes
+// are read by name, so they are spelled once here.
+namespace BlendShapeText {
+inline constexpr const char *const typeName = "BlendShape";
+inline constexpr const char *const offsets = "offsets";
+inline constexpr const char *const normalOffsets = "normalOffsets";
+inline constexpr const char *const pointIndices = "pointIndices";
+inline constexpr const char *const inbetweensPrefix = "inbetweens:";
+inline constexpr const char *const inbetweenNormalOffsetsSuffix =
+    ":normalOffsets";
+} // namespace BlendShapeText
+
 // Provider computation names: the identities a provider value is read
 // through ("computePointFrame", "computeRestFrame", ...). The scene provider
 // program declares them, and the evaluator, baked program, binary format,
@@ -169,6 +182,7 @@ inline constexpr const char *const RigExecVec3fMathMover =
 inline constexpr const char *const RigExecVolumeCorrectMover =
     "RigExecVolumeCorrectMover";
 inline constexpr const char *const RigExecVolumeWeight = "RigExecVolumeWeight";
+inline constexpr const char *const RigExecWeightObject = "RigExecWeightObject";
 inline constexpr const char *const RigExecWrinkleMover = "RigExecWrinkleMover";
 inline constexpr const char *const RigExecXformable = "RigExecXformable";
 } // namespace SchemaTypeName
@@ -960,6 +974,7 @@ inline constexpr const char *const brackets = "brackets";
 inline constexpr const char *const cage = "cage";
 inline constexpr const char *const circle = "circle";
 inline constexpr const char *const clamp = "clamp";
+inline constexpr const char *const classicLinear = "classicLinear";
 inline constexpr const char *const constant = "constant";
 inline constexpr const char *const custom = "custom";
 inline constexpr const char *const dense = "dense";
@@ -992,7 +1007,47 @@ inline constexpr const char *const xyz = "XYZ";
 inline constexpr const char *const x = "x";
 inline constexpr const char *const y = "y";
 inline constexpr const char *const z = "z";
+inline constexpr const char *const blend = "blend";
+inline constexpr const char *const end = "end";
+inline constexpr const char *const heading = "heading";
+inline constexpr const char *const length = "length";
+inline constexpr const char *const path = "path";
+inline constexpr const char *const planar = "planar";
+inline constexpr const char *const quantize = "quantize";
+inline constexpr const char *const remap = "remap";
+inline constexpr const char *const cloth = "cloth";
+inline constexpr const char *const corner = "corner";
+inline constexpr const char *const dualQuaternion = "dualQuaternion";
+inline constexpr const char *const geometric = "geometric";
+inline constexpr const char *const lengthWeighted = "lengthWeighted";
+inline constexpr const char *const limit = "limit";
+inline constexpr const char *const polygon = "polygon";
+inline constexpr const char *const rest = "rest";
+inline constexpr const char *const simple = "simple";
+inline constexpr const char *const smooth = "smooth";
+inline constexpr const char *const surfaceStruts = "surfaceStruts";
+inline constexpr const char *const vertex = "vertex";
 } // namespace SchemaValueText
+
+// The fallbacks schema.usda declares for weight-object properties, for a
+// reader whose prim's type does not define the property.
+namespace SchemaFallbackText {
+inline constexpr const char *const rigExecPlaneAxis = SchemaValueText::y;
+inline constexpr const char *const rigExecPlaneBounds =
+    SchemaValueText::unbounded;
+inline constexpr const char *const rigExecCombineMode =
+    SchemaValueText::multiply;
+// rigExec:representation and rigExec:rangePolicy as RigExecWeightObject,
+// RigExecCombineWeight and RigExecVolumeWeight declare them.
+inline constexpr const char *const weightRepresentation =
+    SchemaValueText::constant;
+inline constexpr const char *const combineRepresentation =
+    SchemaValueText::dense;
+inline constexpr const char *const volumeRepresentation =
+    SchemaValueText::dense;
+inline constexpr const char *const weightRangePolicy = SchemaValueText::strict;
+inline constexpr const char *const volumeRangePolicy = SchemaValueText::clamp;
+} // namespace SchemaFallbackText
 
 } // namespace rigExec
 

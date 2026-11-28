@@ -16,11 +16,11 @@
 // shadow-verifies the served hit against a third live run. A one-float
 // mutation control on each rig proves a match means something.
 
-#include "rigExec/frameCache.h"
-#include "rigExec/frameCacheSparsity.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/parallel.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/frameCache.h"
+#include "rigExec/internal/frameCacheSparsity.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/internal/parallel.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3f.h"
@@ -42,12 +42,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -84,7 +84,8 @@ ShadowKeyFor(RigExecRigEvaluator &evaluator, UsdTimeCode time,
         if (!RigExecRefusalControlDigestible(overrides)) {
             return false;
         }
-        key->compiledRigSignature = RigExecFrameCacheCompiledRigSignature(evaluator);
+        key->compiledRigSignature =
+            RigExecFrameCacheCompiledRigSignature(evaluator);
         key->controlDigest = RigExecRefusalControlDigest(
             time, evaluator.GetStageEditSerial(), overrides);
         return true;
@@ -92,7 +93,8 @@ ShadowKeyFor(RigExecRigEvaluator &evaluator, UsdTimeCode time,
     if (!RigExecControlStateDigestible(*inputs, overrides)) {
         return false;
     }
-    key->compiledRigSignature = RigExecFrameCacheCompiledRigSignature(evaluator);
+    key->compiledRigSignature =
+        RigExecFrameCacheCompiledRigSignature(evaluator);
     key->controlDigest = RigExecControlStateDigest(*inputs, overrides);
     return true;
 }
@@ -106,10 +108,10 @@ MakeAnimated9MeshRig()
     UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    const UsdPrim alongX = stage->DefinePrim(
-        SdfPath("/Asset/Rig/AlongX"), TfToken("RigExecControl"));
-    const UsdPrim alongY = stage->DefinePrim(
-        SdfPath("/Asset/Rig/AlongY"), TfToken("RigExecControl"));
+    const UsdPrim alongX = stage->DefinePrim(SdfPath("/Asset/Rig/AlongX"),
+                                             TfToken("RigExecControl"));
+    const UsdPrim alongY = stage->DefinePrim(SdfPath("/Asset/Rig/AlongY"),
+                                             TfToken("RigExecControl"));
     UsdAttribute tx = alongX.GetAttribute(TfToken("avars:tx"));
     UsdAttribute ty = alongY.GetAttribute(TfToken("avars:ty"));
     for (int t = 1; t <= 40; ++t) {
@@ -126,14 +128,13 @@ MakeAnimated9MeshRig()
         indices[i * 2 + 1] = 1;
     }
     for (size_t mesh = 0; mesh < kMeshes; ++mesh) {
-        const SdfPath meshPath(
-            TfStringPrintf("/Asset/Geom/Mesh_%zu", mesh));
+        const SdfPath meshPath(TfStringPrintf("/Asset/Geom/Mesh_%zu", mesh));
         const UsdPrim prim = stage->DefinePrim(meshPath, TfToken("Mesh"));
         VtVec3fArray points(kPoints);
         for (size_t i = 0; i < kPoints; ++i) {
-            points[i] = GfVec3f(float(i) * 0.5f + float(mesh),
-                                float(i) * -0.25f,
-                                float(mesh) * 3.0f - float(i) * 0.125f);
+            points[i] =
+                GfVec3f(float(i) * 0.5f + float(mesh), float(i) * -0.25f,
+                        float(mesh) * 3.0f - float(i) * 0.125f);
         }
         prim.GetAttribute(TfToken("points")).Set(points);
 
@@ -147,9 +148,11 @@ MakeAnimated9MeshRig()
         skin.CreateRelationship(TfToken("rigExec:influences"))
             .SetTargets({alongX.GetPath(), alongY.GetPath()});
         skin.CreateAttribute(TfToken("rigExec:elementSize"),
-                             SdfValueTypeNames->Int).Set(2);
+                             SdfValueTypeNames->Int)
+            .Set(2);
         skin.CreateAttribute(TfToken("rigExec:jointIndices"),
-                             SdfValueTypeNames->IntArray).Set(indices);
+                             SdfValueTypeNames->IntArray)
+            .Set(indices);
         VtFloatArray weights(kPoints * 2);
         const float xWeight = 0.1f + 0.05f * float(mesh);
         const float yWeight = 0.9f - 0.05f * float(mesh);
@@ -158,7 +161,8 @@ MakeAnimated9MeshRig()
             weights[i * 2 + 1] = yWeight;
         }
         skin.CreateAttribute(TfToken("rigExec:jointWeights"),
-                             SdfValueTypeNames->FloatArray).Set(weights);
+                             SdfValueTypeNames->FloatArray)
+            .Set(weights);
     }
     return stage;
 }
@@ -184,29 +188,30 @@ MakeConnectedSpaceRig()
         space.SetTranslate(GfVec3d(10.0 * double(t), 0, 0));
         rootSpace.Set(space, UsdTimeCode(double(t)));
     }
-    const UsdPrim joint = stage->DefinePrim(SdfPath("/Asset/Rig/Bone"),
-                                            TfToken("RigExecJoint"));
+    const UsdPrim joint =
+        stage->DefinePrim(SdfPath("/Asset/Rig/Bone"), TfToken("RigExecJoint"));
     joint.GetAttribute(TfToken("avars:ty")).Set(2.0);
     joint.CreateAttribute(TfToken("posed:space"), SdfValueTypeNames->Matrix4d)
         .AddConnection(root.GetPath().AppendProperty(TfToken("posed:space")));
 
     stage->DefinePrim(SdfPath("/Asset/Geom"), TfToken("Scope"));
-    const UsdPrim mesh = stage->DefinePrim(SdfPath("/Asset/Geom/Slab"),
-                                           TfToken("Mesh"));
+    const UsdPrim mesh =
+        stage->DefinePrim(SdfPath("/Asset/Geom/Slab"), TfToken("Mesh"));
     VtVec3fArray points{GfVec3f(0, 0, 0), GfVec3f(1, 0, 0), GfVec3f(0, 1, 0)};
     mesh.GetAttribute(TfToken("points")).Set(points);
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
-    const UsdPrim skin = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Skin"), TfToken("RigExecSkinMover"));
+    const UsdPrim skin = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Skin"),
+                                           TfToken("RigExecSkinMover"));
     skin.ApplyAPI(TfToken("RigExecMoverAPI"));
     skin.GetRelationship(TfToken("rigExec:moves"))
         .SetTargets({mesh.GetPath().AppendProperty(TfToken("points"))});
     skin.CreateRelationship(TfToken("rigExec:influences"))
         .SetTargets({joint.GetPath()});
-    skin.CreateAttribute(TfToken("rigExec:elementSize"),
-                         SdfValueTypeNames->Int).Set(1);
+    skin.CreateAttribute(TfToken("rigExec:elementSize"), SdfValueTypeNames->Int)
+        .Set(1);
     skin.CreateAttribute(TfToken("rigExec:jointIndices"),
-                         SdfValueTypeNames->IntArray).Set(VtIntArray{0, 0, 0});
+                         SdfValueTypeNames->IntArray)
+        .Set(VtIntArray{0, 0, 0});
     skin.CreateAttribute(TfToken("rigExec:jointWeights"),
                          SdfValueTypeNames->FloatArray)
         .Set(VtFloatArray{1.0f, 1.0f, 1.0f});
@@ -238,17 +243,17 @@ CheckShadowOnLiveRig(const char *what, RigExecRigEvaluator *evaluator,
         RigExecFrameCacheKey key;
         CHECK(ShadowKeyFor(*evaluator, time, noOverrides, &inputs, &key));
         CHECK(cache.Publish(key, time, settled));
-        RigExecRigPose hit;
+        std::shared_ptr<const RigExecRigPose> hit;
         CHECK(cache.Lookup(key, &hit));
         const RigExecShadowVerdict verdict = RigExecVerifyHitWithLive(
-            hit, [&] { return evaluator->Evaluate(time); });
+            *hit, [&] { return evaluator->Evaluate(time); });
         if (!verdict.match) {
             std::printf("shadow mismatch on %s at %f:\n%s", what, t,
                         verdict.report.c_str());
         }
         CHECK(verdict.match);
         CHECK(verdict.mismatches == 0);
-        lastHit = hit;
+        lastHit = *hit;
         lastTime = t;
     }
     // Sensitivity: the same hit with one float moved must fail the judge.
@@ -257,8 +262,7 @@ CheckShadowOnLiveRig(const char *what, RigExecRigEvaluator *evaluator,
     for (auto &entry : mutated.movedProperties) {
         if (entry.second.IsHolding<VtVec3fArray>() &&
             !entry.second.UncheckedGet<VtVec3fArray>().empty()) {
-            VtVec3fArray points =
-                entry.second.UncheckedGet<VtVec3fArray>();
+            VtVec3fArray points = entry.second.UncheckedGet<VtVec3fArray>();
             points[0][0] += 1.0f;
             entry.second = points;
             touched = true;
@@ -276,7 +280,7 @@ CheckShadowOnLiveRig(const char *what, RigExecRigEvaluator *evaluator,
     CHECK(bad.mismatches > 0);
 }
 
-}  // namespace
+} // namespace
 
 // The switch reads live: tests toggle it in-process, production pays the
 // lookup only on the shadow path.
@@ -297,8 +301,8 @@ TestVerifyMatchServesCached()
 {
     const RigExecRigPose cached = MakePose(1.0);
     size_t liveRuns = 0;
-    const RigExecShadowVerdict verdict = RigExecVerifyHitWithLive(
-        cached, [&cached, &liveRuns]() {
+    const RigExecShadowVerdict verdict =
+        RigExecVerifyHitWithLive(cached, [&cached, &liveRuns]() {
             ++liveRuns;
             return cached;
         });
@@ -306,8 +310,7 @@ TestVerifyMatchServesCached()
     CHECK(verdict.match);
     CHECK(verdict.mismatches == 0);
     CHECK(verdict.report.empty());
-    CHECK(verdict.poseToServe.jointFramesFinal ==
-          cached.jointFramesFinal);
+    CHECK(verdict.poseToServe.jointFramesFinal == cached.jointFramesFinal);
 }
 
 // A hit the live run disagrees with reports the domain and serves the live
@@ -317,23 +320,21 @@ TestVerifyMismatchServesLive()
 {
     const RigExecRigPose cached = MakePose(1.0);
     RigExecRigPose live = MakePose(2.0);
-    const RigExecShadowVerdict verdict = RigExecVerifyHitWithLive(
-        cached, [&live]() { return live; });
+    const RigExecShadowVerdict verdict =
+        RigExecVerifyHitWithLive(cached, [&live]() { return live; });
     CHECK(!verdict.match);
     CHECK(verdict.mismatches == 3);
     CHECK(verdict.report.find("final joint frame") != std::string::npos);
-    CHECK(verdict.poseToServe.jointFramesFinal ==
-          live.jointFramesFinal);
+    CHECK(verdict.poseToServe.jointFramesFinal == live.jointFramesFinal);
 
     // A key the live run never published is its own mismatch domain.
     RigExecRigPose dropped = cached;
     dropped.jointFramesFinal.erase(SdfPath("/Joint1"));
-    const RigExecShadowVerdict missing = RigExecVerifyHitWithLive(
-        dropped, [&cached]() { return cached; });
+    const RigExecShadowVerdict missing =
+        RigExecVerifyHitWithLive(dropped, [&cached]() { return cached; });
     CHECK(!missing.match);
     CHECK(missing.report.find("no final joint frame") != std::string::npos);
-    CHECK(missing.poseToServe.jointFramesFinal ==
-          cached.jointFramesFinal);
+    CHECK(missing.poseToServe.jointFramesFinal == cached.jointFramesFinal);
 }
 
 // Time and validity are not compared (the parity generation publishes the
@@ -344,8 +345,8 @@ TestVerifyIgnoresTime()
     const RigExecRigPose cached = MakePose(1.0);
     RigExecRigPose live = cached;
     live.time = UsdTimeCode(9.0);
-    const RigExecShadowVerdict verdict = RigExecVerifyHitWithLive(
-        cached, [&live]() { return live; });
+    const RigExecShadowVerdict verdict =
+        RigExecVerifyHitWithLive(cached, [&live]() { return live; });
     CHECK(verdict.match);
 }
 
@@ -355,16 +356,14 @@ void
 TestVerifyLiveFailureIsUnverified()
 {
     const RigExecRigPose cached = MakePose(1.0);
-    const RigExecShadowVerdict failed = RigExecVerifyHitWithLive(
-        cached, []() { return RigExecRigPose(); });
+    const RigExecShadowVerdict failed =
+        RigExecVerifyHitWithLive(cached, []() { return RigExecRigPose(); });
     CHECK(!failed.match);
     CHECK(failed.mismatches == 0);
     CHECK(!failed.report.empty());
-    CHECK(failed.poseToServe.jointFramesFinal ==
-          cached.jointFramesFinal);
+    CHECK(failed.poseToServe.jointFramesFinal == cached.jointFramesFinal);
 
-    const RigExecShadowVerdict none =
-        RigExecVerifyHitWithLive(cached, nullptr);
+    const RigExecShadowVerdict none = RigExecVerifyHitWithLive(cached, nullptr);
     CHECK(!none.match);
     CHECK(!none.report.empty());
     CHECK(none.poseToServe.jointFramesFinal == cached.jointFramesFinal);
@@ -380,18 +379,17 @@ TestVerifySparseHit()
     const RigExecFrameCacheKey key{7, 11};
     CHECK(cache.Publish(key, UsdTimeCode(1.0), cached));
 
-    RigExecRigPose hit;
+    std::shared_ptr<const RigExecRigPose> hit;
     CHECK(cache.Lookup(key, &hit));
     size_t liveRuns = 0;
-    const RigExecShadowVerdict verdict = RigExecVerifyHitWithLive(
-        hit, [&cached, &liveRuns]() {
+    const RigExecShadowVerdict verdict =
+        RigExecVerifyHitWithLive(*hit, [&cached, &liveRuns]() {
             ++liveRuns;
             return cached;
         });
     CHECK(verdict.match);
     CHECK(liveRuns == 1);
-    CHECK(verdict.poseToServe.jointFramesFinal ==
-          cached.jointFramesFinal);
+    CHECK(verdict.poseToServe.jointFramesFinal == cached.jointFramesFinal);
 }
 
 // The biped under the shadow: settle on 1-2, publish settled re-runs of 3
@@ -459,7 +457,8 @@ TestShadowOnConnectedSpaceRig()
         std::printf("FAIL: connected spaces did not compile\n");
         return;
     }
-    CheckShadowOnLiveRig("connected spaces", &evaluator, {1.0, 2.0}, {3.0, 4.0});
+    CheckShadowOnLiveRig("connected spaces", &evaluator, {1.0, 2.0},
+                         {3.0, 4.0});
 }
 
 int

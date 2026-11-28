@@ -1,16 +1,15 @@
 // rigExecPose evaluates the compiled native program and preserves exact pose/golden output.
-// Optional --cpu-reference checks point chains; --exec-crosscheck verifies builtin rows.
+// Optional --cpu-reference checks point chains.
 #include "rigExecSchema/schemaNames.h"
-#include "rigExec/frozenContext.h"
+#include "rigExec/api/frozenContext.h"
 #include "rigExecSampler/runtimePoseProjection.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/frameExtraction.h"
-#include "rigExec/goldenPose.h"
-#include "rigExec/inputReplay.h"
-#include "rigExec/bakedExecCrossCheckRows.h"
-#include "rigExec/frozenContextInternal.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/types.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/frameExtraction.h"
+#include "rigExec/api/goldenPose.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/internal/frozenContextInternal.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/api/types.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecRuntime/runtime.h"
 #include "rigExecSampler/inputSampler.h"
@@ -51,72 +50,12 @@
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace {
-bool gCpuReference = false, gExecCrossCheck = false;
-struct CheckVisitState {
-    uint64_t serial = 0;
-    const rigExec::RigExecBakedProgram *program = nullptr;
-};
-std::map<const rigExec::RigExecRigEvaluator *, CheckVisitState> checkVisits;
+bool gCpuReference = false;
 rigExec::RigExecRigPose
 EvaluateChecked(rigExec::RigExecRigEvaluator &evaluator, UsdTimeCode time)
 {
     evaluator.cpuReference = gCpuReference;
-    if (gExecCrossCheck) {
-        auto &state = checkVisits[&evaluator];
-        if (!evaluator.GetBakedProgram() ||
-            (state.program && state.serial != evaluator.GetStageEditSerial())) {
-            std::vector<std::string> errors;
-            if (!evaluator.Compile(&errors)) {
-                rigExec::RigExecRigPose failed;
-                failed.time = time;
-                failed.diagnostics = std::move(errors);
-                return failed;
-            }
-        }
-        const auto *program = evaluator.GetBakedProgram();
-        std::string error;
-        if (!program ||
-            (!rigExec::RigExecBakedProgramTesting::ExecCrossCheckRows(
-                 *program) &&
-             !rigExec::RigExecBakedProgramTesting::EnableExecCrossCheck(
-                 *program, &error))) {
-            rigExec::RigExecRigPose failed;
-            failed.time = time;
-            failed.diagnostics.push_back(
-                "exec crosscheck preparation failed: " + error);
-            return failed;
-        }
-        state = {evaluator.GetStageEditSerial(), program};
-    }
     auto pose = evaluator.Evaluate(time);
-    if (gExecCrossCheck) {
-        const auto *program = evaluator.GetBakedProgram();
-        const auto rows =
-            program ? rigExec::RigExecBakedProgramTesting::ExecCrossCheckRows(
-                          *program)
-                    : nullptr;
-        if (!rows) {
-            pose.valid = false;
-            pose.diagnostics.push_back(
-                "exec crosscheck rows unavailable after generation");
-        } else {
-            const auto report = rows->Evaluate(time);
-            pose.diagnostics.insert(pose.diagnostics.end(),
-                                    report.diagnostics.begin(),
-                                    report.diagnostics.end());
-            // A skipOnly row has no public equivalent by construction: only a
-            // checkable row going unchecked fails, never an external-only set.
-            if (!report.Passed() ||
-                (std::any_of(rows->Descriptors().begin(),
-                             rows->Descriptors().end(),
-                             [](const auto &d) { return !d.skipOnly; }) &&
-                 !report.checked)) {
-                pose.valid = false;
-                pose.diagnostics.push_back(
-                    "exec crosscheck failed or checked no declared rows");
-            }
-        }
-    }
     if (gCpuReference && pose.valid) {
         const auto *program = evaluator.GetBakedProgram();
         size_t expected = 0;
@@ -960,8 +899,8 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
         }
     }
 
-    // Every frame: the stage's values of the binary's Animated inputs at
-    // t, then the run, against the native evaluator's generation at t.
+    // Every frame: the stage's values of the binary's Animated inputs at t,
+    // then the run, compared with the evaluator's generation at t.
     size_t matched = 0;
     _SampledCheck sampled;
     for (UsdTimeCode frame : frames) {
@@ -1040,6 +979,7 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
     const UsdTimeCode dragTime(bakeTime);
     size_t dragsMatched = 0;
     size_t dragsTried = 0;
+    size_t dragsBothFailed = 0;
     if (!dragInputs.empty() &&
         (!prefill(bakeTime, &error) ||
          !sampler.Apply(dragTime, reader.get(), &error))) {
@@ -1146,7 +1086,31 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
                 _VerifyPush(&diffs,
                             "the native upstream channel refused the value");
             }
-            if (_InvalidLeg(pose)) {
+            bool bothFailed = false;
+            if (!pose.valid && !pose.referenceMismatches &&
+                !pose.comparisonMismatches && !windowed) {
+                // A drag both evaluators refuse with the same error matches.
+                std::string runtimeError;
+                if (reader->SetInput(name, value, &runtimeError) &&
+                    !reader->Execute(&runtimeError)) {
+                    bothFailed =
+                        std::find(pose.diagnostics.begin(),
+                                  pose.diagnostics.end(),
+                                  runtimeError) != pose.diagnostics.end();
+                }
+                if (bothFailed) {
+                    ++dragsBothFailed;
+                    std::printf("  drag %s = %.17g: both fail: %s\n",
+                                name.c_str(), value, runtimeError.c_str());
+                } else {
+                    _VerifyPush(&diffs, "native leg failed; runtime " +
+                                            (runtimeError.empty()
+                                                 ? std::string("ran")
+                                                 : "failed: " + runtimeError));
+                    for (const std::string &line : pose.diagnostics)
+                        _VerifyPush(&diffs, "  " + line.substr(0, 200));
+                }
+            } else if (_InvalidLeg(pose)) {
                 _VerifyPush(&diffs,
                             TfStringPrintf(
                                 "native leg INVALID (valid=%d, %zu reference "
@@ -1170,7 +1134,9 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
             // The reference edits only its isolated session; the original
             // session is unchanged, as the exact guards above require.
             reader->ResetInput(name, nullptr);
-            if (diffs.empty()) {
+            if (diffs.empty() && bothFailed) {
+                ++dragsMatched;
+            } else if (diffs.empty()) {
                 ++dragsMatched;
                 std::printf(
                     "  drag %s = %.17g: runtime==native exact published pose\n",
@@ -1185,8 +1151,10 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
             }
         }
     }
-    std::printf("  verify-binary: %zu of %zu drag(s) match\n", dragsMatched,
-                dragsTried);
+    std::printf(
+        "  verify-binary: %zu of %zu drag(s) match, %zu of them failing "
+        "identically in both\n",
+        dragsMatched, dragsTried, dragsBothFailed);
     return status;
 }
 
@@ -1209,20 +1177,15 @@ RunGoldenProtocol(const UsdStageRefPtr &stage, const SdfPath &rigPath,
         std::printf("golden: unknown backend %s\n", backend.c_str());
         return 2;
     }
-    if (backend == "frozen" && gExecCrossCheck) {
-        std::printf("golden: --exec-crosscheck currently requires "
-                    "--golden-backend native\n");
-        return 2;
-    }
     std::vector<uint8_t> runtimeBytes;
     if (backend == "runtime") {
         if (programPath.empty()) {
             std::printf("golden: runtime backend requires --golden-program\n");
             return 2;
         }
-        if (gExecCrossCheck || gCpuReference) {
-            std::printf("golden: runtime backend does not support native "
-                        "reference or exec-row checks\n");
+        if (gCpuReference) {
+            std::printf("golden: runtime backend does not support the native "
+                        "reference check\n");
             return 2;
         }
         for (const auto &action : actions)
@@ -1378,8 +1341,7 @@ RunGoldenProtocol(const UsdStageRefPtr &stage, const SdfPath &rigPath,
             context.frozen = frozen.get();
             context.workspace = workspace.get();
             pose = rigExec::RigExecEvaluateFrozen(
-                context, inputs, rigExec::RigExecMakeProductionStepRunner(),
-                nullptr, rigPath);
+                context, inputs, rigExec::RigExecMakeProductionStepRunner());
         }
         std::vector<rigExec::RigExecGoldenValue> values;
         std::string error;
@@ -1507,8 +1469,8 @@ RunGoldenProtocol(const UsdStageRefPtr &stage, const SdfPath &rigPath,
 
 } // namespace
 
-int
-main(int argc, char **argv)
+static int
+RunPose(int argc, char **argv)
 {
     if (argc < 2) {
         std::printf("usage: rigExecPose <stage> [--rig <primPath>] "
@@ -1518,7 +1480,7 @@ main(int argc, char **argv)
                     "[--golden-out file|--golden-check file] "
                     "[--golden-compact] [--golden-backend "
                     "native|frozen|runtime] [--golden-program file.rigexec] "
-                    "[--cpu-reference] [--exec-crosscheck] "
+                    "[--cpu-reference] "
                     "[--guides] "
                     "[--drag <prim> <attr> <steps>] "
                     "[--verify-binary <file.rigexec> --frames a,b,c "
@@ -1535,7 +1497,7 @@ main(int argc, char **argv)
     std::vector<GoldenAction> goldenActions;
     std::string profileOut;
     std::string verifyBinary;
-    bool cpuReference = false, execCrossCheck = false;
+    bool cpuReference = false;
     std::vector<UsdTimeCode> frames;
     std::vector<std::string> dragInputs;
     std::string dragPrim, dragAttr;
@@ -1558,8 +1520,6 @@ main(int argc, char **argv)
             solverGuides = true;
         } else if (arg == "--cpu-reference") {
             cpuReference = true;
-        } else if (arg == "--exec-crosscheck") {
-            execCrossCheck = true;
         } else if (arg == "--joints-out" && i + 1 < argc) {
             jointsOut = argv[++i];
         } else if (arg == "--pose-out" && i + 1 < argc) {
@@ -1669,7 +1629,6 @@ main(int argc, char **argv)
         evaluator.SetProfilingEnabled(true);
     }
     gCpuReference = cpuReference;
-    gExecCrossCheck = execCrossCheck;
     evaluator.cpuReference = cpuReference;
     std::vector<std::string> errors;
     const bool compiled = evaluator.Compile(&errors);
@@ -1682,19 +1641,11 @@ main(int argc, char **argv)
     if (!compiled)
         return 1;
     int status = 0;
-    if (execCrossCheck && evaluator.GetBakedProgram()) {
-        std::string error;
-        if (!rigExec::RigExecBakedProgramTesting::EnableExecCrossCheck(
-                *evaluator.GetBakedProgram(), &error)) {
-            std::printf("  exec crosscheck preparation failed: %s\n",
-                        error.c_str());
-            return 1;
-        }
-        checkVisits[&evaluator] = {evaluator.GetStageEditSerial(),
-                                   evaluator.GetBakedProgram()};
-    }
     if (!evaluator.GetBakedProgram()) {
         std::printf("  native program unavailable\n");
+        for (const std::string &reason :
+             evaluator.Evaluate(UsdTimeCode::Default()).diagnostics)
+            std::printf("    refused: %s\n", reason.c_str());
         return 1;
     }
     if (showTargets) {
@@ -1957,5 +1908,15 @@ main(int argc, char **argv)
             }
         }
     }
+    return status;
+}
+
+int
+main(int argc, char **argv)
+{
+    const int status = RunPose(argc, argv);
+    // The Windows C runtime flushes stdio only after ExitProcess has ended
+    // every other thread; flush while they still run.
+    std::fflush(nullptr);
     return status;
 }

@@ -44,8 +44,7 @@ RigExecTestPackUnchecked(const rigExec::fb::RigExecWireFile &file)
     rigExec::fb::FinishFileBuffer(builder,
                                   rigExec::fb::File::Pack(builder, &file));
     return std::vector<uint8_t>(builder.GetBufferPointer(),
-                                builder.GetBufferPointer() +
-                                    builder.GetSize());
+                                builder.GetBufferPointer() + builder.GetSize());
 }
 
 // \p bytes unpacked, changed by \p edit, and packed again unchecked; empty
@@ -74,7 +73,7 @@ RigExecTestUnpack(const rigExec::fb::RigExecWireFile &baseline)
 template <class Edit>
 static std::vector<uint8_t>
 RigExecTestEdited(const rigExec::fb::RigExecWireFile &baseline,
-                 const Edit &edit)
+                  const Edit &edit)
 {
     const std::unique_ptr<rigExec::fb::RigExecWireFile> file =
         RigExecTestUnpack(baseline);
@@ -88,8 +87,7 @@ RigExecTestEdited(const rigExec::fb::RigExecWireFile &baseline,
 // fields that name one.
 template <class Visit>
 static void
-RigExecTestForEachSlotId(rigExec::fb::RigExecWireFile *file,
-                         const Visit &visit)
+RigExecTestForEachSlotId(rigExec::fb::RigExecWireFile *file, const Visit &visit)
 {
     namespace fb = rigExec::fb;
     const auto read = [&](fb::RigExecWireInput *input) {
@@ -97,11 +95,14 @@ RigExecTestForEachSlotId(rigExec::fb::RigExecWireFile *file,
             for (uint32_t &slot : input->walk) {
                 visit(&slot);
             }
-            for (auto *list : {&input->propertyCandidates, &input->doubleCandidates})
-                for (auto &candidate : *list) visit(&candidate.slot);
+            for (auto *list :
+                 {&input->propertyCandidates, &input->doubleCandidates})
+                for (auto &candidate : *list)
+                    visit(&candidate.slot);
             if (input->rawFallbackSlot >= 0) {
                 uint32_t slot = uint32_t(input->rawFallbackSlot);
-                visit(&slot); input->rawFallbackSlot = int32_t(slot);
+                visit(&slot);
+                input->rawFallbackSlot = int32_t(slot);
             }
         }
     };
@@ -120,16 +121,19 @@ RigExecTestForEachSlotId(rigExec::fb::RigExecWireFile *file,
         }
     };
     for (auto &step : file->steps) {
-        for (auto &slot : step.headInputSlots) visit(&slot);
+        for (auto &slot : step.headInputSlots)
+            visit(&slot);
         std::sort(step.headInputSlots.begin(), step.headInputSlots.end());
-        for (auto &input : step.headInputReads) read(&input);
+        for (auto &input : step.headInputReads)
+            read(&input);
     }
     fb::RigExecWireDomainPose &pose = *file->pose;
     for (fb::RigExecWireLadder &ladder : pose.ladders) {
         reads({&ladder.restSpace, &ladder.defaultSpace, &ladder.posedSpace,
-               &ladder.rotationOrder, &ladder.parentSpace, &ladder.parentDefaultSpace,
-               &ladder.avarDefaultSpace, &ladder.posedDefaultSpace,
-               &ladder.rotationSign, &ladder.interveningSpace});
+               &ladder.rotationOrder, &ladder.parentSpace,
+               &ladder.parentDefaultSpace, &ladder.avarDefaultSpace,
+               &ladder.posedDefaultSpace, &ladder.rotationSign,
+               &ladder.interveningSpace});
         for (fb::RigExecWireInput &input : ladder.restAvars) {
             read(&input);
         }
@@ -144,16 +148,32 @@ RigExecTestForEachSlotId(rigExec::fb::RigExecWireFile *file,
         }
     }
     for (fb::RigExecWireSolver &s : pose.solvers) {
-        reads({&s.bend, &s.upperOffset, &s.lowerOffset, &s.stretch,
-               &s.softness, &s.ikSpace, &s.blendWeight, &s.preserveVolume,
+        reads({&s.bend, &s.upperOffset, &s.lowerOffset, &s.stretch, &s.softness,
+               &s.ikSpace, &s.blendWeight, &s.preserveVolume,
                &s.midFollowWeight, &s.roll, &s.twist, &s.minLengthRatio,
                &s.twistTurns, &s.ribbonSampleCount});
     }
     for (fb::RigExecWireConstraint &c : pose.constraints) {
-        reads({&c.enabled, &c.defaultWeight, &c.offset, &c.affectX,
-               &c.affectY, &c.affectZ, &c.tX, &c.tY, &c.tZ, &c.rX, &c.rY,
-               &c.rZ, &c.sX, &c.sY, &c.sZ, &c.aimVector, &c.upVector,
-               &c.rotationOffset, &c.worldUpVector, &c.poleVector,
+        reads({&c.enabled,
+               &c.defaultWeight,
+               &c.offset,
+               &c.affectX,
+               &c.affectY,
+               &c.affectZ,
+               &c.tX,
+               &c.tY,
+               &c.tZ,
+               &c.rX,
+               &c.rY,
+               &c.rZ,
+               &c.sX,
+               &c.sY,
+               &c.sZ,
+               &c.aimVector,
+               &c.upVector,
+               &c.rotationOffset,
+               &c.worldUpVector,
+               &c.poleVector,
                &c.twistDegrees});
     }
     for (fb::RigExecWireSpaceSwitch &sw : pose.spaceSwitches) {
@@ -167,13 +187,16 @@ RigExecTestForEachSlotId(rigExec::fb::RigExecWireFile *file,
         read(input.bodyWalk.get());
     };
     for (auto &row : pose.constraintArrays)
-        for (auto &slot : row.rawSlots) field(&slot);
+        for (auto &slot : row.rawSlots)
+            field(&slot);
     const auto revision = [&](fb::RigExecWireRevision &r) {
         reads({&r.defaultWeight});
         field(&r.jointIndicesSlot);
         field(&r.jointWeightsSlot);
-        for (auto &input : r.leafSites) declaration(input);
-        for (auto &input : r.layoutLeafSites) declaration(input);
+        for (auto &input : r.leafSites)
+            declaration(input);
+        for (auto &input : r.layoutLeafSites)
+            declaration(input);
         for (fb::RigExecWireBlendChannel &channel : r.blendChannels) {
             reads({&channel.weightRead});
             for (fb::RigExecWireBlendSample &sample : channel.samples) {
@@ -200,13 +223,14 @@ RigExecTestForEachSlotId(rigExec::fb::RigExecWireFile *file,
                &w.extentV});
         field(&w.valuesSlot);
         field(&w.indicesSlot);
-        field(&w.oracleSamplesSlot);
-        field(&w.oracleCurveSlot);
-        field(&w.oraclePlaneAxisSlot);
-        field(&w.oraclePlaneBoundsSlot);
+        field(&w.fieldSamplesSlot);
+        field(&w.fieldCurveSlot);
+        field(&w.fieldPlaneAxisSlot);
+        field(&w.fieldPlaneBoundsSlot);
     }
     for (auto &weightField : geometry.weightFields)
-        for (auto &input : weightField.scalarReads) read(&input);
+        for (auto &input : weightField.scalarReads)
+            read(&input);
     if (file->providerProgram) {
         for (auto *rows : {&file->providerProgram->sampled,
                            &file->providerProgram->externalInputs}) {
@@ -216,7 +240,8 @@ RigExecTestForEachSlotId(rigExec::fb::RigExecWireFile *file,
             }
         }
     }
-    for (auto &input : file->crossDomainReads) field(&input.rawSlot);
+    for (auto &input : file->crossDomainReads)
+        field(&input.rawSlot);
     for (fb::RigExecWirePathRead &row : geometry.pathReads) {
         reads({&row.read});
     }
@@ -233,7 +258,8 @@ RigExecTestForEachSlotId(rigExec::fb::RigExecWireFile *file,
         }
     }
     for (fb::RigExecWireExternalMover &mover : file->externalMovers) {
-        for (auto &input : mover.declaredInputs) declaration(input);
+        for (auto &input : mover.declaredInputs)
+            declaration(input);
         for (fb::RigExecWireInput &input : mover.inputs) {
             read(&input);
         }
@@ -254,13 +280,16 @@ RigExecTestListPrivateArraySlots(const std::vector<uint8_t> &bytes)
         const auto listed = [&](uint32_t id) {
             const auto &slot = file->inputs[id];
             return (slot.flags() & uint8_t(fb::InputSlotFlags::Listed)) ||
-                (slot.type() >= fb::InputTag::IntArray &&
-                 slot.type() <= fb::InputTag::Vec3fArray);
+                   (slot.type() >= fb::InputTag::IntArray &&
+                    slot.type() <= fb::InputTag::Vec3fArray);
         };
         std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
-            if (listed(a) != listed(b)) return listed(a) > listed(b);
-            return rigExec::RigExecFormatPathText(*file, file->inputs[a].name()) <
-                   rigExec::RigExecFormatPathText(*file, file->inputs[b].name());
+            if (listed(a) != listed(b))
+                return listed(a) > listed(b);
+            return rigExec::RigExecFormatPathText(*file,
+                                                  file->inputs[a].name()) <
+                   rigExec::RigExecFormatPathText(*file,
+                                                  file->inputs[b].name());
         });
         std::vector<uint32_t> remap(order.size());
         std::vector<fb::InputSlot> slots;
@@ -271,13 +300,13 @@ RigExecTestListPrivateArraySlots(const std::vector<uint8_t> &bytes)
             const bool expose = listed(order[i]);
             listedCount += expose;
             slots.emplace_back(slot.name(), slot.value(), slot.chain(),
-                               slot.phased(), slot.type(), expose
-                                   ? slot.flags() | uint8_t(fb::InputSlotFlags::Listed)
-                                   : slot.flags());
+                               slot.phased(), slot.type(),
+                               expose ? slot.flags() |
+                                            uint8_t(fb::InputSlotFlags::Listed)
+                                      : slot.flags());
         }
-        RigExecTestForEachSlotId(file, [&](uint32_t *slot) {
-            *slot = remap[*slot];
-        });
+        RigExecTestForEachSlotId(file,
+                                 [&](uint32_t *slot) { *slot = remap[*slot]; });
         file->inputs = std::move(slots);
         file->listedInputs = uint32_t(listedCount);
     });
@@ -350,9 +379,9 @@ RigExecTestAddValue(rigExec::fb::RigExecWireFile *file,
 
 // An array value of \p tag: \p id in the source \p source names.
 static rigExec::fb::RigExecWireValue
-RigExecTestArrayValue(rigExec::fb::InputTag tag, uint32_t id,
-                      rigExec::fb::ArraySource source =
-                          rigExec::fb::ArraySource::Pool)
+RigExecTestArrayValue(
+    rigExec::fb::InputTag tag, uint32_t id,
+    rigExec::fb::ArraySource source = rigExec::fb::ArraySource::Pool)
 {
     rigExec::fb::RigExecWireValue value;
     value.tag = tag;
@@ -406,4 +435,4 @@ RigExecTestAddListedSlot(rigExec::fb::RigExecWireFile *file,
     return at;
 }
 
-#endif  // RIGEXEC_TESTS_FILE_EDIT_H
+#endif // RIGEXEC_TESTS_FILE_EDIT_H

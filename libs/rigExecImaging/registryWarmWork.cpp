@@ -8,12 +8,11 @@
 // live here.
 #include "registry.h"
 
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/frameCache.h"
-#include "rigExec/frameCacheSparsity.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/profiler.h"
+#include "rigExecPlayback/backgroundScheduler.h"
+#include "rigExec/api/frameCache.h"
+#include "rigExec/internal/frameCacheSparsity.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/api/profiler.h"
 
 #include "pxr/usd/usd/timeCode.h"
 
@@ -368,7 +367,10 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
         result.detail = detail;
         return result;
     };
-    if (!_scheduler || !_scheduler->IsGenerationCurrent(rig, generation)) {
+    const RigExecCancellationToken cancel =
+        _scheduler ? _scheduler->CancellationToken(rig, generation)
+                   : RigExecCancellationToken();
+    if (!_scheduler || cancel.IsCanceled()) {
         return RigExecWarmFactoryResult();
     }
     const RigExecRigEvaluator &evaluator = session->bridge->GetEvaluator();
@@ -544,15 +546,13 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
     // The source snapshot and dependency record travel with the pose.
     RigExecRetainedFrameState retainedState = RigExecCaptureRetainedState(
         inputs, overrides, key.compiledRigSignature,
-        rigExec::RigExecBakedProgramAccess::StepGraph(*program)
-            .clustering.clusters.size(),
-        constantDigest);
+        RigExecProgramView(program).ClusterCount(), constantDigest);
     warmPhase("Warm.EnqueueProofRetained");
     auto retained =
         std::make_shared<RigExecRetainedFrameState>(std::move(retainedState));
     const size_t retainedBytes = retained->RetainedBytes();
-    RigExecEntryProvenance provenance = RigExecFullEvalProvenance(
-        rigExec::RigExecBakedProgramAccess::StepGraph(*program), time);
+    RigExecEntryProvenance provenance =
+        RigExecFullEvalProvenance(RigExecProgramView(program), time);
     provenance.unfoldedControlDigest = unfoldedDigest;
     warmPhase("Warm.Provenance");
     // The retained state holds its own copy, so the job takes the sampled
@@ -560,8 +560,8 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
     std::shared_ptr<const RigExecFrameInputs> jobInputs =
         std::make_shared<RigExecFrameInputs>(std::move(inputs));
     RigExecWarmWork work = [jobInputs, context, key, cache, scheduler, rig,
-                            runner, frozen, frozenPatch, workspaces, warmIndex,
-                            retained, retainedBytes, provenance,
+                            cancel, runner, frozen, frozenPatch, workspaces,
+                            warmIndex, retained, retainedBytes, provenance,
                             progressPublication, publishObserver](
                                const RigExecWarmRequest &request) {
         // Phase marks go to the scheduler's per-run timings (null unless
@@ -596,8 +596,9 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
         }
         laneContext.avarPatch = frozenPatch.get();
         workerPhase("Warm.WorkerLane");
-        const RigExecRigPose pose = RigExecEvaluateFrozen(
-            laneContext, *jobInputs, runner, scheduler, rig);
+        const std::shared_ptr<const RigExecRigPose> pose =
+            std::make_shared<RigExecRigPose>(
+                RigExecEvaluateFrozen(laneContext, *jobInputs, runner, cancel));
         workerPhase("Warm.WorkerEvaluate");
         // Stale at publish means an edit landed mid-run -- a generation
         // bump or a scoped purge that moved this time's fence token (the
@@ -611,7 +612,7 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
                                     rig, request.generation, request.time,
                                     request.fenceToken);
         };
-        if (!pose.valid) {
+        if (!pose->valid) {
             return stale() ? RigExecWarmOutcome::DeclinedGeneration
                            : RigExecWarmOutcome::DeclinedInvalid;
         }
@@ -628,7 +629,7 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
         // captured cell only marks its own request, never owner request maps.
         progressPublication.Publish(key, request.generation);
         if (publishObserver)
-            publishObserver(rig, request.time, key, request.generation, pose,
+            publishObserver(rig, request.time, key, request.generation, *pose,
                             cache);
         return RigExecWarmOutcome::Published;
     };

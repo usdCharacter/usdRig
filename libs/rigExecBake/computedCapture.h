@@ -4,9 +4,9 @@
 // object types.
 // The slots are the attributes on the walks of every registered program
 // read (Baked mode, as RigExecBakedRead resolves it), of the weight
-// objects' scalar reads (the registered reads of every object a
-// WeightPacket step bakes, and the Resolved reads of every envelope-only
-// object, as the oracle's _ResolvedRead does), of the property movers'
+// objects' scalar reads (the registered reads of every object a weight
+// packet op node bakes, and the Resolved reads of every envelope-only
+// object, as the weight field's _ResolvedRead does), of the property movers'
 // inputs (Pinned or Resolved, as _PinnedRead resolves them), of the
 // geometry assembly's blend weights, activations, default weights and
 // connection-following scalar reads, plus every chain target (its raw
@@ -34,7 +34,7 @@ namespace rigExec {
 class RigExecRigEvaluator;
 class RigExecBakePathTable;
 
-/// A weight object the runtime resolves whose oracle facts hold one time's
+/// A weight object the runtime resolves whose field facts hold one time's
 /// answer of an animated attribute: the facts are what the file holds, the
 /// attribute is what the stage animates.
 struct RigExecBakeTimeVaryingFact {
@@ -161,23 +161,26 @@ struct RigExecBakeInputs {
     uint32_t listedInputs = 0;
     /// The array inputs, in slot order; the path-read rows, blend sample
     /// points and layouts their reads bind; and per chain its base input,
-    /// or -1. A weight object names its painted and oracle inputs itself.
+    /// or -1. A weight object names its painted and field inputs itself.
     std::vector<RigExecBakeArraySlot> arraySlots;
     std::vector<RigExecBakeArrayRow> arrayRows;
     std::vector<RigExecBakeBlendPointsRead> blendPoints;
     std::vector<RigExecBakeLayoutSlots> layoutSlots;
     std::vector<int32_t> chainBaseSlots;
     /// The step-backed objects in the program's order, then the
-    /// envelope-only ones, each with its reads and oracle facts.
+    /// envelope-only ones, each with its reads and field facts.
     std::vector<fb::RigExecWireWeightObject> weightObjects;
     std::vector<fb::RigExecWireWeightField> weightFields;
     /// Per program constraint, the weight object its envelope arm reads,
     /// or -1.
     std::vector<int32_t> constraintWeightObjectIndex;
-    std::map<std::pair<uint32_t,uint32_t>,RigExecBakeExternalInputs> externalInputs;
+    std::map<std::pair<uint32_t, uint32_t>, RigExecBakeExternalInputs>
+        externalInputs;
     /// (chain, revision/derived index, derived, layout) identifies the exact native owner.
-    std::map<std::tuple<uint32_t,uint32_t,bool,bool>,RigExecBakeExternalInputs> leafSites;
-    std::vector<std::array<int32_t,4>> constraintRawSlots;
+    std::map<std::tuple<uint32_t, uint32_t, bool, bool>,
+             RigExecBakeExternalInputs>
+        leafSites;
+    std::vector<std::array<int32_t, 4>> constraintRawSlots;
     std::vector<int32_t> providerLeafSlots;
     std::vector<int32_t> crossDomainRawSlots;
     std::vector<int32_t> derivedBaseSlots;
@@ -194,19 +197,21 @@ struct RigExecBakeInputs {
 class RigExecBakeComputedCapture {
 public:
     RigExecBakeComputedCapture(const RigExecBakeComputedCapture &) = delete;
-    RigExecBakeComputedCapture &operator=(
-        const RigExecBakeComputedCapture &) = delete;
+    RigExecBakeComputedCapture &
+    operator=(const RigExecBakeComputedCapture &) = delete;
 
     /// Collects from \p evaluator's STANDING program (the caller compiles
     /// first), interning every path and token it names into \p paths. Slot
-    /// defaults and oracle facts are read at \p time, the bake time. Check
+    /// defaults and field facts are read at \p time, the bake time. Check
     /// Valid before reading the result.
     RigExecBakeComputedCapture(RigExecRigEvaluator &evaluator, double time,
-                               RigExecBakePathTable *paths,
-                               std::string *error);
+                               RigExecBakePathTable *paths, std::string *error);
     ~RigExecBakeComputedCapture();
 
-    bool Valid() const { return _valid; }
+    bool Valid() const
+    {
+        return _valid;
+    }
 
     const RigExecBakeInputs &GetInputs() const;
 
@@ -224,6 +229,6 @@ private:
     bool _valid = false;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_BAKE_COMPUTED_CAPTURE_H
+#endif // RIGEXEC_BAKE_COMPUTED_CAPTURE_H

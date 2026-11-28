@@ -176,7 +176,7 @@ animated `inputs:offset`. Its payload uses `GfVec3f`, which already supports
 the value comparison needed by `VtValue` and the evaluation cache.
 
 ```cpp
-#include "rigExec/movers/moverRegistry.h"
+#include "rigExec/api/moverRegistry.h"
 #include "rigExecScene/sceneDescriptors.h"
 
 #include <cmath>
@@ -450,7 +450,7 @@ frame that needs earlier ticks.
 A mover whose result at a frame depends on the frames before it -- a
 simulation, a lag -- is a temporal mover. It declares how many earlier frames
 it reads (`windowFrames`, at compile, and `windowFramesScene`, the same count
-from captured scene facts for the scene program), the packet a frame captures
+from captured scene facts), the packet a frame captures
 from its payload and entering points (`captureWindow`), and the solve over the
 earlier frames' packets, oldest first, then the current one (`applyWindow`);
 all four or none. The earlier frames are generations of the same compiled graph
@@ -465,6 +465,173 @@ an operation body, and falls back to `applyWindow`. For `.rigexec` playback,
 callbacks; the reader keeps the packets (`PushHistory`, `ExecuteHistory`,
 `ClearHistory`). The built-in cloth mover is written this way; see
 [secondary motion and cloth](secondary-motion.md).
+
+## Build an op plugin
+
+An op library can ship as an OpenUSD plugin of its own. A mover then runs on
+that library's op through the op core, with no core code naming either. Until
+the generic USD binder arrives, the mover itself still comes from a mover
+plugin as above (its schema, binding and `declareExternalInputs`), and the op
+plugin adds a *binder* for its schema type. When a binder binds a mover, the
+native evaluator, the frozen evaluator and `.rigexec` playback all run the
+mover on its op as a member of its point chain's op chain; the mover's
+`assembleExternal`, `applyExternal` and encoding callbacks are not called.
+
+Declare the plugin with `rigexec_add_op_plugin` from
+[rigExecOpPlugin.cmake](../../cmake/rigExecOpPlugin.cmake), available inside
+the usdRig build and from `find_package(rigExec)`:
+
+```cmake
+rigexec_add_op_plugin(quadraticOps BINDERS
+    BINDS ExternalQuadraticMover
+    SOURCES quadraticOps.cpp
+    LIBRARIES quadraticKernel)
+```
+
+The sources define the op library's entry with
+`RIGEXEC_OP_LIBRARY_ENTRY(quadraticOps)` (see `rigExec/api/registry.h`),
+and with `BINDERS` a binder table with
+`RIGEXEC_EXTERNAL_OP_BINDERS_ENTRY(quadraticOps)`
+(`rigExecScene/externalOps.h`, binder ABI 2): one `RigExecExternalOpBinder`
+per schema type, whose `build` adds the op's node at Build from compile facts
+(`RigExecExternalOpContext`: the revision binding, its declared inputs' keys
+and, per declared input, its Build-time value where nothing can move it) and
+lists, per op input, what feeds it (`RigExecExternalOpFeed`): the points
+entering the revision, the target's base points, declared input `k` (read each
+frame as the port's standard type reads it; a type that does not match fails
+the compile; a points array the mover reads through a phase is the phase's
+points), the transform provider, or influence `k`. A feed with a `count`
+makes one array of several: scalars listed, arrays joined end to end, or
+influences listed as matrices. A setting that shapes the op's payload (a
+form, an order, a method token, an element size) is pinned with
+`RigExecExternalOpPin`: an authored edit to it rebuilds, and an animated,
+connected or overridden one fails the compile. Patch, SurfaceBinding and
+LayeredSkin bind this way as built-ins. The
+mapping is static graph data: the `.rigexec` holds it as lookups, and the
+runtime resolves it with no plugin code, so a posed playback moves a declared
+input through `SetInput`. The op computes the full-strength points as one
+whole range member: declare it ranged (`kRigExecOpRanged`) with a
+`range.plan` that answers `Whole` and the points input
+`kRigExecPortNeighbourhood`. The engine keeps `inputs:enabled`,
+`inputs:defaultWeight` and the weight object's envelope: a `MoverBlend` member
+after the op blends its result in and fails the frame on a point that is not
+finite. `TYPE_LIBRARIES`
+lists type library entries the plugin also defines, and `SCHEMA` with
+`SCHEMA_TYPE` adds a codeless schema the same way `rigexec_add_mover` does.
+`BINDS` lists the schema types the binders bind; with `BINDERS`, the
+`SCHEMA_TYPE` is one of them.
+Keep the arithmetic in one kernel that the mover's callbacks and the op both
+call, so the two paths give the same bits. The test fixture's
+`tests/externalMovers/quadraticOps.cpp` is a complete example: the
+`ExternalQuadraticMover` from the mover plugin above runs on its
+`Quadratic` op with the mover's own kernel, and
+`tests/testRigExecOpPluginScene.cpp` holds it to the native evaluator's bits.
+
+An op checks a node before it runs, then runs it. `validate`
+(`RigExecOpDesc::validate` in `rigExec/api/registry.h`) sees the node's
+settings and, per port, what is known before a frame (`RigExecOpCheck`): at
+compile, which optional inputs are fed; before the first evaluation, and
+again whenever an input changes size or a `kRigExecPortChecked` input
+changes value, the element counts and the values the host writes. Refuse
+there everything that settings, feeds, counts and host values can show: it
+fails the compile or that evaluation with the node, the op and the reason,
+and the node never runs on inputs it refused. A ranged op's `range.plan`
+picks ranges or one whole run from its settings alone, once at compile.
+`run` (or `runBatch`, or a ranged op's `prepare` and `run`) has no
+refusal of its own. What only the frame shows, such as a value that is not
+finite or a solve that fails, makes it return false with the reason, and
+that stops the whole evaluation: `Evaluate` returns the error, and every
+output the frame wrote reports no valid value until an evaluation succeeds.
+An op never passes its input through in place of a result it could not
+compute, and never publishes a status or validity output in place of an
+error. The fixture's `Quadratic` op validates the gain the host writes and
+the base and reference it reads, and fails its run on a negative gain.
+A standalone host opens such a `.rigexec` with the op library passed at
+`Open` (`RigExecRuntimeReader::Open(bytes, size, nullptr, 0, opLibraries,
+error)`); no kernel is installed for the mover.
+
+The generated `plugInfo.json` marks the library with
+
+```json
+"Info": {"RigExecOpLibrary": {"abiVersion": <registry ABI>,
+    "entry": "quadraticOps_RigExecOpLibrary",
+    "binders": "quadraticOps_RigExecExternalOpBinders",
+    "schemaTypes": ["ExternalQuadraticMover"]}}
+```
+
+where `abiVersion` is the `kRigExecRegistryAbiVersion` of the
+`rigExec/api/registry.h` the plugin was compiled against. Add
+`build/usd/rigExecOpPlugins` (or the installed `lib/usd/rigExecOpPlugins`)
+to `PXR_PLUGINPATH_NAME`. `rigExecScene` discovers the plugins at the first
+call that needs the op core, before the registry initializes, and
+takes their libraries into that one initialization
+(`RigExecEnsureSceneOpRegistry` in `rigExecScene/opPlugins.h`). A plugin
+built for another registry or binder ABI, a library that does not load, a
+missing entry symbol, a library the registry refuses, a schema type that
+already has a binder, or a registry initialized before discovery is reported
+by plugin name (`RigExecSceneOpPluginErrors`, with the plugins discovery
+considered) and is never skipped silently. It fails only the movers of its
+`schemaTypes` or binder table's types (`RigExecSceneOpSchemaJoined`); other
+movers run on the registry without it.
+A host without OpenUSD passes its op libraries to
+`RigExecRegistry::Initialize` itself.
+
+## Report the schema an op registration implies
+
+An op may describe the schema class it is authored with:
+`RigExecOpDesc::schema` (`RigExecSchemaInfo`: class name, documentation,
+base class and mode) and, per port and payload field, `authoring`
+(`RigExecPropertyInfo`: the property name with its namespace, documentation,
+fallback value, the tokens an integer is authored as, how it binds, its USD
+role, `uniform`, and the USD type when it is not the registered type's).
+Payload fields that name one property are its components. A port or field
+without `authoring` is fed by the compiler. The registry refuses `authoring`
+on an op without schema info or on an `Internal` op, and a `ConnectionList`
+binding on anything but a list input port. A list payload field is authored as
+an array, and its fallback is a value of the registered array type of its
+element. The mode says where the class
+comes from: `Generated` from this metadata, `HandAuthored` in
+[schema.usda](../../libs/rigExecSchema/schema.usda), or `Internal` for an op
+the compiler builds with no class of its own. The metadata never changes how a
+program runs, and the registry fingerprint ignores it: a `.rigexec` baked with
+libraries that differ only in it still opens.
+
+`rigExecGenSchema` (`tools/rigExecGenSchema.cpp`) links the op core and the
+built-in type and op libraries only, so it uses no OpenUSD library. It reads
+the registry, takes an optional output path and writes one usda-like block per
+op, sorted by namespace and name, named by the op's schema class when it
+declares one: a line per authored property with its type, fallback and the
+ports or fields it comes from, then an attribute line per other input and
+output port with the USD type its value type maps to, flags (`optional`,
+`list`, `pointwise`, `neighbourhood`, `checked`, output bounds) as a
+trailing comment, and each other payload field as a `uniform` attribute.
+`--json` writes the schema info and authored properties of every op instead.
+
+`tools/schema_report.py` (standard library only) compares that text with
+schema.usda and prints, per op, the class it declares or most plausibly
+corresponds to, the properties each side lacks and the type disagreements, then
+a summary table and the classes and ops without a counterpart:
+
+```bash
+python tools/schema_report.py --tool build/rigExecGenSchema \
+    --schema libs/rigExecSchema/schema.usda [--out report.txt]
+```
+
+The report changes nothing that ships. `testRigExecSchemaReport` passes
+whenever both programs run and a report is produced, whatever it shows.
+
+With `--diff`, the script checks every `Generated` op against its class in
+schema.usda, property by property: presence on either side, type, `uniform`,
+fallback, allowed tokens and documentation, and the class's base and
+documentation. A `HandAuthored` op is checked only for the properties it
+declares; `Internal` ops and ops without schema info are skipped. Ops that
+declare one class must describe it alike, since the class is written once:
+the same mode, for `Generated` the same class documentation, base and
+properties, and for every property two of them declare the same type,
+binding, fallback, tokens and documentation. It prints each difference and
+exits non-zero on any; `testRigExecSchemaDiff` runs it, and
+`testRigExecSchemaDiffSelfTest` runs `--self-test`, the comparison over
+synthetic ops.
 
 ## Discovery and supported evaluation
 

@@ -4,6 +4,8 @@
 #define RIGEXEC_RUNTIME_POSE_EVAL_HOST_H
 
 #include "poseInternal.h"
+#include "poseMath.h"
+#include "rigExecEvalCore/opSteps.h"
 #include "rigExecEvalCore/pose.h"
 #include "rigExecMath/rangeRunner.h"
 
@@ -61,63 +63,7 @@ RrApplyRevisedAncestorDelta(
     return (*flags & RrPointFrameValid) != 0;
 }
 
-struct RrPoseMath {
-    using Mat4 = RrMat4d;
-    using Mat3 = RrMat3d;
-    using Vec3 = RrVec3d;
-    using Quat = RrQuatd;
-    using Frame = RrPointFrame;
-    static Mat4 Identity4()
-    {
-        Mat4 m;
-        m.SetIdentity();
-        return m;
-    }
-    static Mat3 Identity3()
-    {
-        Mat3 m;
-        m.SetIdentity();
-        return m;
-    }
-    static Mat4 Mat4FromElements(double m00, double m01, double m02, double m03,
-                                 double m10, double m11, double m12, double m13,
-                                 double m20, double m21, double m22, double m23,
-                                 double m30, double m31, double m32, double m33)
-    {
-        return Mat4(m00, m01, m02, m03, m10, m11, m12, m13, m20, m21, m22, m23,
-                    m30, m31, m32, m33);
-    }
-    static Mat3 Mat3FromElements(double m00, double m01, double m02, double m10,
-                                 double m11, double m12, double m20, double m21,
-                                 double m22)
-    {
-        return Mat3(m00, m01, m02, m10, m11, m12, m20, m21, m22);
-    }
-    static Vec3 Vec3Of(double x, double y, double z)
-    {
-        return Vec3(x, y, z);
-    }
-    static void SinCos(double v, double *s, double *c)
-    {
-        RrSinCos(v, s, c);
-    }
-    static Quat QuatFromComponents(double w, double x, double y, double z)
-    {
-        return Quat(w, Vec3(x, y, z));
-    }
-    static void QuatToComponents(const Quat &q, double *w, Vec3 *im)
-    {
-        *w = q.GetReal();
-        *im = q.GetImaginary();
-    }
-    static Frame MakeFrame(const std::array<Vec3, 4> &points, unsigned flags)
-    {
-        Frame frame;
-        frame.points = points;
-        frame.flags = flags;
-        return frame;
-    }
-};
+using RrPoseMath = RrPoseMathT<RrPointFrame>;
 
 // Borrowed views over the program's decoded records and scratch. All
 // borrowed storage outlives the step call.
@@ -125,58 +71,6 @@ class RrPoseInputs {
 public:
     explicit RrPoseInputs(const RrProgram *program) : _program(program)
     {
-    }
-
-    size_t avarWriteCount(size_t object) const
-    {
-        const RrInputState &state = _program->inputState;
-        if (object + 1 >= state.avarReadBegin.size()) {
-            return 0;
-        }
-        return size_t(state.avarReadBegin[object + 1] -
-                      state.avarReadBegin[object]);
-    }
-
-    int32_t avarWriteSlot(size_t object, size_t k) const
-    {
-        const RrInputState &state = _program->inputState;
-        const uint32_t read =
-            state.avarReads[size_t(state.avarReadBegin[object]) + k];
-        return _program->registeredReads[read].avar;
-    }
-
-    double avarWriteValue(size_t object, size_t k) const
-    {
-        const RrInputState &state = _program->inputState;
-        const uint32_t read =
-            state.avarReads[size_t(state.avarReadBegin[object]) + k];
-        return _program->ReadRegistered(int32_t(read)).f64;
-    }
-
-    size_t checkpointObjectCount() const
-    {
-        return _program->poses->spaceCheckpoints.size();
-    }
-
-    size_t checkpointRecomposeCount(size_t object) const
-    {
-        return _program->poses->spaceCheckpoints[object].recompose.size();
-    }
-
-    bool checkpointSlot(size_t object, size_t k,
-                        eval::PoseSlotComposeT<RrPoseMath> *view) const
-    {
-        const auto &recompose =
-            _program->poses->spaceCheckpoints[object].recompose;
-        if (k >= recompose.size() || recompose[k] < 0) {
-            return false;
-        }
-        return slotCompose(size_t(recompose[k]), view);
-    }
-
-    int checkpointAnchor(size_t object) const
-    {
-        return _program->poses->spaceCheckpoints[object].anchor;
     }
 
     bool posedMatrix(size_t slot, RrMat4d *out) const
@@ -188,34 +82,11 @@ public:
         return true;
     }
 
-    size_t composeGroupCount() const
-    {
-        return _program->poses->composeGroups.size();
-    }
-
-    void composeGroupRange(size_t object, int *begin, int *end) const
-    {
-        const auto &group = _program->poses->composeGroups[object];
-        *begin = group.begin;
-        *end = group.end;
-    }
-
     bool isPoseSlot(size_t slot) const
     {
         const auto &meta = *_program->slotMeta;
         return slot < meta.slotKind.size() &&
                meta.slotKind[slot] == RigExecWireSlotKind::FirstFramePose;
-    }
-
-    bool composeSlotBounds(size_t slot) const
-    {
-        const auto &meta = *_program->slotMeta;
-        const RrStore &store = _program->store;
-        const RrPoseScratch *scratch =
-            runtimePoseDetail::_RrScratch(const_cast<RrProgram *>(_program));
-        return slot < meta.slotKind.size() && slot < store.base.size() &&
-               slot < store.fin.size() && slot < store.posedM.size() &&
-               slot < scratch->restM.size();
     }
 
     bool providerActive(size_t slot) const
@@ -342,14 +213,6 @@ public:
         return true;
     }
 
-    void baseFrame(size_t slot, std::array<RrVec3d, 4> *points,
-                   unsigned *flags) const
-    {
-        const RrPointFrame &frame = _program->store.base[slot];
-        *points = frame.points;
-        *flags = frame.flags;
-    }
-
     size_t commitObjectCount() const
     {
         return std::min(_program->poses->commits.size(),
@@ -384,7 +247,6 @@ public:
         facts.targetRead = commit.targetRead;
         facts.effectorRead = commit.effectorRead;
         facts.solverOutput = commit.solverOutput;
-        facts.split = commit.split;
         facts.moverPath = _program->TextOrEmpty(commit.moverPath);
         return facts;
     }
@@ -507,23 +369,157 @@ public:
         return true;
     }
 
-    bool ikChainFacts(size_t object, eval::PoseIkChainFacts *facts) const
+    /// Space switch \p sw's input \p read (eval::OpSwitchRead, a matrix) as
+    /// its compose reads it, for the source reads source \p k's; a world
+    /// source reads the identity.
+    bool switchMatrix(size_t sw, eval::OpSwitchRead read, size_t k,
+                      RrMat4d *out) const
+    {
+        using R = eval::OpSwitchRead;
+        const auto &switches = _program->poses->spaceSwitches;
+        if (sw >= switches.size())
+            return false;
+        const RigExecWireSpaceSwitch &s = switches[sw];
+        const RrStore &store = _program->store;
+        const RrPoseScratch *scratch = _RrScratch();
+        const auto frame = [&](const RigExecWireFrameVersion *v) {
+            if (!v)
+                return false;
+            if (v->context >= 0) {
+                if (size_t(v->context) >= store.switchFrames.size())
+                    return false;
+                *out = store.switchFrames[size_t(v->context)];
+                return true;
+            }
+            if (!v->recompose.empty())
+                return false;
+            if (v->anchor < 0) {
+                *out = RrMat4d(1.0);
+                return true;
+            }
+            if (size_t(v->anchor) >= store.posedM.size())
+                return false;
+            *out = store.posedM[size_t(v->anchor)];
+            return true;
+        };
+        const auto table = [&](const std::vector<RrMat4d> &t, int slot) {
+            if (slot < 0 || size_t(slot) >= t.size())
+                return false;
+            *out = t[size_t(slot)];
+            return true;
+        };
+        switch (read) {
+        case R::PosedDefault:
+            return table(scratch->posedD, s.slot);
+        case R::ParentDefaultInverse:
+            return table(scratch->parentDinv, s.slot);
+        case R::ParentPosed:
+            return frame(s.parentRead.get());
+        case R::ParentDefault: {
+            const int up = s.slot >= 0 ? parent(size_t(s.slot)) : -1;
+            if (up < 0) {
+                *out = RrMat4d(1.0);
+                return true;
+            }
+            return table(scratch->defaultRoundTrip, up);
+        }
+        case R::SpaceDefault:
+            return table(scratch->defaultRoundTrip, s.spaceSlot);
+        case R::SpacePosed:
+            return s.spaceSlot >= 0 && frame(s.spaceRead.get());
+        case R::SourceDefaults:
+        case R::SourcePosed: {
+            if (k >= s.sourceSlots.size() || k >= s.sourceReads.size())
+                return false;
+            const int source = s.sourceSlots[k];
+            if (source < 0) {
+                *out = RrMat4d(1.0);
+                return true;
+            }
+            if (read == R::SourcePosed)
+                return frame(&s.sourceReads[k]);
+            return table(scratch->defaultRoundTrip, source);
+        }
+        case R::Active:
+            break;
+        }
+        return false;
+    }
+
+    /// Space switch \p sw's selected space, a label as its index.
+    double switchActive(size_t sw) const
+    {
+        const RigExecWireSpaceSwitch &s = _program->poses->spaceSwitches[sw];
+        const RrInputValue selector = _program->ReadSpaceSwitch(sw);
+        if (!s.tokenIndex)
+            return selector.f64;
+        const std::string text = _program->TextOrEmpty(selector.token);
+        const auto found = std::find(s.labels.begin(), s.labels.end(), text);
+        return found != s.labels.end() ? double(found - s.labels.begin()) : 0.0;
+    }
+
+    size_t switchSourceCount(size_t sw) const
+    {
+        const auto &switches = _program->poses->spaceSwitches;
+        return sw < switches.size() ? switches[sw].sourceSlots.size() : 0;
+    }
+
+    /// The space switch of the pole IK/FK match constraint commit
+    /// \p object moves, or -1; \p mode its eval::OpIkFkMatchRead PoleMode.
+    int matchPoleSwitch(size_t object, uint32_t *mode) const
     {
         const size_t ci = size_t(_program->poses->walkSteps[object].index);
         const RigExecWireConstraint &c = _program->poses->constraints[ci];
-        facts->targetSlots.assign(c.targetSlots.begin(), c.targetSlots.end());
-        facts->effector = c.effector;
-        facts->effectorNative = c.effectorNative;
-        facts->stretch =
-            c.stretch
-                ? double(_program->ReadConstraint(ci, RrConstraintStretch).f32)
-                : 0.0;
-        facts->ikMode = int(c.ikMode);
-        facts->useAnimatedTs = c.useAnimatedTs;
-        facts->ikRestLive.assign(c.ikRestLive.begin(), c.ikRestLive.end());
-        facts->poleModeObject = c.poleModeObject;
-        facts->poleObjects.assign(c.poleObjects.begin(), c.poleObjects.end());
-        return true;
+        const RrPoseScratch *scratch = _RrScratch();
+        const int pole = c.sources.size() > 6 ? c.sources[6] : -1;
+        const bool switched =
+            c.matchPoleSwitch >= 0 &&
+            size_t(c.matchPoleSwitch) < _program->poses->spaceSwitches.size();
+        *mode = c.matchPoleParentRides ? 2u : 0u;
+        if (switched && pole >= 0 &&
+            size_t(pole) < scratch->posedAuthored.size() &&
+            !scratch->posedAuthored[size_t(pole)])
+            *mode = 1u;
+        return switched ? c.matchPoleSwitch : -1;
+    }
+    eval::PoseIkChainView ikChainView(size_t object) const
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        const RigExecWireConstraint &c = _program->poses->constraints[ci];
+        eval::PoseIkChainView view;
+        view.slots = c.targetSlots.data();
+        view.count = c.targetSlots.size();
+        view.ikMode = int(c.ikMode);
+        view.useAnimatedTs = c.useAnimatedTs;
+        view.poleModeObject = c.poleModeObject;
+        view.poleObjects = c.poleObjects.size();
+        return view;
+    }
+
+    bool ikRestLive(size_t object, size_t k) const
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        const RigExecWireConstraint &c = _program->poses->constraints[ci];
+        return k < c.ikRestLive.size() && c.ikRestLive[k];
+    }
+
+    double ikStretch(size_t object) const
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        return _program->poses->constraints[ci].stretch
+                   ? double(
+                         _program->ReadConstraint(ci, RrConstraintStretch).f32)
+                   : 0.0;
+    }
+
+    eval::PoseU32List commitTargetReads(size_t object) const
+    {
+        const std::vector<uint32_t> &reads =
+            _program->poses->commits[object].targetReads;
+        eval::PoseU32List list;
+        list.data = reads.data();
+        list.count = reads.size();
+        return list;
     }
 
     void ikPoleVector(size_t object, RrVec3d *pole, double *twistDegrees) const
@@ -626,99 +622,12 @@ public:
         return true;
     }
 
-    bool frameRecordFacts(size_t object,
-                          eval::PoseFrameRecordFacts *facts) const
-    {
-        if (object >= _program->poses->frameRecords.size() ||
-            object >= _program->store.frameMatrix.size() ||
-            object >= _program->store.frameMatrixValid.size()) {
-            return false;
-        }
-        const RigExecWireFrameRecord &record =
-            _program->poses->frameRecords[object];
-        facts->commit = record.commit();
-        facts->position = record.position();
-        facts->target = record.target();
-        facts->version = record.version();
-        facts->slot = record.slot();
-        return true;
-    }
-
-    eval::PoseHarmonicsFacts<RrPoseMath> harmonicsFacts(size_t object) const
+    double harmonicsScalar(size_t object, size_t k) const
     {
         const size_t ci = size_t(_program->poses->walkSteps[object].index);
-        const RigExecWireConstraint &c = _program->poses->constraints[ci];
-        eval::PoseHarmonicsFacts<RrPoseMath> facts;
-        facts.target = c.target;
-        facts.spaceSlot = c.spaceSlot;
-        facts.window = c.window;
-        facts.pathText = _program->TextOrEmpty(c.path);
-        facts.enabled =
-            _program->ReadConstraint(ci, RrConstraintEnabled).boolean;
-        facts.hasWeightObject = c.weightObject != 0;
-        if (facts.hasWeightObject) {
-            const RrWeightFieldResult &field =
-                _program->store.weightFieldResults[size_t(c.weightField)];
-            facts.fieldOk = field.ok;
-            facts.fieldCount = field.values.size();
-            facts.fieldValue =
-                field.values.empty() ? 0.0 : double(field.values[0]);
-            facts.fieldError = field.error;
-        }
-        facts.defaultWeight =
-            double(_program->ReadConstraint(ci, RrConstraintDefaultWeight).f32);
-        for (int k = 0; k < 3; ++k) {
-            const RrInputValue value =
-                _program->ReadConstraint(ci, RrConstraintHarmonicsFirst + k);
-            facts.scalars[size_t(k)] =
-                value.tag == RrInputTag::Float ? double(value.f32) : value.f64;
-        }
-        facts.axis = _program->ReadConstraint(ci, RrConstraintOffset).vec;
-        facts.matchVelocity = c.harmonicsMatchVelocity;
-        facts.settingsValid = c.harmonicsConstants.size() == 3;
-        if (facts.settingsValid) {
-            facts.settings.waves = c.harmonicsConstants[0];
-            facts.settings.waveLength = c.harmonicsConstants[1];
-            facts.settings.frequency = c.harmonicsConstants[2];
-            facts.settings.ignoreFirstFrame = c.harmonicsIgnoreFirstFrame;
-        }
-        return facts;
-    }
-
-    bool windowCaptureValid(int window) const
-    {
-        return window >= 0 &&
-               size_t(window) < _program->store.windowCaptures.size();
-    }
-
-    bool windowedOpValid(int window) const
-    {
-        return window >= 0 && size_t(window) < _program->windowedOps.size();
-    }
-
-    size_t windowRingCount(int window) const
-    {
-        if (window < 0 ||
-            size_t(window) >= _program->store.windowRings.size()) {
-            return 0;
-        }
-        return _program->store.windowRings[size_t(window)].size();
-    }
-
-    RigExecWindowPacketPtr windowRingPacket(int window, size_t k) const
-    {
-        if (window < 0 ||
-            size_t(window) >= _program->store.windowRings.size()) {
-            return RigExecWindowPacketPtr();
-        }
-        const RigExecWindowRing &ring =
-            _program->store.windowRings[size_t(window)];
-        return k < ring.size() ? ring[k] : RigExecWindowPacketPtr();
-    }
-
-    bool windowFeedsWindow(int window) const
-    {
-        return _program->windowedOps[size_t(window)].feedsWindow;
+        const RrInputValue value =
+            _program->ReadConstraint(ci, RrConstraintHarmonicsFirst + int(k));
+        return value.tag == RrInputTag::Float ? double(value.f32) : value.f64;
     }
 
     bool historyTick() const
@@ -754,54 +663,14 @@ public:
         }
         facts.defaultWeight =
             double(_program->ReadConstraint(ci, RrConstraintDefaultWeight).f32);
-        const std::string ctype = _program->TextOrEmpty(c.type);
-        if (ctype == SchemaTypeName::RigExecMatrixMover) {
-            facts.code = eval::kPoseConstraintMatrixMover;
-        } else if (ctype == SchemaTypeName::RigExecPositionConstraint) {
-            facts.code = eval::kPoseConstraintPosition;
-        } else if (ctype == SchemaTypeName::RigExecRotationConstraint) {
-            facts.code = eval::kPoseConstraintRotation;
-        } else if (ctype == SchemaTypeName::RigExecScaleConstraint) {
-            facts.code = eval::kPoseConstraintScale;
-        } else if (ctype == SchemaTypeName::RigExecParentConstraint) {
-            facts.code = eval::kPoseConstraintParent;
-        } else if (ctype == SchemaTypeName::RigExecAimConstraint) {
-            facts.code = eval::kPoseConstraintAim;
-        }
         facts.ikFkMatch = c.ikFkMatch;
         facts.harmonics = c.harmonics;
         facts.radialBlend = (c.flags & RigExecWireConstraintRadialBlend) != 0;
         facts.singleChainIk = c.singleChainIk;
+        facts.arrays = constraintArrays(object);
         if (c.arrays < 0 || size_t(c.arrays) >= _program->store.arrays.size()) {
-            facts.arrays.ok = false;
             return facts;
         }
-        const RrConstraintArraysLive &arrays =
-            _program->store.arrays[size_t(c.arrays)];
-        facts.arrays.ok = arrays.ok;
-        facts.arrays.weights =
-            arrays.weights.empty() ? nullptr : arrays.weights.data();
-        facts.arrays.weightCount = arrays.weights.size();
-        facts.arrays.translationOffsets =
-            arrays.translationOffsets.empty()
-                ? nullptr
-                : arrays.translationOffsets.data();
-        facts.arrays.rotationOffsets = arrays.rotationOffsets.empty()
-                                           ? nullptr
-                                           : arrays.rotationOffsets.data();
-        facts.arrays.offsetCount = std::min(arrays.translationOffsets.size(),
-                                            arrays.rotationOffsets.size());
-        facts.arrays.diagnostics =
-            arrays.diagnostics.empty() ? nullptr : arrays.diagnostics.data();
-        facts.arrays.diagnosticCount = arrays.diagnostics.size();
-        facts.arrays.poleOk = arrays.poleOk;
-        facts.arrays.poleWeights =
-            arrays.poleWeights.empty() ? nullptr : arrays.poleWeights.data();
-        facts.arrays.poleWeightCount = arrays.poleWeights.size();
-        facts.arrays.poleDiagnostics = arrays.poleDiagnostics.empty()
-                                           ? nullptr
-                                           : arrays.poleDiagnostics.data();
-        facts.arrays.poleDiagnosticCount = arrays.poleDiagnostics.size();
         facts.affectX =
             _program->ReadConstraint(ci, RrConstraintAffectX).boolean;
         facts.affectY =
@@ -915,40 +784,147 @@ public:
             wireCommit.worldUpAncestors, points, flags);
     }
 
-    eval::PoseAimFactsT<RrPoseMath> aimFacts(size_t object) const
+    bool constraintGate(size_t object,
+                        eval::PoseConstraintGateFacts *facts) const
+    {
+        const auto &poses = *_program->poses;
+        if (object >= poses.walkSteps.size() ||
+            object >= poses.commits.size() ||
+            poses.walkSteps[object].solverBatch ||
+            poses.walkSteps[object].index < 0 ||
+            size_t(poses.walkSteps[object].index) >= poses.constraints.size()) {
+            return false;
+        }
+        const size_t ci = size_t(poses.walkSteps[object].index);
+        const RigExecWireConstraint &c = poses.constraints[ci];
+        facts->target = c.target;
+        facts->deltaBase = c.deltaBase;
+        facts->spaceSlot = c.spaceSlot;
+        facts->targetRead = poses.commits[object].targetRead;
+        facts->matrixMover =
+            _program->TextEquals(c.type, SchemaTypeName::RigExecMatrixMover);
+        facts->harmonics = c.harmonics;
+        facts->singleChainIk = c.singleChainIk;
+        facts->ikFkMatch = c.ikFkMatch;
+        facts->enabled =
+            _program->ReadConstraint(ci, RrConstraintEnabled).boolean;
+        facts->hasWeightObject = c.weightObject != 0;
+        facts->pointsTarget = c.pointsTarget != 0;
+        facts->fieldOk = false;
+        facts->fieldCount = 0;
+        facts->fieldValue = 0.0;
+        if (facts->hasWeightObject && c.weightField >= 0 &&
+            size_t(c.weightField) < _program->store.weightFieldResults.size()) {
+            const RrWeightFieldResult &field =
+                _program->store.weightFieldResults[size_t(c.weightField)];
+            facts->fieldOk = field.ok;
+            facts->fieldCount = field.values.size();
+            facts->fieldValue =
+                field.values.empty() ? 0.0 : double(field.values[0]);
+        }
+        facts->defaultWeight =
+            double(_program->ReadConstraint(ci, RrConstraintDefaultWeight).f32);
+        return true;
+    }
+
+    eval::PoseArraysViewT<RrPoseMath> constraintArrays(size_t object) const
     {
         const size_t ci = size_t(_program->poses->walkSteps[object].index);
         const RigExecWireConstraint &c = _program->poses->constraints[ci];
-        eval::PoseAimFactsT<RrPoseMath> aim;
-        aim.aimVectorAuthored = c.aimVectorAuthored;
-        aim.aimVector = _program->ReadConstraint(ci, RrConstraintAimVector).vec;
-        aim.aimAxisFallback = RrVec3d(
-            c.aimAxisFallback[0], c.aimAxisFallback[1], c.aimAxisFallback[2]);
-        aim.upVector = _program->ReadConstraint(ci, RrConstraintUpVector).vec;
-        aim.rotationOffset =
-            _program->ReadConstraint(ci, RrConstraintRotationOffset).vec;
-        aim.preserveInputUp = c.preserveInputUp;
-        const std::string worldUpType = _program->TextOrEmpty(c.worldUpType);
-        if (worldUpType == "sceneUp") {
-            aim.worldUpCode = eval::kPoseWorldUpScene;
-        } else if (worldUpType == "vector") {
-            aim.worldUpCode = eval::kPoseWorldUpVector;
-        } else if (worldUpType == "objectUp") {
-            aim.worldUpCode = eval::kPoseWorldUpObject;
-        } else if (worldUpType == "objectRotationUp") {
-            aim.worldUpCode = eval::kPoseWorldUpObjectRotation;
-        } else {
-            aim.worldUpCode = eval::kPoseWorldUpNone;
+        eval::PoseArraysViewT<RrPoseMath> view;
+        if (c.arrays < 0 || size_t(c.arrays) >= _program->store.arrays.size()) {
+            view.ok = false;
+            return view;
         }
-        aim.sceneUp = RrVec3d(c.sceneUp[0], c.sceneUp[1], c.sceneUp[2]);
-        aim.authoredWorldUp =
-            _program->ReadConstraint(ci, RrConstraintWorldUpVector).vec;
-        aim.worldUpObjectNamed = c.worldUpObjectNamed;
-        aim.worldUpObject = c.worldUpObject;
-        aim.worldUpNative = c.worldUpNative;
-        aim.worldUpRotationOnly =
-            (c.flags & RigExecWireConstraintWorldUpRotationOnly) != 0;
-        return aim;
+        const RrConstraintArraysLive &arrays =
+            _program->store.arrays[size_t(c.arrays)];
+        view.ok = arrays.ok;
+        view.weights = arrays.weights.empty() ? nullptr : arrays.weights.data();
+        view.weightCount = arrays.weights.size();
+        view.translationOffsets = arrays.translationOffsets.empty()
+                                      ? nullptr
+                                      : arrays.translationOffsets.data();
+        view.rotationOffsets = arrays.rotationOffsets.empty()
+                                   ? nullptr
+                                   : arrays.rotationOffsets.data();
+        view.offsetCount = std::min(arrays.translationOffsets.size(),
+                                    arrays.rotationOffsets.size());
+        view.diagnostics =
+            arrays.diagnostics.empty() ? nullptr : arrays.diagnostics.data();
+        view.diagnosticCount = arrays.diagnostics.size();
+        view.poleOk = arrays.poleOk;
+        view.poleWeights =
+            arrays.poleWeights.empty() ? nullptr : arrays.poleWeights.data();
+        view.poleWeightCount = arrays.poleWeights.size();
+        view.poleDiagnostics = arrays.poleDiagnostics.empty()
+                                   ? nullptr
+                                   : arrays.poleDiagnostics.data();
+        view.poleDiagnosticCount = arrays.poleDiagnostics.size();
+        return view;
+    }
+
+    // Flag \p i of constraint commit \p object's mover: affect x, y, z,
+    // then the translation, rotation and scale axes.
+    bool constraintFlag(size_t object, size_t i) const
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        return i < 12 &&
+               _program->ReadConstraint(ci, RrConstraintAffectX + int(i))
+                   .boolean;
+    }
+
+    RrVec3d constraintVector(size_t object, eval::PoseConstraintVector v) const
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        const RigExecWireConstraint &c = _program->poses->constraints[ci];
+        using V = eval::PoseConstraintVector;
+        switch (v) {
+        case V::Offset:
+            return _program->ReadConstraint(ci, RrConstraintOffset).vec;
+        case V::AimVector:
+            // Files written before Build bound the aimAxis fallback into
+            // aimVector choose it here.
+            return c.aimVectorAuthored
+                       ? _program->ReadConstraint(ci, RrConstraintAimVector).vec
+                       : RrVec3d(c.aimAxisFallback[0], c.aimAxisFallback[1],
+                                 c.aimAxisFallback[2]);
+        case V::UpVector:
+            return _program->ReadConstraint(ci, RrConstraintUpVector).vec;
+        case V::RotationOffset:
+            return _program->ReadConstraint(ci, RrConstraintRotationOffset).vec;
+        case V::WorldUpVector:
+            return _program->ReadConstraint(ci, RrConstraintWorldUpVector).vec;
+        case V::SceneUp:
+            break;
+        }
+        return RrVec3d(c.sceneUp[0], c.sceneUp[1], c.sceneUp[2]);
+    }
+
+    bool constraintSourceRead(size_t object, size_t k, int *slot,
+                              uint32_t *finRead) const
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        const RigExecWireConstraint &c = _program->poses->constraints[ci];
+        const RigExecWireCommit &commit = _program->poses->commits[object];
+        if (k >= c.sources.size() || k >= commit.sourceReads.size()) {
+            return false;
+        }
+        *slot = c.sources[k];
+        *finRead = commit.sourceReads[k];
+        return true;
+    }
+
+    bool worldUpObjectNamed(size_t object) const
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        return _program->poses->constraints[ci].worldUpObjectNamed;
+    }
+
+    bool worldUpRotationOnly(size_t object) const
+    {
+        const size_t ci = size_t(_program->poses->walkSteps[object].index);
+        return (_program->poses->constraints[ci].flags &
+                RigExecWireConstraintWorldUpRotationOnly) != 0;
     }
 
     bool deltaBaseValid(int deltaBase) const
@@ -1074,146 +1050,6 @@ public:
     {
     }
 
-    void writeAvar(int32_t slot, double value)
-    {
-        _program->store.avars[size_t(slot)] = value;
-    }
-
-    std::vector<RigExecSpaceCheckpointInputT<RrMat4d>> &
-    checkpointInputs(size_t object)
-    {
-        return runtimePoseDetail::_RrScratch(_program)
-            ->checkpointInputs[object];
-    }
-
-    void writeSwitchFrame(size_t object, const RrMat4d &matrix)
-    {
-        _program->store.switchFrames[object] = matrix;
-    }
-
-    void beforeSlot(eval::StepKind kind, int begin, int i)
-    {
-        (void)kind;
-        (void)begin;
-        (void)i;
-    }
-
-    void writeRest(size_t slot, const RrMat4d &restM,
-                   const std::array<RrVec3d, 4> &points, unsigned flags,
-                   const RrMat4d &roundTrip)
-    {
-        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
-        scratch->restM[slot] = restM;
-        scratch->restFrames[slot] = RrPoseMath::MakeFrame(points, flags);
-        scratch->restPts[slot] = points;
-        scratch->restRoundTrip[slot] = roundTrip;
-    }
-
-    void writeLadder(size_t slot, const RrMat4d &selfD,
-                     const RrMat4d &parentDinv, const RrMat4d &defaultRoundTrip,
-                     const RrMat4d &posedD, const RrMat4d &parentSpaceM,
-                     const RrMat4d &posedAuthoredM, bool posedAuthored,
-                     bool parentSpaceAuthored, unsigned char rotationSign)
-    {
-        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
-        scratch->selfD[slot] = selfD;
-        scratch->parentDinv[slot] = parentDinv;
-        scratch->defaultRoundTrip[slot] = defaultRoundTrip;
-        scratch->posedD[slot] = posedD;
-        scratch->parentSpaceM[slot] = parentSpaceM;
-        scratch->posedAuthoredM[slot] = posedAuthoredM;
-        scratch->posedAuthored[slot] = posedAuthored ? 1 : 0;
-        scratch->parentSpaceAuthored[slot] = parentSpaceAuthored ? 1 : 0;
-        scratch->rotationSign[slot] = rotationSign;
-    }
-
-    void writeLadderUnavailable(size_t slot)
-    {
-        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
-        RrMat4d unavailable(1);
-        unavailable[3][0] = std::numeric_limits<double>::quiet_NaN();
-        scratch->restRoundTrip[slot] = unavailable;
-        scratch->defaultRoundTrip[slot] = unavailable;
-        scratch->selfD[slot] = unavailable;
-        scratch->parentDinv[slot] = unavailable;
-        scratch->posedD[slot] = unavailable;
-        scratch->posedAuthoredM[slot] = unavailable;
-        scratch->parentSpaceM[slot] = unavailable;
-        scratch->posedAuthored[slot] = 0;
-        scratch->parentSpaceAuthored[slot] = 0;
-        scratch->rotationSign[slot] = 0;
-        scratch->rotOrder[slot] = 0;
-    }
-
-    void writeRotOrder(size_t slot)
-    {
-        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
-        scratch->rotOrder[slot] =
-            _program->ReadLadder(slot, RrLadderRotationOrder).token;
-    }
-
-    eval::PoseLadderLastsT<RrPoseMath> ladderLasts(size_t slot)
-    {
-        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
-        eval::PoseLadderLastsT<RrPoseMath> lasts;
-        lasts.restM = &scratch->lastRestM[slot];
-        lasts.selfD = &scratch->lastSelfD[slot];
-        lasts.parentDinv = &scratch->lastParentDinv[slot];
-        lasts.posedAuthoredM = &scratch->lastPosedAuthoredM[slot];
-        lasts.posedD = &scratch->lastPosedD[slot];
-        lasts.parentSpaceM = &scratch->lastParentSpaceM[slot];
-        lasts.posedAuthored = &scratch->lastPosedAuthored[slot];
-        lasts.parentSpaceAuthored = &scratch->lastParentSpaceAuthored[slot];
-        lasts.rotationSign = &scratch->lastRotationSign[slot];
-        return lasts;
-    }
-
-    bool rotOrderMoved(size_t slot)
-    {
-        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
-        return scratch->rotOrder[slot] != scratch->lastRotOrder[slot];
-    }
-
-    void commitRotOrder(size_t slot)
-    {
-        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
-        scratch->lastRotOrder[slot] = scratch->rotOrder[slot];
-    }
-
-    void markRestChanged(size_t slot)
-    {
-        _program->store.restChanged[slot] = 1;
-        _movedAny = true;
-    }
-
-    void markLadderChanged(size_t slot)
-    {
-        _program->store.ladderChanged[slot] = 1;
-        _movedAny = true;
-    }
-
-    bool movedAny() const
-    {
-        return _movedAny;
-    }
-
-    void writeBase(size_t slot, const std::array<RrVec3d, 4> &points,
-                   unsigned flags)
-    {
-        _program->store.base[slot] = RrPoseMath::MakeFrame(points, flags);
-    }
-
-    void writeFin(size_t slot, const std::array<RrVec3d, 4> &points,
-                  unsigned flags)
-    {
-        _program->store.fin[slot] = RrPoseMath::MakeFrame(points, flags);
-    }
-
-    void writePosedM(size_t slot, const RrMat4d &matrix)
-    {
-        _program->store.posedM[slot] = matrix;
-    }
-
     eval::PoseCommitState commitState(size_t object)
     {
         RrCommitScratch &commit = _program->store.commits[object];
@@ -1283,17 +1119,6 @@ public:
         return true;
     }
 
-    bool writeFrameMatrix(size_t object, const RrMat4d &matrix, bool valid)
-    {
-        if (object >= _program->store.frameMatrix.size() ||
-            object >= _program->store.frameMatrixValid.size()) {
-            return false;
-        }
-        _program->store.frameMatrix[object] = matrix;
-        _program->store.frameMatrixValid[object] = valid ? 1 : 0;
-        return true;
-    }
-
     void setMatchValuesValid(size_t object, bool value)
     {
         const size_t ci = size_t(_program->poses->walkSteps[object].index);
@@ -1328,37 +1153,6 @@ public:
         return true;
     }
 
-    void matchPoleParent(size_t object, const RrMat4d &moved, RrMat4d *parent)
-    {
-        const size_t ci = size_t(_program->poses->walkSteps[object].index);
-        const RigExecWireConstraint &c = _program->poses->constraints[ci];
-        RrPoseScratch *scratch = runtimePoseDetail::_RrScratch(_program);
-        const int poleSlot = c.sources.size() > 6 ? c.sources[6] : -1;
-        if (c.matchPoleSwitch >= 0 && poleSlot >= 0 &&
-            size_t(poleSlot) < scratch->posedAuthored.size() &&
-            !scratch->posedAuthored[size_t(poleSlot)]) {
-            RrMat4d switched;
-            if (runtimePoseDetail::_RrMatchPoleParent(
-                    _program, c.matchPoleSwitch, c.matchPoleSourceRides, moved,
-                    &switched)) {
-                *parent = switched;
-            }
-            return;
-        }
-        if (c.matchPoleParentRides) {
-            *parent = eval::pose_ops::Multiply4<RrPoseMath>(*parent, moved);
-        }
-    }
-
-    // Defined in poseConstraints.cpp: the single-chain IK core lives
-    // there until the Solve lift unifies it, and this TU-local call
-    // cannot inline into every includer.
-    bool solveIkChain(size_t object, const std::vector<RrPointFrame> &chain,
-                      const std::vector<RrPointFrame> &rests,
-                      const RrPointFrame &effector, int mode, double stretch,
-                      double weight, const RrVec3d &pole, double twistDegrees,
-                      bool useAnimatedTs, std::vector<RrPointFrame> *solved);
-
     bool writeBaseVersion(uint32_t version,
                           const std::array<RrVec3d, 4> &points, unsigned flags)
     {
@@ -1386,11 +1180,6 @@ public:
     {
         runtimePoseDetail::_RrScratch(_program)->recordEveryTarget[object] =
             value ? 1 : 0;
-    }
-
-    RigExecWindowPacketPtr &windowCapture(int window)
-    {
-        return _program->store.windowCaptures[size_t(window)];
     }
 
     void recordConstraintEnvelope(size_t object)
@@ -1533,6 +1322,12 @@ public:
         _program->store.deltaPresent[deltaBase] = 1;
     }
 
+    void writeDeltaAbsent(size_t deltaBase)
+    {
+        runtimePoseDetail::_RrScratch(_program)->deltaPresent[deltaBase] = 0;
+        _program->store.deltaPresent[deltaBase] = 0;
+    }
+
     void observeCandidate(size_t object, const std::array<RrVec3d, 4> &points,
                           unsigned flags)
     {
@@ -1544,7 +1339,6 @@ public:
 private:
     RrProgram *_program;
     size_t _step = size_t(-1);
-    bool _movedAny = false;
 };
 
 class RrPoseHost {
@@ -1552,7 +1346,6 @@ public:
     using Math = RrPoseMath;
     using Inputs = RrPoseInputs;
     using State = RrPoseState;
-    using EvalValueFamily = eval::PoseValueFamily;
 
     explicit RrPoseHost(RrProgram *program, size_t step = size_t(-1))
         : _inputs(program), _state(program), _program(program)

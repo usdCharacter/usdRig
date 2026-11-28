@@ -9,6 +9,7 @@
 #define RIGEXEC_MATH_LATTICE_KERNEL_H
 
 #include "surfaceSnapKernel.h"
+#include "borrowedSpan.h"
 
 #include <algorithm>
 #include <array>
@@ -679,6 +680,17 @@ struct RigExecLatticeSettings {
         return !(*this == o);
     }
 };
+/// RigExecLatticeSettings with its mask borrowed instead of owned.
+struct RigExecLatticeSettingsView {
+    bool regularGrid = false;
+    std::array<RigExecLatticeInterpolation, 3> interpolation = {
+        RigExecLatticeInterpolation::BSpline,
+        RigExecLatticeInterpolation::BSpline,
+        RigExecLatticeInterpolation::BSpline};
+    std::array<float, 3> origin = {-.5f, -.5f, -.5f}, spacing = {1, 1, 1};
+    float strength = 1;
+    RigExecBorrowedSpan<float> mask;
+};
 namespace latticeDetail {
 inline std::array<float, 4>
 Basis(float t, RigExecLatticeInterpolation mode)
@@ -699,12 +711,11 @@ Basis(float t, RigExecLatticeInterpolation mode)
 /// less its grid position, mapped back by \p latticeToTarget, and a point
 /// reads the cubic blend of the 4x4x4 nodes around its lattice coordinate.
 /// Fails atomically, leaving \p points unchanged.
-template <class V, class D, class M, class Div>
+template <class V, class D, class M, class Div, class Settings>
 bool
 RigExecApplyLatticeGridKernel(std::vector<V> *points,
                               const std::vector<V> &posed, const Div &divisions,
-                              const RigExecLatticeSettings &s,
-                              const M &targetToLattice,
+                              const Settings &s, const M &targetToLattice,
                               const M &latticeToTarget, const M &cageToLattice)
 {
     if (!points || !s.regularGrid || !std::isfinite(s.strength) ||

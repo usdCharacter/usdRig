@@ -1,7 +1,7 @@
 // RigExec pulled upstream inputs. See upstreamTable.h for the contract.
 #include "rigExecImaging/upstreamTable.h"
 
-#include "rigExec/frameCache.h"
+#include "rigExec/api/frameCache.h"
 
 #include "pxr/base/gf/math.h"
 #include "pxr/base/gf/matrix4d.h"
@@ -23,14 +23,13 @@ namespace {
 // sampled where a stage authors the same samples reconstructs bit for bit.
 template <class T>
 bool
-_LerpAs(const VtValue &lower, const VtValue &upper, double alpha,
-        VtValue *out)
+_LerpAs(const VtValue &lower, const VtValue &upper, double alpha, VtValue *out)
 {
     if (!lower.IsHolding<T>() || !upper.IsHolding<T>()) {
         return false;
     }
-    *out = VtValue(GfLerp(alpha, lower.UncheckedGet<T>(),
-                          upper.UncheckedGet<T>()));
+    *out = VtValue(
+        GfLerp(alpha, lower.UncheckedGet<T>(), upper.UncheckedGet<T>()));
     return true;
 }
 
@@ -103,12 +102,11 @@ _ArrayData(const VtValue &value)
     return nullptr;
 }
 
-}  // namespace
+} // namespace
 
 VtValue
 RigExecReconstructUpstream(
-    const std::vector<RigExecUpstreamTableSample> &samples, double t,
-    bool held)
+    const std::vector<RigExecUpstreamTableSample> &samples, double t, bool held)
 {
     if (samples.empty()) {
         return VtValue();
@@ -153,8 +151,8 @@ RigExecUpstreamTable::AnyVaries() const
 
 bool
 RigExecUpstreamTable::ValueAt(const SdfPath &path,
-                              const RigExecUpstreamTableEntry &entry,
-                              double t, RigExecUpstreamValue *out) const
+                              const RigExecUpstreamTableEntry &entry, double t,
+                              RigExecUpstreamValue *out) const
 {
     out->path = path;
     if (!entry.varies || t == t0) {
@@ -175,10 +173,10 @@ RigExecUpstreamTable::ValueAt(const SdfPath &path,
                                 ? entry.frameHashes[index]
                                 : RigExecUpstreamFoldHash(out->value);
         } else {
-            out->value = index < entry.frameValues.size()
-                             ? entry.frameValues[index]
-                             : RigExecReconstructUpstream(entry.samples, t,
-                                                          held);
+            out->value =
+                index < entry.frameValues.size()
+                    ? entry.frameValues[index]
+                    : RigExecReconstructUpstream(entry.samples, t, held);
             out->foldHash = 0;
         }
         return !out->value.IsEmpty();
@@ -223,10 +221,9 @@ RigExecFillUniformUpstreamEntry(const VtValue &value,
 }
 
 bool
-RigExecFillVaryingUpstreamEntry(
-    const RigExecUpstreamTable &table,
-    std::vector<RigExecUpstreamTableSample> samples,
-    RigExecUpstreamTableEntry *entry)
+RigExecFillVaryingUpstreamEntry(const RigExecUpstreamTable &table,
+                                std::vector<RigExecUpstreamTableSample> samples,
+                                RigExecUpstreamTableEntry *entry)
 {
     samples.erase(std::remove_if(samples.begin(), samples.end(),
                                  [](const RigExecUpstreamTableSample &s) {
@@ -236,11 +233,10 @@ RigExecFillVaryingUpstreamEntry(
     if (samples.empty()) {
         return false;
     }
-    std::stable_sort(samples.begin(), samples.end(),
-                     [](const RigExecUpstreamTableSample &a,
-                        const RigExecUpstreamTableSample &b) {
-                         return a.time < b.time;
-                     });
+    std::stable_sort(
+        samples.begin(), samples.end(),
+        [](const RigExecUpstreamTableSample &a,
+           const RigExecUpstreamTableSample &b) { return a.time < b.time; });
     // One value per time: the first returned wins.
     samples.erase(std::unique(samples.begin(), samples.end(),
                               [](const RigExecUpstreamTableSample &a,
@@ -348,8 +344,7 @@ RigExecSameUpstreamSources(const RigExecUpstreamTable &a,
             continue;
         }
         if (x.samples.size() != y.samples.size() ||
-            x.frameValues != y.frameValues ||
-            x.frameHashes != y.frameHashes) {
+            x.frameValues != y.frameValues || x.frameHashes != y.frameHashes) {
             return false;
         }
         for (size_t i = 0; i < x.samples.size(); ++i) {
@@ -383,4 +378,4 @@ RigExecUpstreamTableBufferCount(const RigExecUpstreamTable &table)
     return buffers.size();
 }
 
-}  // namespace rigExec
+} // namespace rigExec

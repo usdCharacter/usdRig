@@ -19,8 +19,8 @@
 #ifndef RIGEXEC_IMAGING_WARM_INDEX_H
 #define RIGEXEC_IMAGING_WARM_INDEX_H
 
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/frameCache.h"
+#include "rigExecPlayback/backgroundScheduler.h"
+#include "rigExec/api/frameCache.h"
 
 #include <atomic>
 #include <cstdint>
@@ -63,6 +63,7 @@ constexpr size_t kRigExecWarmUnwarmableAfter = 3;
 /// See the file header for the legacy lock discipline.
 class RigExecWarmFrameIndex {
     struct _Progress;
+
 public:
     /// Immutable lifetime/scope captured on the registry owner, before enqueue.
     /// A worker may only Publish: one nonspinning claim, then release-ready.
@@ -71,20 +72,24 @@ public:
     public:
         bool Publish(const RigExecFrameCacheKey &key,
                      RigExecFrameGeneration generation) const;
-        explicit operator bool() const { return bool(_progress); }
+        explicit operator bool() const
+        {
+            return bool(_progress);
+        }
+
     private:
         friend class RigExecWarmFrameIndex;
         std::shared_ptr<_Progress> _progress;
     };
     RequestPublication RequestPublicationFor(const SdfPath &rig,
-        double timeValue, RigExecFrameGeneration generation,
-        uint64_t compiledRigSignature);
+                                             double timeValue,
+                                             RigExecFrameGeneration generation,
+                                             uint64_t compiledRigSignature);
 
     /// Records the rig's current warming generation (the registry pushes on
     /// every cancel; 0 for a rig never pushed). Also clears the rig's
     /// non-publish streaks: the edit may have fixed warmability.
-    void NoteGeneration(const SdfPath &rig,
-                        RigExecFrameGeneration generation);
+    void NoteGeneration(const SdfPath &rig, RigExecFrameGeneration generation);
     /// Records a reasoned factory skip for the time (a non-publish signal).
     void NoteSkipped(const SdfPath &rig, double timeValue);
 
@@ -104,17 +109,20 @@ public:
     /// Bounded progress for one explicit range request. This is never cache
     /// residency: FindCachedKey/State and foreground requests are unchanged.
     void SetRequest(const SdfPath &rig, const std::vector<double> &times,
-                    RigExecFrameGeneration generation, uint64_t compiledRigSignature);
+                    RigExecFrameGeneration generation,
+                    uint64_t compiledRigSignature);
     uint64_t RequestToken(const SdfPath &rig) const;
     void InvalidateRequest(const SdfPath &rig);
     void NoteRequestPublished(const SdfPath &rig, double timeValue,
-        const RigExecFrameCacheKey &key, RigExecFrameGeneration generation,
-        uint64_t requestToken);
+                              const RigExecFrameCacheKey &key,
+                              RigExecFrameGeneration generation,
+                              uint64_t requestToken);
     bool HasRequestPublished(const SdfPath &rig, double timeValue,
-        RigExecFrameGeneration generation, uint64_t compiledRigSignature) const;
+                             RigExecFrameGeneration generation,
+                             uint64_t compiledRigSignature) const;
     bool IsCursorVisitable(const SdfPath &rig, double timeValue,
-        RigExecFrameGeneration generation, uint64_t compiledRigSignature) const;
-
+                           RigExecFrameGeneration generation,
+                           uint64_t compiledRigSignature) const;
 
     /// Records a publish completion: \p timeValue now holds \p key under \p
     /// generation. Overwrites any earlier record for the time -- a republish
@@ -141,8 +149,8 @@ public:
     /// entry provenance: clean entries carry under a new key, dirty ones
     /// retire. A completion evicted concurrently reads under its drained
     /// key and degrades to the retire lane, never to a wrong base.
-    std::vector<std::pair<UsdTimeCode, RigExecFrameCacheKey>> CompletedKeys(
-        const SdfPath &rig) const;
+    std::vector<std::pair<UsdTimeCode, RigExecFrameCacheKey>>
+    CompletedKeys(const SdfPath &rig) const;
 
     /// Answers the recorded completion key for (\p rig, \p timeValue), or
     /// false when the time holds no completion. The sparse-serve path's
@@ -185,10 +193,10 @@ public:
 
     /// Batched states for \p timeValues, in order -- one call per strip
     /// repaint, no sampling on the query path.
-    std::vector<RigExecWarmFrameState> States(
-        const SdfPath &rig, const std::vector<double> &timeValues,
-        RigExecFrameGeneration generation, uint64_t compiledRigSignature,
-        std::vector<bool> *currentCompletions = nullptr) const;
+    std::vector<RigExecWarmFrameState>
+    States(const SdfPath &rig, const std::vector<double> &timeValues,
+           RigExecFrameGeneration generation, uint64_t compiledRigSignature,
+           std::vector<bool> *currentCompletions = nullptr) const;
 
 private:
     struct _Frame {
@@ -206,7 +214,9 @@ private:
 
     struct _Progress {
         _Progress(RigExecFrameGeneration g, uint64_t e, bool ready = false)
-            : generation(g), compiledRigSignature(e), state(ready ? 2 : 0) {}
+            : generation(g), compiledRigSignature(e), state(ready ? 2 : 0)
+        {
+        }
         const RigExecFrameGeneration generation;
         const uint64_t compiledRigSignature;
         // 0 unclaimed, 1 claimed, 2 ready. Never reset while captured.
@@ -224,9 +234,9 @@ private:
     uint64_t _nextRequest = 0;
 
     // The state rule over a found-or-absent record. Call with _mutex held.
-    static RigExecWarmFrameState _StateFor(
-        const _Frame *frame, RigExecFrameGeneration generation,
-        uint64_t compiledRigSignature);
+    static RigExecWarmFrameState _StateFor(const _Frame *frame,
+                                           RigExecFrameGeneration generation,
+                                           uint64_t compiledRigSignature);
 
     mutable std::mutex _mutex;
     std::map<std::pair<SdfPath, double>, _Frame> _frames;
@@ -234,6 +244,6 @@ private:
     std::set<std::pair<SdfPath, double>> _partialFallback;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_IMAGING_WARM_INDEX_H
+#endif // RIGEXEC_IMAGING_WARM_INDEX_H

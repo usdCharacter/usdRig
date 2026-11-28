@@ -5,12 +5,17 @@
 #ifndef RIGEXEC_TESTS_POSE_COMPARE_H
 #define RIGEXEC_TESTS_POSE_COMPARE_H
 
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/frameReader.h"
+#include "rigExec/api/poseFrameReader.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/usd/usd/stage.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <string>
 #include <vector>
@@ -18,6 +23,31 @@
 PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExecTest {
+
+/// \p n values of \p a and \p b bit for bit, except that any NaN equals any
+/// NaN: which NaN an operation yields (its sign and payload) depends on the
+/// instruction the compiler picks, so two code paths agree only that it is
+/// NaN. Prints both bit patterns of the first mismatch, after \p what.
+template <class T>
+bool
+SameBitsOrNaN(const T *a, const T *b, size_t n, const char *what)
+{
+    static_assert(sizeof(T) <= sizeof(uint64_t), "a scalar");
+    for (size_t i = 0; i < n; ++i) {
+        if (std::isnan(a[i]) && std::isnan(b[i]))
+            continue;
+        if (std::memcmp(&a[i], &b[i], sizeof(T)) != 0) {
+            uint64_t x = 0, y = 0;
+            std::memcpy(&x, &a[i], sizeof(T));
+            std::memcpy(&y, &b[i], sizeof(T));
+            std::printf("    %s[%zu]: %g (0x%016llx) vs %g (0x%016llx)\n", what,
+                        i, double(a[i]), (unsigned long long)x, double(b[i]),
+                        (unsigned long long)y);
+            return false;
+        }
+    }
+    return true;
+}
 
 /// Exact equality on one published frame: the flags and every point.
 ///
@@ -61,6 +91,48 @@ CompareMaps(int *failures, const char *what, const std::string &where,
     }
 }
 
+/// One published domain, path by path in BOTH directions, as CompareMaps;
+/// \p equal takes the reference index and the actual index.
+template <class Equal>
+void
+CompareDomain(int *failures, const char *what, const std::string &where,
+              const rigExec::RigExecFrameReader &reference,
+              const rigExec::RigExecFrameReader &baked,
+              rigExec::RigExecFrameDomain domain, Equal equal)
+{
+    const size_t referenceCount = reference.GetCount(domain);
+    for (size_t index = 0; index < referenceCount; ++index) {
+        const SdfPath &path = reference.GetPath(domain, index);
+        size_t found = 0;
+        if (!baked.FindIndex(domain, path, &found)) {
+            ++*failures;
+            std::printf("FAIL %s: actual pose published no %s for %s\n",
+                        where.c_str(), what, path.GetText());
+        } else if (!equal(index, found)) {
+            ++*failures;
+            std::printf("FAIL %s: %s differs at %s\n", where.c_str(), what,
+                        path.GetText());
+        }
+    }
+    const size_t bakedCount = baked.GetCount(domain);
+    for (size_t index = 0; index < bakedCount; ++index) {
+        const SdfPath &path = baked.GetPath(domain, index);
+        if (!reference.Has(domain, path)) {
+            ++*failures;
+            std::printf("FAIL %s: actual pose published an extra %s at %s\n",
+                        where.c_str(), what, path.GetText());
+        }
+    }
+}
+
+inline bool
+SameSolverFrames(TfSpan<const rigExec::RigExecPointFrame> a,
+                 TfSpan<const rigExec::RigExecPointFrame> b)
+{
+    return a.size() == b.size() &&
+           std::equal(a.begin(), a.end(), b.begin(), SameFrame);
+}
+
 /// Every published MAP domain RigExecComparePoses compares.
 ///
 /// The weight domains are empty on both paths while the features that fill
@@ -69,43 +141,68 @@ CompareMaps(int *failures, const char *what, const std::string &where,
 /// is measured instead of waved through.
 inline void
 CompareEveryMap(int *failures, const std::string &where,
+                const rigExec::RigExecFrameReader &reference,
+                const rigExec::RigExecFrameReader &baked)
+{
+    using rigExec::RigExecFrameDomain;
+    const auto sameFrame = [&](RigExecFrameDomain domain) {
+        return [&, domain](size_t a, size_t b) {
+            return SameFrame(reference.GetPointFrame(domain, a),
+                             baked.GetPointFrame(domain, b));
+        };
+    };
+    const auto sameMatrix = [&](RigExecFrameDomain domain) {
+        return [&, domain](size_t a, size_t b) {
+            return reference.GetMatrix(domain, a) == baked.GetMatrix(domain, b);
+        };
+    };
+    CompareDomain(failures, "base joint frame", where, reference, baked,
+                  RigExecFrameDomain::JointFrameBase,
+                  sameFrame(RigExecFrameDomain::JointFrameBase));
+    CompareDomain(failures, "final joint frame", where, reference, baked,
+                  RigExecFrameDomain::JointFrameFinal,
+                  sameFrame(RigExecFrameDomain::JointFrameFinal));
+    CompareDomain(failures, "joint matrix", where, reference, baked,
+                  RigExecFrameDomain::JointMatrix,
+                  sameMatrix(RigExecFrameDomain::JointMatrix));
+    CompareDomain(failures, "control frame", where, reference, baked,
+                  RigExecFrameDomain::ControlFrame,
+                  sameFrame(RigExecFrameDomain::ControlFrame));
+    CompareDomain(failures, "provider transform", where, reference, baked,
+                  RigExecFrameDomain::ProviderTransform,
+                  sameMatrix(RigExecFrameDomain::ProviderTransform));
+    CompareDomain(failures, "provider base transform", where, reference, baked,
+                  RigExecFrameDomain::ProviderBaseTransform,
+                  sameMatrix(RigExecFrameDomain::ProviderBaseTransform));
+    CompareDomain(failures, "moved property", where, reference, baked,
+                  RigExecFrameDomain::MovedProperty, [&](size_t a, size_t b) {
+                      return reference.GetMovedValue(a) ==
+                             baked.GetMovedValue(b);
+                  });
+    CompareDomain(failures, "solver frames", where, reference, baked,
+                  RigExecFrameDomain::SolverFrames, [&](size_t a, size_t b) {
+                      return SameSolverFrames(reference.GetSolverFrames(a),
+                                              baked.GetSolverFrames(b));
+                  });
+    CompareDomain(failures, "weight field", where, reference, baked,
+                  RigExecFrameDomain::WeightField, [&](size_t a, size_t b) {
+                      return reference.GetWeightFieldTarget(a) ==
+                                 baked.GetWeightFieldTarget(b) &&
+                             reference.GetWeightFieldWeights(a) ==
+                                 baked.GetWeightFieldWeights(b);
+                  });
+    CompareDomain(failures, "weight frame", where, reference, baked,
+                  RigExecFrameDomain::WeightFrame,
+                  sameMatrix(RigExecFrameDomain::WeightFrame));
+}
+
+inline void
+CompareEveryMap(int *failures, const std::string &where,
                 const rigExec::RigExecRigPose &reference,
                 const rigExec::RigExecRigPose &baked)
 {
-    const auto sameMatrix = [](const GfMatrix4d &a, const GfMatrix4d &b) {
-        return a == b;
-    };
-    CompareMaps(failures, "base joint frame", where, reference.jointFramesBase,
-                baked.jointFramesBase, SameFrame);
-    CompareMaps(failures, "final joint frame", where,
-                reference.jointFramesFinal, baked.jointFramesFinal, SameFrame);
-    CompareMaps(failures, "joint matrix", where, reference.jointMatricesFinal,
-                baked.jointMatricesFinal, sameMatrix);
-    CompareMaps(failures, "control frame", where, reference.controlFrames,
-                baked.controlFrames, SameFrame);
-    CompareMaps(failures, "provider transform", where, reference.providerXforms,
-                baked.providerXforms, sameMatrix);
-    CompareMaps(failures, "provider base transform", where,
-                reference.providerBaseXforms, baked.providerBaseXforms,
-                sameMatrix);
-    CompareMaps(failures, "moved property", where, reference.movedProperties,
-                baked.movedProperties,
-                [](const VtValue &a, const VtValue &b) { return a == b; });
-    CompareMaps(failures, "solver frames", where, reference.solverFrames,
-                baked.solverFrames,
-                [](const std::vector<rigExec::RigExecPointFrame> &a,
-                   const std::vector<rigExec::RigExecPointFrame> &b) {
-                    return a.size() == b.size() &&
-                           std::equal(a.begin(), a.end(), b.begin(), SameFrame);
-                });
-    CompareMaps(failures, "weight field", where, reference.weightFields,
-                baked.weightFields,
-                [](const rigExec::RigExecResolvedWeightField &a,
-                   const rigExec::RigExecResolvedWeightField &b) {
-                    return a.target == b.target && a.weights == b.weights;
-                });
-    CompareMaps(failures, "weight frame", where, reference.weightFrames,
-                baked.weightFrames, sameMatrix);
+    CompareEveryMap(failures, where, rigExec::RigExecPoseFrameReader(reference),
+                    rigExec::RigExecPoseFrameReader(baked));
 }
 
 /// The published SCALARS of a generation, the diagnostics included.
@@ -114,26 +211,38 @@ CompareEveryMap(int *failures, const std::string &where,
 /// the actual executor trace by scheduling tests and can differ with cache history.
 inline void
 CompareGenerationScalars(int *failures, const std::string &where,
-                         const rigExec::RigExecRigPose &reference,
-                         const rigExec::RigExecRigPose &baked)
+                         const rigExec::RigExecFrameReader &reference,
+                         const rigExec::RigExecFrameReader &baked)
 {
-    if (reference.diagnostics != baked.diagnostics) {
+    const size_t referenceCount = reference.GetDiagnosticCount();
+    const size_t bakedCount = baked.GetDiagnosticCount();
+    bool same = referenceCount == bakedCount;
+    for (size_t i = 0; same && i < referenceCount; ++i)
+        same = reference.GetDiagnostic(i) == baked.GetDiagnostic(i);
+    if (!same) {
         ++*failures;
         std::printf("FAIL %s: diagnostics differ (%zu vs %zu)\n", where.c_str(),
-                    reference.diagnostics.size(), baked.diagnostics.size());
-        for (size_t i = 0; i < std::max(reference.diagnostics.size(),
-                                        baked.diagnostics.size());
-             ++i) {
-            const char *a = i < reference.diagnostics.size()
-                                ? reference.diagnostics[i].c_str()
+                    referenceCount, bakedCount);
+        for (size_t i = 0; i < std::max(referenceCount, bakedCount); ++i) {
+            const char *a = i < referenceCount
+                                ? reference.GetDiagnostic(i).c_str()
                                 : "<none>";
-            const char *b = i < baked.diagnostics.size()
-                                ? baked.diagnostics[i].c_str()
-                                : "<none>";
+            const char *b =
+                i < bakedCount ? baked.GetDiagnostic(i).c_str() : "<none>";
             if (std::string(a) != b)
                 std::printf("    %s\n  vs%s\n", a, b);
         }
     }
+}
+
+inline void
+CompareGenerationScalars(int *failures, const std::string &where,
+                         const rigExec::RigExecRigPose &reference,
+                         const rigExec::RigExecRigPose &baked)
+{
+    CompareGenerationScalars(failures, where,
+                             rigExec::RigExecPoseFrameReader(reference),
+                             rigExec::RigExecPoseFrameReader(baked));
 }
 
 /// The whole published generation: every map, then every compared scalar.
@@ -142,11 +251,20 @@ CompareGenerationScalars(int *failures, const std::string &where,
 /// evaluators are at the same point in their lives.
 inline void
 ComparePose(int *failures, const std::string &where,
-            const rigExec::RigExecRigPose &reference,
-            const rigExec::RigExecRigPose &baked)
+            const rigExec::RigExecFrameReader &reference,
+            const rigExec::RigExecFrameReader &baked)
 {
     CompareEveryMap(failures, where, reference, baked);
     CompareGenerationScalars(failures, where, reference, baked);
+}
+
+inline void
+ComparePose(int *failures, const std::string &where,
+            const rigExec::RigExecRigPose &reference,
+            const rigExec::RigExecRigPose &baked)
+{
+    ComparePose(failures, where, rigExec::RigExecPoseFrameReader(reference),
+                rigExec::RigExecPoseFrameReader(baked));
 }
 
 /// One evaluator input: a time and the interactive overrides standing on it.
@@ -193,15 +311,24 @@ CheckHistoryIndependent(int *failures, const std::string &what,
         }
         return evaluator.Evaluate(state.time);
     };
-    const rigExec::RigExecRigPose first = evaluate(warm, before);
-    const rigExec::RigExecRigPose second = evaluate(warm, after);
-    const rigExec::RigExecRigPose alone = evaluate(fresh, after);
-    if (!first.valid || !second.valid || !alone.valid) {
+    const rigExec::RigExecRigPose firstPose = evaluate(warm, before);
+    const rigExec::RigExecRigPose secondPose = evaluate(warm, after);
+    const rigExec::RigExecRigPose alonePose = evaluate(fresh, after);
+    const rigExec::RigExecPoseFrameReader first(firstPose);
+    const rigExec::RigExecPoseFrameReader second(secondPose);
+    const rigExec::RigExecPoseFrameReader alone(alonePose);
+    if (!first.IsValid() || !second.IsValid() || !alone.IsValid()) {
         ++*failures;
         std::printf("FAIL %s: a generation is invalid\n", where.c_str());
         return;
     }
-    if (first.solverFrames == second.solverFrames) {
+    const auto solvers = rigExec::RigExecFrameDomain::SolverFrames;
+    bool sameSolvers = first.GetCount(solvers) == second.GetCount(solvers);
+    for (size_t i = 0; sameSolvers && i < first.GetCount(solvers); ++i)
+        sameSolvers = first.GetPath(solvers, i) == second.GetPath(solvers, i) &&
+                      SameSolverFrames(first.GetSolverFrames(i),
+                                       second.GetSolverFrames(i));
+    if (sameSolvers) {
         ++*failures;
         std::printf("FAIL %s: the two states publish the same solver "
                     "frames\n",

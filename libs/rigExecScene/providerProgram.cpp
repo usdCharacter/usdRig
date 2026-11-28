@@ -68,8 +68,7 @@ Provider(const TfToken &type)
 }
 TF_DEFINE_PRIVATE_TOKENS(_computationTokens,
     (computeRestFrame)(computedDefaultSpace)(computeDefaultFrame)(computedParentDefaultSpace)
-    (computedParentSpace)(computePointFrame)(computeMatrix)(interveningSpace)(computeAvarMatrix)
-    (localXform));
+    (computedParentSpace)(computePointFrame)(computeMatrix)(interveningSpace)(computeAvarMatrix));
 // A value key by structure, so a lookup builds no text. Its text, made once
 // at creation, stays the value's name and decides its id.
 enum class _KeyKind : uint8_t { Computation, Connection, Raw, Value };
@@ -117,8 +116,6 @@ ParentProvider(const RigExecSceneDescriptors &scene, const SdfPath &path)
 // name, as an ordinary op whose inputs are those values. The layout
 // (RigExecAffineFrameTypes) states every input in op order; the kernels are
 // affineFrameKernel.h's, which the runtime runs too.
-using AffineInputs = RigExecAffineFrameInputs;
-using AffineKernel = RigExecGfAffineFrameKernel;
 constexpr uint32_t affineTypeCount = RigExecAffineFrameTypeCount;
 // The affine type of \p type, or affineTypeCount.
 uint32_t
@@ -186,75 +183,6 @@ AffineTargets(const RigExecSceneDescriptors &scene, const SdfPath &prim,
     return found == scene.relationships.end() ? SdfPathVector()
                                               : found->second.fact.targets;
 }
-// A provider's point frame from its four landmarks, as a matrix: the axes
-// relative to the origin as rows, then the origin. No frame is identity.
-GfMatrix4d
-AffineFrameMatrix(const RigExecPointFrame *frame)
-{
-    if (!frame)
-        return GfMatrix4d(1);
-    return AffineKernel::FrameMatrix(frame->Origin(), frame->X(), frame->Y(),
-                                     frame->Z());
-}
-// One input's value into its member: the store's typed value where it holds
-// one, the boxed source value otherwise; an unavailable input keeps the
-// member's default, as an absent exec input does.
-void
-AffineRead(const RigExecTypedValueStore &store, RigExecValueId id,
-           RigExecAffineField field, AffineInputs *in)
-{
-    const auto boxed = [&](auto *out) {
-        using T = std::decay_t<decltype(*out)>;
-        const auto *value = store.Read<VtValue>(id);
-        if (value && value->IsHolding<T>())
-            *out = value->UncheckedGet<T>();
-    };
-    RigExecVisitAffineField(*in, field, [&](auto &out) {
-        using T = std::decay_t<decltype(out)>;
-        if constexpr (std::is_same_v<T, GfMatrix4d> ||
-                      std::is_same_v<T, GfVec3d>) {
-            if (const auto *value = store.Read<T>(id))
-                out = *value;
-        } else if constexpr (std::is_same_v<T, double>) {
-            if (const auto *value = store.Read<double>(id))
-                out = *value;
-            else if (const auto *narrow = store.Read<float>(id))
-                out = *narrow;
-        } else if constexpr (std::is_same_v<T, std::string>) {
-            // The token's own text: no registry lookup.
-            if (const auto *value = store.Read<TfToken>(id))
-                out = value->GetText();
-        } else if constexpr (std::is_same_v<T, std::vector<int>>) {
-            VtIntArray array;
-            boxed(&array);
-            if (!array.empty())
-                out.assign(array.begin(), array.end());
-        } else if constexpr (std::is_same_v<T, std::vector<GfMatrix4d>>) {
-            VtMatrix4dArray array;
-            boxed(&array);
-            if (!array.empty())
-                out.assign(array.begin(), array.end());
-        } else if constexpr (std::is_same_v<T, std::vector<double>>) {
-            VtDoubleArray array;
-            boxed(&array);
-            if (!array.empty())
-                out.assign(array.begin(), array.end());
-        } else {
-            boxed(&out);
-        }
-    });
-}
-struct GfProviderMath {
-    using Matrix = GfMatrix4d;
-    using Vector = GfVec3d;
-    using Rotation = GfRotation;
-    using Frame = RigExecPointFrame;
-    static bool PointsToMatrix(const std::array<Vector, 4> &rest,
-                               const std::array<Vector, 4> &pose, Matrix *out)
-    {
-        return RigExecPointsToMatrix(rest, pose, out);
-    }
-};
 } // namespace
 std::string
 RigExecProviderValueKey(const SdfPath &owner, const std::string &computation)
@@ -284,14 +212,13 @@ RigExecProviderProgram::FindValue(const std::string &key) const
 }
 bool
 RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,
-                            bool composeFrames, RigExecProviderProgram *output,
-                            std::string *error,
+                            RigExecProviderProgram *output, std::string *error,
                             const std::set<SdfPath> *selectedProviders)
 {
     if (!output)
         return Fail(error, "provider compiler needs an output");
     RigExecProviderProgram program;
-    std::set<SdfPath> providerPaths, usedAttributes, xformPaths, nativeFrames;
+    std::set<SdfPath> providerPaths, usedAttributes;
     std::function<void(const SdfPath &)> includeAttribute, includeProvider;
     std::function<void(const SdfPath &, uint32_t)> includeAffine;
     includeAttribute = [&](const SdfPath &path) {
@@ -373,53 +300,6 @@ RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,
         if (node.fact.active && Provider(node.fact.type) &&
             (!selectedProviders || selectedProviders->count(path)))
             includeProvider(path);
-    if (composeFrames)
-        for (const auto &path : providerPaths) {
-            const auto parent = ParentProvider(scene, path);
-            const auto anchor =
-                parent.IsEmpty() ? scene.rigRoot.GetParentPath() : parent;
-            for (auto ancestor = path.GetParentPath();
-                 !ancestor.IsEmpty() && ancestor != anchor;
-                 ancestor = ancestor.GetParentPath()) {
-                const auto node = scene.nodes.find(ancestor);
-                if (node == scene.nodes.end() || !node->second.fact.active ||
-                    !node->second.transformProvider ||
-                    Provider(node->second.fact.type))
-                    continue;
-                xformPaths.insert(ancestor);
-                for (const auto &attribute : node->second.attributes)
-                    if (attribute.GetName() == "xformOpOrder" ||
-                        attribute.GetName().rfind("xformOp:", 0) == 0)
-                        includeAttribute(attribute);
-            }
-        }
-    if (composeFrames)
-        for (const auto &[path, node] : scene.nodes)
-            if (node.fact.active && node.transformProvider &&
-                !Provider(node.fact.type)) {
-                bool referenced = false;
-                for (const auto &[unused, relation] : scene.relationships)
-                    for (const auto &target : relation.forwardedTargets)
-                        referenced |= target.GetPrimPath() == path;
-                if (!referenced)
-                    continue;
-                nativeFrames.insert(path);
-                for (auto ancestor = path;
-                     !ancestor.IsEmpty() &&
-                     ancestor != scene.rigRoot.GetParentPath();
-                     ancestor = ancestor.GetParentPath()) {
-                    const auto captured = scene.nodes.find(ancestor);
-                    if (captured == scene.nodes.end() ||
-                        !captured->second.fact.active ||
-                        !captured->second.transformProvider)
-                        continue;
-                    xformPaths.insert(ancestor);
-                    for (const auto &attribute : captured->second.attributes)
-                        if (attribute.GetName() == "xformOpOrder" ||
-                            attribute.GetName().rfind("xformOp:", 0) == 0)
-                            includeAttribute(attribute);
-                }
-            }
     std::map<std::string, _Key> keys;
     std::map<SdfPath, RigExecValueId> routed;
     const auto &C = *_computationTokens;
@@ -448,7 +328,7 @@ RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,
     }
     for (const auto &[path, node] : scene.nodes)
         if (node.fact.active) {
-            if (providerPaths.count(path) || nativeFrames.count(path))
+            if (providerPaths.count(path))
                 // Every computation a provider node can produce. The token is the
                 // only spelling; the value key's text is the token's own name.
                 for (const TfToken &computation :
@@ -459,10 +339,6 @@ RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,
                     keys.emplace(
                         RigExecProviderValueKey(path, computation.GetString()),
                         _Key{path, computation, _KeyKind::Computation});
-            if (xformPaths.count(path))
-                keys.emplace(
-                    RigExecProviderValueKey(path, C.localXform.GetString()),
-                    _Key{path, C.localXform, _KeyKind::Computation});
         }
     std::unordered_map<_Key, RigExecValueId, _KeyHash> index;
     index.reserve(keys.size());
@@ -589,66 +465,6 @@ RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,
              {raw, connect(attr.fact)}},
             "attribute:" + path.GetString());
     }
-    if (composeFrames)
-        for (const auto &[path, node] : scene.nodes) {
-            if (!xformPaths.count(path))
-                continue;
-            const auto order =
-                find(_KeyKind::Raw, path.AppendProperty(_tokens->xformOpOrder));
-            RigExecProviderOp op{RigExecProviderOpKind::LocalXform,
-                                 path,
-                                 compId(path, C.localXform),
-                                 {order}};
-            for (const auto &attribute : node.attributes) {
-                const std::string name = attribute.GetName();
-                if (name.rfind("xformOp:", 0) != 0)
-                    continue;
-                const auto end = name.find(':', 8);
-                const auto type = XformOpType(
-                    name, 8, end == std::string::npos ? end : end - 8);
-                if (type == UsdGeomXformOp::TypeInvalid)
-                    return Fail(error, "unknown pure xform operation: " +
-                                           attribute.GetString());
-                op.xforms.push_back({attribute.GetNameToken(),
-                                     find(_KeyKind::Raw, attribute),
-                                     int(type)});
-            }
-            add(std::move(op), "localXform:" + path.GetString());
-        }
-    for (const auto &path : nativeFrames) {
-        RigExecProviderOp relative{RigExecProviderOpKind::RelativeXform,
-                                   path,
-                                   compId(path, C.computedDefaultSpace),
-                                   {}};
-        for (auto ancestor = path;
-             !ancestor.IsEmpty() && ancestor != scene.rigRoot.GetParentPath();
-             ancestor = ancestor.GetParentPath()) {
-            const auto local = compId(ancestor, C.localXform);
-            if (local != UINT64_MAX) {
-                relative.inputs.push_back(local);
-                relative.inputs.push_back(
-                    find(_KeyKind::Raw,
-                         ancestor.AppendProperty(_tokens->xformOpOrder)));
-            }
-        }
-        add(std::move(relative), "stageRelativeXform:" + path.GetString());
-        add({RigExecProviderOpKind::MatrixToFrame,
-             path,
-             compId(path, C.computePointFrame),
-             {compId(path, C.computedDefaultSpace)}},
-            "stageFrame:" + path.GetString());
-        add({RigExecProviderOpKind::MatrixToFrame,
-             path,
-             compId(path, C.computeRestFrame),
-             {compId(path, C.computedDefaultSpace)}},
-            "stageRest:" + path.GetString());
-        add({RigExecProviderOpKind::JointMatrix,
-             path,
-             compId(path, C.computeMatrix),
-             {compId(path, C.computeRestFrame),
-              compId(path, C.computePointFrame)}},
-            "stageDelta:" + path.GetString());
-    }
     for (const auto &[path, node] : scene.nodes) {
         if (!providerPaths.count(path))
             continue;
@@ -656,42 +472,12 @@ RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,
         const auto selfRest = compId(path, C.computeRestFrame),
                    selfPose = compId(path, C.computePointFrame);
         const auto parentRest = compId(parent, C.computeRestFrame);
-        const auto intervening = compId(path, C.interveningSpace);
-        if (!composeFrames)
-            for (const TfToken *computation :
-                 {&C.computeRestFrame, &C.computePointFrame,
-                  &C.interveningSpace}) {
-                const auto id = compId(path, *computation);
-                program.leaves.push_back(id);
-                program.externalInputs.push_back(
-                    {id, path, computation->GetString()});
-            }
-        else {
-            RigExecProviderOp ix{
-                RigExecProviderOpKind::InterveningXform, path, intervening, {}};
-            const SdfPath anchor =
-                parent.IsEmpty() ? scene.rigRoot.GetParentPath() : parent;
-            for (auto ancestor = path.GetParentPath();
-                 !ancestor.IsEmpty() && ancestor != anchor;
-                 ancestor = ancestor.GetParentPath()) {
-                const auto local = compId(ancestor, C.localXform);
-                if (local != RigExecNoProviderValue) {
-                    ix.inputs.push_back(local);
-                    ix.inputs.push_back(
-                        find(_KeyKind::Raw,
-                             ancestor.AppendProperty(_tokens->xformOpOrder)));
-                }
-            }
-            add(std::move(ix), "interveningXform:" + path.GetString());
-            add({RigExecProviderOpKind::RestFrame,
-                 path,
-                 selfRest,
-                 {attrId(path, _tokens->restSpace),
-                  attrId(path, _tokens->restTx), attrId(path, _tokens->restTy),
-                  attrId(path, _tokens->restTz), attrId(path, _tokens->restRx),
-                  attrId(path, _tokens->restRy), attrId(path, _tokens->restRz),
-                  parentRest, intervening}},
-                "restFrame:" + path.GetString());
+        for (const TfToken *computation :
+             {&C.computeRestFrame, &C.computePointFrame, &C.interveningSpace}) {
+            const auto id = compId(path, *computation);
+            program.leaves.push_back(id);
+            program.externalInputs.push_back(
+                {id, path, computation->GetString()});
         }
         add({RigExecProviderOpKind::FrameToSpace,
              path,
@@ -746,38 +532,6 @@ RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,
              compId(path, C.computeDefaultFrame),
              {attrId(path, _tokens->defaultSpace)}},
             "defaultFrame:" + path.GetString());
-        if (composeFrames) {
-            RigExecProviderOp posed{
-                RigExecProviderOpKind::PosedFrame,
-                path,
-                selfPose,
-                {attrId(path, _tokens->posedSpace),
-                 attrId(path, _tokens->posedDefaultSpace),
-                 attrId(path, _tokens->parentDefaultSpace),
-                 attrId(path, _tokens->parentSpace),
-                 attrId(path, _tokens->avarsUnitScaleFactor),
-                 attrId(path, _tokens->avarsTx), attrId(path, _tokens->avarsTy),
-                 attrId(path, _tokens->avarsTz), attrId(path, _tokens->avarsSx),
-                 attrId(path, _tokens->avarsSy), attrId(path, _tokens->avarsSz),
-                 attrId(path, _tokens->avarsRx), attrId(path, _tokens->avarsRy),
-                 attrId(path, _tokens->avarsRz),
-                 attrId(path, _tokens->avarsRspin),
-                 attrId(path, _tokens->avarsRotationOrder),
-                 attrId(path, _tokens->avarsRotationSign)}};
-            RigExecProviderOp avars{
-                RigExecProviderOpKind::AvarMatrix, path,
-                compId(path, C.computeAvarMatrix),
-                std::vector<RigExecValueId>(posed.inputs.begin() + 4,
-                                            posed.inputs.end())};
-            avars.scaleAvars =
-                node.fact.type == SchemaTypeName::RigExecControl ||
-                node.fact.type == SchemaTypeName::RigExecJoint;
-            add(std::move(avars), "avarMatrix:" + path.GetString());
-            posed.scaleAvars =
-                node.fact.type == SchemaTypeName::RigExecControl ||
-                node.fact.type == SchemaTypeName::RigExecJoint;
-            add(std::move(posed), "posedFrame:" + path.GetString());
-        }
         add({RigExecProviderOpKind::JointMatrix,
              path,
              compId(path, C.computeMatrix),
@@ -912,7 +666,7 @@ RigExecCloneProviderContext(
     return true;
 }
 namespace {
-// The kinds RigExecRunProviderOp hands to RigExecRunProviderArithmetic.
+// The kinds a provider op node or a ProviderSelect node runs.
 bool
 ArithmeticKind(RigExecProviderOpKind kind)
 {
@@ -920,8 +674,7 @@ ArithmeticKind(RigExecProviderOpKind kind)
            kind == RigExecProviderOpKind::AvarMatrix ||
            kind == RigExecProviderOpKind::RelativeXform;
 }
-// The cases of RigExecRunProviderArithmetic's switch: the only kinds for
-// which it does not return false.
+// Attribute and the cases of RigExecRunProviderArithmetic's switch.
 bool
 ArithmeticHandles(RigExecProviderOpKind kind)
 {
@@ -963,12 +716,7 @@ RigExecProviderOpStructurallyValid(const RigExecProviderProgram &program,
                         "affine frame inputs do not match their expression");
         return true;
     }
-    if (op.kind != RigExecProviderOpKind::LocalXform &&
-        op.kind != RigExecProviderOpKind::InterveningXform)
-        return Fail(error, "unknown provider operation kind");
-    if (op.ownerText >= program.ownerTexts.size())
-        return Fail(error, "provider operation owner was not spelled at build");
-    return true;
+    return Fail(error, "unknown provider operation kind");
 }
 bool
 RigExecComposeLocalXform(const VtTokenArray &order,
@@ -1037,163 +785,6 @@ RigExecComposeLocalXform(const VtTokenArray &order,
     *local = result;
     return true;
 }
-bool
-RigExecRunProviderOp(const RigExecProviderProgram &program, uint32_t index,
-                     RigExecTypedValueStore *store, std::string *error)
-{
-    if (!store || index >= program.ops.size() ||
-        store->values.size() < program.valueKeys.size())
-        return Fail(error, "invalid provider kernel/store binding");
-    if (!RigExecProviderOpStructurallyValid(program, index, error))
-        return false;
-    const auto &op = program.ops[index];
-    const auto id = [&](size_t input) {
-        return input < op.inputs.size() ? op.inputs[input]
-                                        : RigExecNoProviderValue;
-    };
-    const auto raw = [&](RigExecValueId value) -> const VtValue * {
-        return value < store->values.size() &&
-                       store->values[size_t(value)].initialized &&
-                       !store->values[size_t(value)].blocked
-                   ? &store->values[size_t(value)].raw
-                   : nullptr;
-    };
-    const auto unavailable = [&](RigExecValueId source,
-                                 const std::string &message) {
-        const bool blocked = source < store->values.size() &&
-                             store->values[size_t(source)].blocked;
-        store->values[size_t(op.output)].raw = VtValue();
-        store->Publish(op.output, std::monostate(), blocked, false, 0, message);
-        if (error)
-            *error = message;
-        return true;
-    };
-    if (ArithmeticKind(op.kind)) {
-        GfProviderStore adapter{*store};
-        if (!RigExecRunProviderArithmetic<GfProviderMath>(op, adapter))
-            return Fail(error,
-                        "unsupported provider arithmetic operation kind");
-        return true;
-    }
-    // The owner as the build spelled it, for the failure diagnostics below;
-    // the structural check refused a LocalXform or InterveningXform without one.
-    const std::string *spelled = op.ownerText < program.ownerTexts.size()
-                                     ? &program.ownerTexts[op.ownerText]
-                                     : nullptr;
-    switch (op.kind) {
-    case RigExecProviderOpKind::LocalXform: {
-        const std::string &owner = *spelled;
-        GfMatrix4d result(1.0);
-        const auto *order = raw(id(0));
-        if ((!order || !order->IsHolding<VtTokenArray>()) && !op.xforms.empty())
-            return unavailable(id(0), "xform order unavailable: " + owner);
-        if (order && order->IsHolding<VtTokenArray>()) {
-            struct Source {
-                const RigExecProviderOp &op;
-                const RigExecTypedValueStore *store;
-                RigExecValueId failed;
-            } source{op, store, RigExecNoProviderValue};
-            const auto find = [](void *context, std::string_view name,
-                                 int *type, const VtValue **value) {
-                auto &self = *static_cast<Source *>(context);
-                const auto input =
-                    std::find_if(self.op.xforms.begin(), self.op.xforms.end(),
-                                 [&](const auto &candidate) {
-                                     return candidate.name.GetString() == name;
-                                 });
-                if (input == self.op.xforms.end())
-                    return false;
-                *type = input->type;
-                const auto raw = input->raw;
-                const bool usable =
-                    raw < self.store->values.size() &&
-                    self.store->values[size_t(raw)].initialized &&
-                    !self.store->values[size_t(raw)].blocked &&
-                    !self.store->values[size_t(raw)].raw.IsEmpty();
-                *value =
-                    usable ? &self.store->values[size_t(raw)].raw : nullptr;
-                self.failed = raw;
-                return true;
-            };
-            TfToken failedOp;
-            std::string reason;
-            bool resets = false;
-            if (!RigExecComposeLocalXform(order->UncheckedGet<VtTokenArray>(),
-                                          {&source, find}, false, &result,
-                                          &resets, &reason, &failedOp))
-                return unavailable(
-                    reason.find("uncaptured") != std::string::npos
-                        ? id(0)
-                        : source.failed,
-                    reason + ": " + owner + ":" + failedOp.GetString());
-        }
-        store->Publish(op.output, result);
-        break;
-    }
-    case RigExecProviderOpKind::InterveningXform: {
-        const std::string &owner = *spelled;
-        GfMatrix4d result(1.0);
-        bool resets = false;
-        for (size_t i = 0; i < op.inputs.size(); i += 2) {
-            const auto *order = raw(id(i + 1));
-            if (order && order->IsHolding<VtTokenArray>())
-                for (const auto &token : order->UncheckedGet<VtTokenArray>())
-                    if (token == "!resetXformStack!")
-                        resets = true;
-            const auto *local = store->Read<GfMatrix4d>(id(i));
-            if (!local)
-                return unavailable(
-                    id(i), "intervening xform input unavailable: " + owner);
-            result = result * (*local);
-        }
-        if (resets)
-            store->Publish(op.output, GfMatrix4d(1.0), false, false, 1,
-                           "resetXformStack in intervening provider ancestry");
-        else
-            store->Publish(op.output, result);
-        break;
-    }
-    case RigExecProviderOpKind::AffineFrame: {
-        // Validated by RigExecProviderOpStructurallyValid above.
-        const RigExecAffineFrameType &type =
-            RigExecAffineFrameTypes[op.affineKind];
-        AffineInputs in;
-        size_t at = 0;
-        for (uint32_t k = 0; k < type.attributeCount; ++k)
-            AffineRead(*store, id(at++), type.attributes[k].field, &in);
-        for (uint32_t k = 0; k < type.relationCount; ++k) {
-            const GfMatrix4d frame =
-                AffineFrameMatrix(store->Read<RigExecPointFrame>(id(at++)));
-            RigExecVisitAffineField(
-                in, type.relations[k].field, [&](auto &out) {
-                    if constexpr (std::is_same_v<std::decay_t<decltype(out)>,
-                                                 GfMatrix4d>)
-                        out = frame;
-                });
-        }
-        if (type.targets) {
-            for (uint32_t k = 0; k < op.affineTargets; ++k)
-                in.targets.push_back(AffineFrameMatrix(
-                    store->Read<RigExecPointFrame>(id(at++))));
-            while (at < op.inputs.size())
-                in.targetObjects.push_back(AffineFrameMatrix(
-                    store->Read<RigExecPointFrame>(id(at++))));
-        }
-        GfMatrix4d result(1.0);
-        const char *failure = nullptr;
-        if (!AffineKernel::Compute(op.affineKind, in, &result, &failure))
-            return unavailable(RigExecNoProviderValue,
-                               std::string("affine frame expression failed: ") +
-                                   failure);
-        store->Publish(op.output, result);
-        break;
-    }
-    default:
-        return Fail(error, "unknown provider operation kind");
-    }
-    return true;
-}
-
 bool
 RigExecSampleProviderProgram(const RigExecProviderProgram &program,
                              const RigExecSceneDescriptors &scene,

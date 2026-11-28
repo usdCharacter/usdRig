@@ -86,7 +86,7 @@ activates. To apply a change to rigs that are already active, call
 ## Limits worth knowing
 
 - **Incomplete frozen inputs** prevent worker-thread warming; the host can
-  still evaluate a valid scene program on its owning thread. An owning-thread
+  still evaluate a valid rig on its owning thread. An owning-thread
   fill that fails is retried only after a stage edit, a new range request or
   a cache clear. Compilation failures remain invalid poses with diagnostics.
 - **`.rigexec` playback sessions** are unchanged and never consult the
@@ -96,8 +96,8 @@ activates. To apply a change to rigs that are already active, call
 
 ## Implementation
 
-See [architecture](../specs/spec.md), `libs/rigExec/frameCache.cpp`, and
-`libs/rigExec/backgroundScheduler.cpp` for cache ownership and scheduling.
+See [architecture](../specs/spec.md), `libs/rigExec/internal/frameCache.cpp`, and
+`libs/rigExecPlayback/backgroundScheduler.cpp` for cache ownership and scheduling.
 The owning thread samples a job's inputs before dispatch; the job runs on a
 worker-owned arena and publishes only while its generation and time fence are
 current. Value edits retire the affected times, structural edits retire every

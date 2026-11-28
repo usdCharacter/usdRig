@@ -29,8 +29,8 @@
 #include "rigExecImaging/sceneIndices.h"
 #include "rigExecImaging/snapshotStore.h"
 #include "rigExecBake/bake.h"
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExecPlayback/backgroundScheduler.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/imaging/hd/primvarSchema.h"
@@ -66,12 +66,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 static int failures = 0;
 static int skips = 0;
 
-#define CHECK(cond)                                                      \
-    do {                                                                 \
-        if (!(cond)) {                                                   \
-            ++failures;                                                  \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);  \
-        }                                                                \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -136,7 +136,7 @@ TestTable()
     CHECK(!demand.empty() && demand.front() == 10.0);
 
     auto entry = std::make_shared<RigExecImagingSnapshot>();
-    CHECK(!table.ResetIfStale(7));   // first stamp: nothing to drop
+    CHECK(!table.ResetIfStale(7)); // first stamp: nothing to drop
     table.Insert(4.0, entry, 1.0);
     CHECK(table.Find(4.0) == entry && table.Contains(4.0));
     CHECK(!table.Find(5.0));
@@ -166,7 +166,8 @@ HdSampledDataSourceHandle
 PointsSource(const HdSceneIndexBaseRefPtr &index, const SdfPath &path)
 {
     const HdSceneIndexPrim prim = index->GetPrim(path);
-    HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
+    HdPrimvarsSchema primvars =
+        HdPrimvarsSchema::GetFromParent(prim.dataSource);
     HdPrimvarSchema points = primvars.GetPrimvar(HdTokens->points);
     return points ? points.GetPrimvarValue() : nullptr;
 }
@@ -175,7 +176,8 @@ VtVec3fArray
 Published(const RigExecImagingRegistry::Ptr &registry, const SdfPath &prim)
 {
     const auto snapshot = registry->GetStore()->Get();
-    if (!snapshot) return VtVec3fArray();
+    if (!snapshot)
+        return VtVec3fArray();
     const auto it = snapshot->prims.find(prim);
     return it == snapshot->prims.end() ? VtVec3fArray() : it->second.points;
 }
@@ -200,13 +202,22 @@ WaitForFrame(const RigExecImagingRegistry::Ptr &registry,
 
 struct DirtyRecorder : public HdSceneIndexObserver {
     std::vector<HdSceneIndexObserver::DirtiedPrimEntry> dirtied;
-    void PrimsAdded(const HdSceneIndexBase &, const AddedPrimEntries &) override {}
-    void PrimsRemoved(const HdSceneIndexBase &, const RemovedPrimEntries &) override {}
+    void PrimsAdded(const HdSceneIndexBase &, const AddedPrimEntries &) override
+    {
+    }
+    void PrimsRemoved(const HdSceneIndexBase &,
+                      const RemovedPrimEntries &) override
+    {
+    }
     void PrimsDirtied(const HdSceneIndexBase &,
-                      const DirtiedPrimEntries &entries) override {
+                      const DirtiedPrimEntries &entries) override
+    {
         dirtied.insert(dirtied.end(), entries.begin(), entries.end());
     }
-    void PrimsRenamed(const HdSceneIndexBase &, const RenamedPrimEntries &) override {}
+    void PrimsRenamed(const HdSceneIndexBase &,
+                      const RenamedPrimEntries &) override
+    {
+    }
 };
 
 void
@@ -221,9 +232,11 @@ TestArmRig(const std::string &examples)
     }
     const UsdStageRefPtr stage = UsdStage::Open(examples + "/ArmRig.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     stage->SetEditTarget(stage->GetSessionLayer());
-    const UsdAttribute shoulder = stage->GetAttributeAtPath(SdfPath(kShoulderRz));
+    const UsdAttribute shoulder =
+        stage->GetAttributeAtPath(SdfPath(kShoulderRz));
     const UsdAttribute elbow = stage->GetAttributeAtPath(
         SdfPath("/ArmAsset/Rig/Controls/ElbowFK.avars:rz"));
     CHECK(shoulder && elbow);
@@ -239,7 +252,8 @@ TestArmRig(const std::string &examples)
     for (const std::string &error : errors) {
         std::printf("activation: %s\n", error.c_str());
     }
-    if (!registry->IsActive()) return;
+    if (!registry->IsActive())
+        return;
 
     // The reference: what playback publishes frame by frame.
     std::map<int, VtVec3fArray> body;
@@ -256,16 +270,19 @@ TestArmRig(const std::string &examples)
     // A results scene index over a plain upstream: the published prim and
     // its ancestors as empty shells.
     HdRetainedSceneIndexRefPtr upstream = HdRetainedSceneIndex::New();
-    upstream->AddPrims({
-        {SdfPath("/ArmAsset"), TfToken(), HdRetainedContainerDataSource::New()},
-        {SdfPath("/ArmAsset/Geom"), TfToken(), HdRetainedContainerDataSource::New()},
-        {kArmBody, HdPrimTypeTokens->mesh, HdRetainedContainerDataSource::New()}});
+    upstream->AddPrims({{SdfPath("/ArmAsset"), TfToken(),
+                         HdRetainedContainerDataSource::New()},
+                        {SdfPath("/ArmAsset/Geom"), TfToken(),
+                         HdRetainedContainerDataSource::New()},
+                        {kArmBody, HdPrimTypeTokens->mesh,
+                         HdRetainedContainerDataSource::New()}});
     const RigExecResultsSceneIndexRefPtr results =
         RigExecResultsSceneIndex::New(upstream, registry->GetStore());
 
     const HdSampledDataSourceHandle points = PointsSource(results, kArmBody);
     CHECK(points);
-    if (!points) return;
+    if (!points)
+        return;
     const VtValue now = points->GetValue(0.0f);
     CHECK(now.IsHolding<VtVec3fArray>() &&
           SameArrays(now.UncheckedGet<VtVec3fArray>(), body[1]));
@@ -287,7 +304,7 @@ TestArmRig(const std::string &examples)
     CHECK(registry->GetSessionEvaluationCount(kArmRig) == evaluations);
     CHECK(registry->GetStore()->Get()->generation == generation);
     CHECK(points->GetValue(3.0f).IsEmpty());
-    CHECK(registry->HasFrameDemand());   // pending until warmed
+    CHECK(registry->HasFrameDemand()); // pending until warmed
 
     // Warmed by the background workers, then an entry: exactly SetTime(4).
     const VtValue ready = WaitForFrame(registry, points, 3.0f);
@@ -313,7 +330,7 @@ TestArmRig(const std::string &examples)
     const double dragged = 70.0;
     CHECK(registry->UpdatePreview(&dragged, 1));
     const HdSampledDataSourceHandle previewed = PointsSource(results, kArmBody);
-    CHECK(previewed->GetValue(4.0f).IsEmpty());   // frame 5
+    CHECK(previewed->GetValue(4.0f).IsEmpty()); // frame 5
     for (int round = 0; round < 3; ++round) {
         CHECK(registry->ServiceFrameDemand() == 0);
     }
@@ -335,7 +352,8 @@ TestArmRig(const std::string &examples)
     bool sawBody = false;
     for (const auto &entry : recorder.dirtied) {
         if (entry.primPath == kArmBody &&
-            entry.dirtyLocators.Intersects(HdPrimvarsSchema::GetPointsLocator())) {
+            entry.dirtyLocators.Intersects(
+                HdPrimvarsSchema::GetPointsLocator())) {
             sawBody = true;
         }
     }
@@ -367,10 +385,13 @@ TestFallback(const std::string &examples)
     SetEnv("RIGEXEC_FRAME_CACHE", "warm-off");
     const UsdStageRefPtr stage = UsdStage::Open(examples + "/ArmRig.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     stage->SetEditTarget(stage->GetSessionLayer());
-    const UsdAttribute shoulder = stage->GetAttributeAtPath(SdfPath(kShoulderRz));
-    for (int t = 1; t <= 8; ++t) shoulder.Set(5.0 * t, UsdTimeCode(t));
+    const UsdAttribute shoulder =
+        stage->GetAttributeAtPath(SdfPath(kShoulderRz));
+    for (int t = 1; t <= 8; ++t)
+        shoulder.Set(5.0 * t, UsdTimeCode(t));
     const RigExecImagingRegistry::Ptr registry =
         RigExecImagingRegistry::ForStage(stage, /* create = */ true);
     std::vector<std::string> errors;
@@ -385,10 +406,12 @@ TestFallback(const std::string &examples)
     registry->ClearFrameCache(kArmRig);
 
     HdRetainedSceneIndexRefPtr upstream = HdRetainedSceneIndex::New();
-    upstream->AddPrims({
-        {SdfPath("/ArmAsset"), TfToken(), HdRetainedContainerDataSource::New()},
-        {SdfPath("/ArmAsset/Geom"), TfToken(), HdRetainedContainerDataSource::New()},
-        {kArmBody, HdPrimTypeTokens->mesh, HdRetainedContainerDataSource::New()}});
+    upstream->AddPrims({{SdfPath("/ArmAsset"), TfToken(),
+                         HdRetainedContainerDataSource::New()},
+                        {SdfPath("/ArmAsset/Geom"), TfToken(),
+                         HdRetainedContainerDataSource::New()},
+                        {kArmBody, HdPrimTypeTokens->mesh,
+                         HdRetainedContainerDataSource::New()}});
     const RigExecResultsSceneIndexRefPtr results =
         RigExecResultsSceneIndex::New(upstream, registry->GetStore());
     const HdSampledDataSourceHandle points = PointsSource(results, kArmBody);
@@ -396,7 +419,8 @@ TestFallback(const std::string &examples)
     const size_t evaluations = registry->GetSessionEvaluationCount(kArmRig);
 
     // The playback path never evaluates, however long the frame waits.
-    for (int i = 0; i < RigExecImagingRegistry::kFrameDemandFallbackAge + 5; ++i) {
+    for (int i = 0; i < RigExecImagingRegistry::kFrameDemandFallbackAge + 5;
+         ++i) {
         CHECK(registry->ServiceFrameDemand() == 0);
     }
     CHECK(points->GetValue(2.0f).IsEmpty());
@@ -405,7 +429,8 @@ TestFallback(const std::string &examples)
     // The idle path answers it once the frame has waited long enough.
     size_t rounds = 0;
     while (points->GetValue(2.0f).IsEmpty() &&
-           rounds < size_t(RigExecImagingRegistry::kFrameDemandFallbackAge) + 5) {
+           rounds <
+               size_t(RigExecImagingRegistry::kFrameDemandFallbackAge) + 5) {
         registry->ServiceFrameDemand(8, /* allowFallback = */ true);
         ++rounds;
     }
@@ -438,8 +463,8 @@ Translate(double x, double y)
 }
 
 UsdPrim
-DefineMover(const UsdStageRefPtr &stage, const SdfPath &path,
-            const char *type, const SdfPath &moves)
+DefineMover(const UsdStageRefPtr &stage, const SdfPath &path, const char *type,
+            const SdfPath &moves)
 {
     UsdPrim prim = stage->DefinePrim(path, TfToken(type));
     prim.ApplyAPI(TfToken("RigExecMoverAPI"));
@@ -488,8 +513,8 @@ Make2dRig()
         GfVec3f(0, 0, 0), GfVec3f(0.1f, 0, 0), GfVec3f(0.1f, 0.1f, 0)});
     face.CreateCurveVertexCountsAttr().Set(VtIntArray{3});
     UsdGeomBasisCurves still = UsdGeomBasisCurves::Define(stage, kStatic);
-    still.CreatePointsAttr().Set(VtVec3fArray{GfVec3f(1, 1, 0),
-                                              GfVec3f(2, 1, 0)});
+    still.CreatePointsAttr().Set(
+        VtVec3fArray{GfVec3f(1, 1, 0), GfVec3f(2, 1, 0)});
     still.CreateCurveVertexCountsAttr().Set(VtIntArray{2});
 
     stage->DefinePrim(SdfPath("/Char/Rig/Movers"), TfToken("Scope"));
@@ -498,8 +523,8 @@ Make2dRig()
                                kStroke.AppendProperty(TfToken("points")));
     skin.CreateRelationship(TfToken("rigExec:influences"))
         .SetTargets({kB1, kB2});
-    skin.CreateAttribute(TfToken("rigExec:elementSize"),
-                         SdfValueTypeNames->Int).Set(2);
+    skin.CreateAttribute(TfToken("rigExec:elementSize"), SdfValueTypeNames->Int)
+        .Set(2);
     VtIntArray indices(kStrokePoints * 2);
     VtFloatArray weights(kStrokePoints * 2);
     for (size_t i = 0; i < kStrokePoints; ++i) {
@@ -510,9 +535,11 @@ Make2dRig()
         weights[i * 2 + 1] = w;
     }
     skin.CreateAttribute(TfToken("rigExec:jointIndices"),
-                         SdfValueTypeNames->IntArray).Set(indices);
+                         SdfValueTypeNames->IntArray)
+        .Set(indices);
     skin.CreateAttribute(TfToken("rigExec:jointWeights"),
-                         SdfValueTypeNames->FloatArray).Set(weights);
+                         SdfValueTypeNames->FloatArray)
+        .Set(weights);
 
     // Layer bind: the group's frame rides B2's rest->posed map.
     UsdPrim bind = DefineMover(stage, SdfPath("/Char/Rig/Movers/HeadBind"),
@@ -527,8 +554,8 @@ Make2dRig()
     swap.CreateAttribute(TfToken("rigExec:operation"), SdfValueTypeNames->Token,
                          /* custom = */ false, SdfVariabilityUniform)
         .Set(TfToken("add"));
-    const UsdAttribute switchValue = swap.CreateAttribute(
-        TfToken("inputs:value"), SdfValueTypeNames->Float);
+    const UsdAttribute switchValue =
+        swap.CreateAttribute(TfToken("inputs:value"), SdfValueTypeNames->Float);
     const float switches[4] = {0.0f, 1.0f, 2.0f, 2.0f};
     for (int t = 1; t <= 4; ++t) {
         switchValue.Set(switches[t - 1], UsdTimeCode(t));
@@ -541,9 +568,9 @@ Make2dRig()
     maps.CreateRelationship(TfToken("rigExec:driverAttributes"))
         .SetTargets({kB1.AppendProperty(TfToken("avars:rz"))});
     maps.CreateRelationship(TfToken("rigExec:meshes")).SetTargets({kHead});
-    UsdPrim map = stage->DefinePrim(
-        SdfPath("/Char/Rig/AnimatedMaps/Fade/opacity"),
-        TfToken("RigExecAnimatedMap"));
+    UsdPrim map =
+        stage->DefinePrim(SdfPath("/Char/Rig/AnimatedMaps/Fade/opacity"),
+                          TfToken("RigExecAnimatedMap"));
     map.GetAttribute(TfToken("rigExec:rowInputs")).Set(VtIntArray{0});
     map.GetAttribute(TfToken("rigExec:rowFrom")).Set(VtFloatArray{0.0f});
     map.GetAttribute(TfToken("rigExec:rowTo")).Set(VtFloatArray{90.0f});
@@ -564,10 +591,12 @@ Read(const HdSceneIndexBaseRefPtr &index, const SdfPath &path, float offset)
 {
     Leaves out;
     const HdSceneIndexPrim prim = index->GetPrim(path);
-    const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
+    const HdPrimvarsSchema primvars =
+        HdPrimvarsSchema::GetFromParent(prim.dataSource);
     const auto value = [&](const TfToken &name) {
         const HdPrimvarSchema primvar = primvars.GetPrimvar(name);
-        const HdSampledDataSourceHandle ds = primvar ? primvar.GetPrimvarValue() : nullptr;
+        const HdSampledDataSourceHandle ds =
+            primvar ? primvar.GetPrimvarValue() : nullptr;
         return ds ? ds->GetValue(offset) : VtValue();
     };
     out.points = value(HdTokens->points);
@@ -598,20 +627,29 @@ Upstream(const UsdStageRefPtr &stage, const std::vector<SdfPath> &prims)
     HdRetainedSceneIndexRefPtr upstream = HdRetainedSceneIndex::New();
     std::set<SdfPath> all;
     for (const SdfPath &p : prims)
-        for (SdfPath q = p; q != SdfPath::AbsoluteRootPath(); q = q.GetParentPath()) all.insert(q);
+        for (SdfPath q = p; q != SdfPath::AbsoluteRootPath();
+             q = q.GetParentPath())
+            all.insert(q);
     UsdGeomXformCache cache{UsdTimeCode(1.0)};
     HdRetainedSceneIndex::AddedPrimEntries entries;
     for (const SdfPath &p : all) {
-        const GfMatrix4d world = cache.GetLocalToWorldTransform(stage->GetPrimAtPath(p));
+        const GfMatrix4d world =
+            cache.GetLocalToWorldTransform(stage->GetPrimAtPath(p));
         static const TfToken xformName = HdXformSchemaTokens->xform;
         const HdDataSourceBaseHandle xform =
             HdXformSchema::Builder()
-                .SetMatrix(HdRetainedTypedSampledDataSource<GfMatrix4d>::New(world))
-                .SetResetXformStack(HdRetainedTypedSampledDataSource<bool>::New(true))
+                .SetMatrix(
+                    HdRetainedTypedSampledDataSource<GfMatrix4d>::New(world))
+                .SetResetXformStack(
+                    HdRetainedTypedSampledDataSource<bool>::New(true))
                 .Build();
         const UsdPrim prim = stage->GetPrimAtPath(p);
-        const TfToken type = prim.IsA<UsdGeomBasisCurves>() ? HdPrimTypeTokens->basisCurves : TfToken();
-        entries.push_back({p, type, HdRetainedContainerDataSource::New(1, &xformName, &xform)});
+        const TfToken type = prim.IsA<UsdGeomBasisCurves>()
+                                 ? HdPrimTypeTokens->basisCurves
+                                 : TfToken();
+        entries.push_back(
+            {p, type,
+             HdRetainedContainerDataSource::New(1, &xformName, &xform)});
     }
     upstream->AddPrims(entries);
     return upstream;
@@ -620,18 +658,22 @@ Upstream(const UsdStageRefPtr &stage, const std::vector<SdfPath> &prims)
 // Offset k from frame 1 equals offset 0 after SetTime(1 + k), for every
 // leaf of every prim.
 void
-CheckParity(const RigExecImagingRegistry::Ptr &registry, const UsdStageRefPtr &stage,
-            const char *what, bool checkValues = true)
+CheckParity(const RigExecImagingRegistry::Ptr &registry,
+            const UsdStageRefPtr &stage, const char *what,
+            bool checkValues = true)
 {
     const std::vector<SdfPath> prims = {kStroke, kHead, kFace, kStatic};
     const RigExecResultsSceneIndexRefPtr results =
-        RigExecResultsSceneIndex::New(Upstream(stage, prims), registry->GetStore());
+        RigExecResultsSceneIndex::New(Upstream(stage, prims),
+                                      registry->GetStore());
     std::map<int, std::map<SdfPath, Leaves>> reference;
     for (int t = 1; t <= 4; ++t) {
         CHECK(registry->SetTime(UsdTimeCode(t)));
-        for (const SdfPath &p : prims) reference[t][p] = Read(results, p, 0.0f);
+        for (const SdfPath &p : prims)
+            reference[t][p] = Read(results, p, 0.0f);
     }
-    CHECK(!reference[1][kStroke].points.IsEmpty() && !reference[1][kHead].xform.IsEmpty());
+    CHECK(!reference[1][kStroke].points.IsEmpty() &&
+          !reference[1][kHead].xform.IsEmpty());
     CHECK(reference[1][kStroke].points != reference[3][kStroke].points);
     CHECK(reference[1][kHead].xform != reference[3][kHead].xform);
     CHECK(registry->SetTime(UsdTimeCode(1.0)));
@@ -641,8 +683,10 @@ CheckParity(const RigExecImagingRegistry::Ptr &registry, const UsdStageRefPtr &s
         for (int round = 0; round < 60; ++round) {
             bool ready = true;
             for (const SdfPath &p : prims)
-                ready = ready && Ready(Read(results, p, offset), reference[t][p]);
-            if (ready) break;
+                ready =
+                    ready && Ready(Read(results, p, offset), reference[t][p]);
+            if (ready)
+                break;
             registry->ServiceFrameDemand();
             registry->OnIdle();
             registry->WaitUntilBackgroundIdle();
@@ -650,21 +694,27 @@ CheckParity(const RigExecImagingRegistry::Ptr &registry, const UsdStageRefPtr &s
         for (const SdfPath &p : prims) {
             const Leaves got = Read(results, p, offset);
             const Leaves &want = reference[t][p];
-            const bool same = got.points == want.points && got.xform == want.xform &&
-                              got.opacity == want.opacity && got.switchIndex == want.switchIndex;
+            const bool same = got.points == want.points &&
+                              got.xform == want.xform &&
+                              got.opacity == want.opacity &&
+                              got.switchIndex == want.switchIndex;
             if (!same) {
-                std::printf("parity [%s] %s at frame %d differs\n", what, p.GetText(), t);
+                std::printf("parity [%s] %s at frame %d differs\n", what,
+                            p.GetText(), t);
             }
             CHECK(same);
         }
     }
     CHECK(registry->GetStore()->Get()->generation == generation);
-    if (!checkValues) return;  // a baked binary publishes no animated-map scalars
-    const VtValue opacity = Read(results, kHead, 2.0f).opacity;  // frame 3: rz 60 / 90
+    if (!checkValues)
+        return; // a baked binary publishes no animated-map scalars
+    const VtValue opacity =
+        Read(results, kHead, 2.0f).opacity; // frame 3: rz 60 / 90
     CHECK(opacity.IsHolding<float>() &&
           std::abs(opacity.UncheckedGet<float>() - 60.0f / 90.0f) < 1e-6f);
     const VtValue switchIndex = Read(results, kHead, 2.0f).switchIndex;
-    CHECK(switchIndex.IsHolding<float>() && switchIndex.UncheckedGet<float>() == 2.0f);
+    CHECK(switchIndex.IsHolding<float>() &&
+          switchIndex.UncheckedGet<float>() == 2.0f);
 }
 
 void
@@ -681,8 +731,10 @@ TestParity2d()
         RigExecImagingRegistry::ForStage(stage, /* create = */ true);
     std::vector<std::string> errors;
     CHECK(registry->Activate(stage, k2dRig, UsdTimeCode(1.0), &errors));
-    for (const std::string &error : errors) std::printf("activation: %s\n", error.c_str());
-    if (!registry->IsActive()) return;
+    for (const std::string &error : errors)
+        std::printf("activation: %s\n", error.c_str());
+    if (!registry->IsActive())
+        return;
     CheckParity(registry, stage, "live");
     registry->Deactivate();
 }
@@ -703,9 +755,11 @@ TestPlayback()
         RigExecBakeResult baked;
         std::string error;
         const bool ok = RigExecBakeToBinary(evaluator, opts, &baked, &error);
-        if (!ok) std::printf("bake: %s\n", error.c_str());
+        if (!ok)
+            std::printf("bake: %s\n", error.c_str());
         CHECK(ok && !baked.bytes.empty());
-        if (!ok || baked.bytes.empty()) return;
+        if (!ok || baked.bytes.empty())
+            return;
         std::ofstream stream(binary, std::ios::binary);
         stream.write(reinterpret_cast<const char *>(baked.bytes.data()),
                      std::streamsize(baked.bytes.size()));
@@ -728,7 +782,7 @@ TestPlayback()
     std::filesystem::remove_all(scratch, ignored);
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
@@ -741,7 +795,7 @@ main(int argc, char **argv)
     TestFallback(examples);
     TestParity2d();
     TestPlayback();
-    std::printf("testRigExecFrameDemand: %d failure(s), %d skip(s)\n",
-                failures, skips);
+    std::printf("testRigExecFrameDemand: %d failure(s), %d skip(s)\n", failures,
+                skips);
     return failures == 0 ? 0 : 1;
 }

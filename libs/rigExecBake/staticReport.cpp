@@ -4,9 +4,9 @@
 #include "rigExecBake/computedCapture.h"
 #include "rigExecBake/pathTable.h"
 #include "rigExecBake/revisionReads.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "rigExecRuntime/stageArrayInputs.h"
 #include "pxr/usd/usd/attribute.h"
@@ -49,18 +49,27 @@ _TransformAnimated(const UsdPrim &prim)
     return false;
 }
 
-// A transform read relative to \p root (UsdGeomXformCache::
-// ComputeRelativeTransform): the prim's own and every ancestor's up to the
-// root, exclusive, or up to the pseudo-root when the root is not above it.
+// A transform read relative to \p root (RigExecRigEvaluator::
+// _FrameFromXformRelativeToAsset): the prim's own and every ancestor's below
+// the nearest common ancestor of the prim and the root, and, for a prim
+// outside the root, the root's own and its ancestors' below it too.
 void
 _Transform(const UsdStageRefPtr &stage, const UsdPrim &root,
            const SdfPath &path, const std::string &field, _Entries *entries)
 {
-    for (UsdPrim p = stage->GetPrimAtPath(path);
-         p && !p.IsPseudoRoot() && p != root; p = p.GetParent()) {
-        if (_TransformAnimated(p)) {
-            entries->emplace(field, p.GetPath().GetString());
+    const SdfPath common =
+        root ? path.GetCommonPrefix(root.GetPath()) : SdfPath();
+    const auto walk = [&](UsdPrim p) {
+        for (; p && !p.IsPseudoRoot() && p.GetPath() != common;
+             p = p.GetParent()) {
+            if (_TransformAnimated(p)) {
+                entries->emplace(field, p.GetPath().GetString());
+            }
         }
+    };
+    walk(stage->GetPrimAtPath(path));
+    if (root && common != root.GetPath()) {
+        walk(root);
     }
 }
 
@@ -229,7 +238,7 @@ RigExecBakeStaticReport(RigExecRigEvaluator &evaluator,
     }
     // The input collection reads the standing program and the stage; it
     // never evaluates. It names the reads the slots evaluate and the
-    // oracle facts of the objects the runtime resolves.
+    // field facts of the objects the runtime resolves.
     RigExecBakePathTable paths;
     std::string why;
     RigExecBakeComputedCapture computed(evaluator, probe, &paths, &why);
@@ -353,7 +362,7 @@ RigExecBakeStaticReport(RigExecRigEvaluator &evaluator,
         }
     }
 
-    // The arrays a WeightPacket step gathers.
+    // The arrays a weight packet op node gathers.
     for (const RigExecBakedProgramImpl::WeightObject &object :
          B.weightObjects) {
         const std::string field =
@@ -369,11 +378,11 @@ RigExecBakeStaticReport(RigExecRigEvaluator &evaluator,
         }
     }
 
-    // The oracle facts of the objects the runtime resolves.
+    // The field facts of the objects the runtime resolves.
     for (const RigExecBakeTimeVaryingFact &fact :
          computed.GetTimeVaryingFacts()) {
         if (!slotDriven(SdfPath(fact.attribute))) {
-            found.emplace("weight object " + fact.object + " oracle",
+            found.emplace("weight object " + fact.object + " field",
                           fact.attribute);
         }
     }

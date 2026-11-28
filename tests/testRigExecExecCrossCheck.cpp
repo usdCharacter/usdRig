@@ -1,16 +1,16 @@
 #include "rigExecSchema/schemaNames.h"
-#include "rigExec/bakedExecCrossCheck.h"
-#include "rigExec/bakedExecCrossCheckRows.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/bakedExecCrossCheck.h"
+#include "rigExec/internal/bakedExecCrossCheckRows.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "pxr/usd/sdf/layer.h"
-#include "rigExec/goldenPose.h"
-#include "rigExec/types.h"
+#include "rigExec/api/goldenPose.h"
+#include "rigExec/api/types.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/usd/usd/attribute.h"
-#include <cmath>
 #include <iostream>
-#include <limits>
+#include <type_traits>
+#include <utility>
 
 using namespace rigExec;
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -23,30 +23,31 @@ PXR_NAMESPACE_USING_DIRECTIVE
         }                                                                      \
     } while (false)
 
+// Factory gate: the only public RigExecBakedExecCheckRows constructor takes a
+// non-aggregate tag that brace-init cannot synthesize, so no caller outside
+// the class can allocate rows directly. The probe spells the real arity: a
+// tag plus every remaining constructor argument.
+template <class Default, class AlwaysVoid, class T, class... Rest>
+struct _BraceConstructibleImpl : std::false_type {};
+template <class Default, class T, class... Rest>
+struct _BraceConstructibleImpl<
+    Default, std::void_t<decltype(T({}, std::declval<Rest>()...))>, T, Rest...>
+    : std::true_type {};
+template <class T, class... Rest>
+using _BraceConstructible = _BraceConstructibleImpl<void, void, T, Rest...>;
+static_assert(!_BraceConstructible<RigExecBakedExecCheckRows,
+                                   const UsdStageRefPtr &>::value,
+              "factory gate: brace-init must be rejected");
+
 int
-TestIndependentConstraintRows()
+TestIndependentConstraintRows(const std::string &fixtures)
 {
-    const char *types[] = {"RigExecAimConstraint", "RigExecRotationConstraint",
-                           "RigExecParentConstraint"};
-    for (const auto *type : types)
+    for (const char *type : {"aim", "rotation", "parent"})
         for (const bool geometry : {false, true}) {
-            const auto stage = UsdStage::CreateInMemory();
-            const std::string target =
-                geometry ? "/World/Target.points" : "/World/Target";
-            const std::string source =
-                std::string("#usda 1.0\n") +
-                "def Xform \"World\" {\n"
-                "def Mesh \"Target\" {\n point3f[] "
-                "points=[(0,0,0),(1,0,0),(0,1,0)]\n }\n"
-                "def Xform \"Source\" {\n double3 xformOp:translate=(0,0,2)\n "
-                "uniform token[] xformOpOrder=[\"xformOp:translate\"]\n }\n"
-                "def RigExecRoot \"Rig\" {\n def Scope \"Movers\" {\n def " +
-                type +
-                " \"C\" (apiSchemas=[\"RigExecMoverAPI\"]) {\n rel "
-                "rigExec:moves=<" +
-                target +
-                ">\n rel rigExec:sources=</World/Source>\n }\n }\n }\n }\n";
-            CHECK(stage->GetRootLayer()->ImportFromString(source));
+            const auto stage =
+                UsdStage::Open(fixtures + "/" + type +
+                               (geometry ? "_points.usda" : "_xform.usda"));
+            CHECK(stage);
             RigExecRigEvaluator evaluator(stage, SdfPath("/World/Rig"));
             std::vector<std::string> errors;
             CHECK(evaluator.Compile(&errors));
@@ -108,10 +109,57 @@ TestIndependentConstraintRows()
     return 0;
 }
 
+// Row names come from one interned table. Capture reads it; it never interns
+// text, and Build resolves its names through the error channel. A capture
+// that cannot intern its name marks the row fatal, and every later
+// classification keeps it fatal.
 int
-main()
+TestRowNamesAndSkips()
 {
-    RigExecLoadComputations();
+    {
+        TfToken token;
+        std::string error;
+        CHECK(RigExecExecCheckToken(SchemaComputationText::computePointFrame) !=
+              nullptr);
+        CHECK(RigExecExecCheckToken("noSuchExecCheckName") == nullptr);
+        CHECK(!RigExecExecCheckResolve("noSuchExecCheckName", token, &error));
+        CHECK(token.IsEmpty());
+        CHECK(error.find("noSuchExecCheckName") != std::string::npos);
+        CHECK(RigExecExecCheckResolve(SchemaComputationText::computePointFrame,
+                                      token, nullptr));
+        CHECK(!token.IsEmpty());
+    }
+    TfToken token;
+    RigExecExecCheckInput fatal;
+    CHECK(!RigExecExecCheckCaptureName("noSuchExecCheckName", fatal, token));
+    CHECK(fatal.skip == RigExecExecCheckSkip::MissingName);
+    CHECK(token.IsEmpty());
+    RigExecExecCheckApplyAfterStep(fatal, true, false);
+    RigExecExecCheckApplyAfterStep(fatal, false, true);
+    CHECK(fatal.skip == RigExecExecCheckSkip::MissingName);
+    RigExecExecCheckSetSkip(fatal, RigExecExecCheckSkip::NoEquivalent);
+    RigExecExecCheckSetSkip(fatal, RigExecExecCheckSkip::ArrayInput);
+    RigExecExecCheckSetSkip(fatal, RigExecExecCheckSkip::Unusable);
+    CHECK(fatal.skip == RigExecExecCheckSkip::MissingName);
+    RigExecExecCheckInput ordinary;
+    RigExecExecCheckSetSkip(ordinary, RigExecExecCheckSkip::ArrayInput);
+    CHECK(!RigExecExecCheckCaptureName("noSuchExecCheckName", ordinary, token));
+    CHECK(ordinary.skip == RigExecExecCheckSkip::MissingName);
+    RigExecExecCheckInput skipped;
+    RigExecExecCheckSetSkip(skipped, RigExecExecCheckSkip::ArrayInput);
+    RigExecExecCheckApplyAfterStep(skipped, false, true);
+    RigExecExecCheckApplyAfterStep(skipped, false, false);
+    CHECK(skipped.skip == RigExecExecCheckSkip::ArrayInput);
+    RigExecExecCheckInput cleanRow;
+    RigExecExecCheckApplyAfterStep(cleanRow, true, false);
+    CHECK(cleanRow.skip == RigExecExecCheckSkip::Unusable);
+    return 0;
+}
+
+int
+main(int argc, char **argv)
+{
+    CHECK(argc == 2);
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     const auto stage = UsdStage::CreateInMemory();
     const auto parent =
@@ -123,7 +171,6 @@ main()
     RigExecPointFrame supplied;
     for (auto &point : supplied.points)
         point += GfVec3d(7, 3, -2);
-    const GfMatrix4d expected = GfMatrix4d(1).SetTranslate(GfVec3d(7, 3, -2));
     RigExecValueOverride frameOverride{parent.GetPath(), pointFrame, TfToken(),
                                        VtValue(supplied)};
 
@@ -138,71 +185,23 @@ main()
     CHECK(checks.Add(row, &error));
     CHECK(!checks.Add(row, &error));
     RigExecExecCheckInput input;
-    input.expected = VtValue(expected);
+    input.expected = VtValue(GfMatrix4d(1).SetTranslate(GfVec3d(7, 3, -2)));
     input.overrides = {frameOverride};
+    // A public address has no independent judge: it is counted, not checked.
     auto report = checks.Evaluate(UsdTimeCode::Default(), {input});
-    CHECK(report.Passed());
-    CHECK(report.checked == 1 && report.checkedByKind[17] == 1);
-
-    // A prepared request must observe call-local computation overrides.
-    RigExecTapSet taps(stage);
-    const auto tap = taps.Add(row.address);
-    CHECK(taps.Prepare());
-    size_t dropped = 99;
-    const auto snapshot =
-        taps.Evaluate(UsdTimeCode::Default(), {frameOverride}, &dropped);
-    CHECK(snapshot.IsComplete() && dropped == 0);
-    std::string actualBits, expectedBits;
-    CHECK(RigExecEncodeGoldenValue(snapshot.Get(tap), &actualBits));
-    CHECK(RigExecEncodeGoldenValue(VtValue(expected), &expectedBits));
-    CHECK(actualBits == expectedBits);
-    const auto plain = taps.Evaluate(UsdTimeCode::Default());
-    CHECK(plain.IsComplete());
-    CHECK(plain.Get<GfMatrix4d>(tap) != expected);
-
-    // One ULP in the expected output names exactly the affected row.
-    auto perturbed = expected;
-    perturbed[3][0] = std::nextafter(perturbed[3][0],
-                                     std::numeric_limits<double>::infinity());
-    input.expected = VtValue(perturbed);
-    report = checks.Evaluate(UsdTimeCode::Default(), {input});
-    CHECK(!report.Passed() && report.failed == 1 && report.checked == 1);
-    CHECK(report.diagnostics.size() == 1 &&
-          report.diagnostics[0].find(row.key) == 0);
-    input.expected = VtValue(expected);
-
-    // Omitting a declared bound input must not quietly compare against stage data.
-    input.overrides.clear();
-    report = checks.Evaluate(UsdTimeCode::Default(), {input});
-    CHECK(!report.Passed() && report.checked == 0 && report.failed == 1);
-    CHECK(report.diagnostics[0].find("missing bound input override") !=
-          std::string::npos);
-    input.overrides = {frameOverride};
-    input.overrides.push_back(
-        {SdfPath("/Missing"), pointFrame, TfToken(), VtValue(supplied)});
-    input.overrides.push_back({parent.GetPath(), TfToken(),
-                               TfToken("missing:attribute"), VtValue(1.0)});
-    report = checks.Evaluate(UsdTimeCode::Default(), {input});
-    CHECK(!report.Passed() && report.dropped == 2 && report.checked == 0);
-    input.overrides = {frameOverride, frameOverride};
-    report = checks.Evaluate(UsdTimeCode::Default(), {input});
-    CHECK(!report.Passed() && report.checked == 0);
-
-    // A result override would make the independent check vacuous and is refused.
-    input.overrides = {
-        frameOverride,
-        {child.GetPath(), parentSpace, TfToken(), VtValue(expected)}};
-    report = checks.Evaluate(UsdTimeCode::Default(), {input});
-    CHECK(!report.Passed() && report.checked == 0);
+    CHECK(report.Passed() && report.checked == 0 &&
+          report.skipped[RigExecExecCheckSkip::NoEquivalent] == 1);
     input.skip = RigExecExecCheckSkip::ArrayInput;
     report = checks.Evaluate(UsdTimeCode::Default(), {input});
     CHECK(report.Passed() && report.checked == 0 &&
           report.skipped[input.skip] == 1);
     CHECK(!checks.Evaluate(UsdTimeCode::Default(), {}).Passed());
 
-    // Registering an output as a required input is also refused at compile time.
+    // Registering an output as a required input is refused at compile time.
     row.key = "vacuous";
     row.requiredOverrides = {row.address};
     CHECK(!checks.Add(row, &error));
-    return TestIndependentConstraintRows();
+    if (TestRowNamesAndSkips())
+        return 1;
+    return TestIndependentConstraintRows(argv[1]);
 }

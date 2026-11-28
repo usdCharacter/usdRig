@@ -1,35 +1,33 @@
-// rigExecRuntime loader conformance: bake representative baking fixtures in-process
-// at the probe time, open the bytes with the zero-USD reader, and check
-// every step's label as the reader names it in error text against the
-// program's, and malformed-input refusal, including a truncated file, the
-// old container, another file identifier or format version, a step graph
-// with a predecessor after its step, step and cluster indices past their
-// tables, a cluster graph with a cycle, static tables that do not match
-// the program, and point bindings out of range, of another count or input,
-// or read by a step that does not declare them. The phase fixtures under
-// tests/fixtures (frame records, solver records, per-volume placements)
-// bake at time 1 with every label matching, and refuse frame records and
-// record lists out of range, out of order or undeclared, the retired
-// snapshot domain and step, the whole-map placement, a placement of a slot
-// that is no volume, and the previous format version with its re-export
-// message. Skin layouts the sparse form cannot hold are stored raw, with
-// their authored arrays, and play back as live baked runs them; Open
-// refuses layouts and chunk tables edited out of their forms. Then: a
-// fresh reader's defaults against a fresh evaluator at the bake time
-// (every output, the diagnostics and the counters), twice,
-// and the input API -- the inputs' names, lookup and defaults, the table's
-// control avar and operator input found as inputs, refusals, a set that
-// moves the outputs, a reset, and token text the file lacks or holds as
-// the empty token. Last, on a bake at the table's first frame:
-// the input sampler drives a fresh reader along the table's frames (an
-// `inputs` row) or at the bake time (a `static` row), each run against a
-// fresh evaluator's generation at that time, actual operation counts and diagnostics
-// included.
+// rigExecRuntime loader conformance: bake representative baking fixtures
+// in-process at the probe time, open the bytes with the reader, and check every
+// step's label as the reader names it in error text against the program's, and
+// malformed-input refusal, including a truncated file, the old container,
+// another file identifier or format version, a step graph with a predecessor
+// after its step, step and cluster indices past their tables, a cluster graph
+// with a cycle, static tables that do not match the program, and point bindings
+// out of range, of another count or input, or read by a step that does not
+// declare them. The phase fixtures under tests/fixtures (frame records, solver
+// records, per-volume placements) bake at time 1 with every label matching, and
+// refuse frame records and record lists out of range, out of order or
+// undeclared, the retired snapshot domain and step, the whole-map placement, a
+// placement of a slot that is no volume, and the previous format version with
+// its re-export message. Skin layouts the sparse form cannot hold are stored
+// raw, with their authored arrays, and play back as live baked runs them; Open
+// refuses layouts and chunk tables edited out of their forms. Then: a fresh
+// reader's defaults against a fresh evaluator at the bake time (every output,
+// the diagnostics and the counters), twice, and the input API -- the inputs'
+// names, lookup and defaults, the table's control avar and operator input found
+// as inputs, refusals, a set that moves the outputs, a reset, and token text
+// the file lacks or holds as the empty token. Last, on a bake at the table's
+// first frame: the input sampler drives a fresh reader along the table's frames
+// (an `inputs` row) or at the bake time (a `static` row), each run against a
+// fresh evaluator's generation at that time, actual operation counts and
+// diagnostics included.
 #include "rigExecBake/bake.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/moverGraph.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/moverGraph.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBinary/format.h"
 #include "rigExecRuntime/runtime.h"
 #include "rigExecExampleFixtures.h"
@@ -163,7 +161,7 @@ _TestFileRefusals(const std::vector<uint8_t> &bytes)
     CHECK(got == "unsupported .rigexec format version 4 (this reader reads " +
                      std::to_string(RigExecFormatOldestReadable) + " through " +
                      std::to_string(RigExecFormatVersion) +
-                     "); re-export: per-group range chains");
+                     "); re-export: step 10 op nodes");
     if (got.find("format version 4") == std::string::npos) {
         std::printf("version 4: open said '%s'\n", got.c_str());
     }
@@ -630,6 +628,40 @@ _FindStep(const fb::RigExecWireFile &file, fb::StepKind kind, int64_t object)
     return -1;
 }
 
+// The step reading revision \p id's phased points: its RevisionStatic, or
+// the head of the op chain one of whose members stores its groups; or -1.
+static int64_t
+_BindingReader(const fb::RigExecWireFile &file, size_t id)
+{
+    const int64_t assemble =
+        _FindStep(file, fb::StepKind::RevisionStatic, int64_t(id));
+    if (assemble >= 0 || !file.opGraph)
+        return assemble;
+    for (const auto &output : file.opGraph->hostOutputs) {
+        if (!output || output->target != 4 || output->object != id)
+            continue;
+        for (size_t c = 0; c < file.opGraph->chains.size(); ++c) {
+            const auto &members = file.opGraph->chains[c]->members;
+            if (std::find(members.begin(), members.end(), output->node) !=
+                members.end())
+                return _FindStep(file, fb::StepKind::OpChainHead, int64_t(c));
+        }
+    }
+    return -1;
+}
+
+// The OpNode step whose node stores frame record \p record's matrix, or -1.
+static int64_t
+_FindRecordStep(const fb::RigExecWireFile &file, int64_t record)
+{
+    if (!file.opGraph)
+        return -1;
+    for (const auto &output : file.opGraph->hostOutputs)
+        if (output && output->target == 22 && int64_t(output->object) == record)
+            return _FindStep(file, fb::StepKind::OpNode, int64_t(output->node));
+    return -1;
+}
+
 // Removes from step \p step's reads every range of \p domain covering
 // \p slot.
 static void
@@ -646,14 +678,16 @@ _DropRead(fb::RigExecWireFile *file, size_t step, fb::SlotDomain domain,
                 reads.end());
 }
 
-static bool
-_IsCommitStep(fb::StepKind kind)
+/// The commit a PoseCommit op step of \p file works on, or -1.
+static int64_t
+_CommitOf(const fb::RigExecWireFile &file, const fb::RigExecWireStep &step)
 {
-    return kind == fb::StepKind::SolverCommit ||
-           kind == fb::StepKind::Constraint ||
-           kind == fb::StepKind::CommitDelta ||
-           kind == fb::StepKind::PropagateChunk ||
-           kind == fb::StepKind::CommitApply;
+    if (step.kind == fb::StepKind::OpNode && file.opGraph)
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->target == 30 &&
+                output->node == uint64_t(step.object))
+                return int64_t(output->object);
+    return -1;
 }
 
 // _ExpectRefusal, printing the expected refusal, so the log shows each
@@ -670,6 +704,8 @@ _ExpectShownRefusal(const std::string &name, const char *what,
 
 static int recordRefusals = 0;
 static int recordListRefusals = 0;
+// Transform lists an op node reads instead of a fold.
+static int opRecordLists = 0;
 
 // Frame records edited into a real bake, each refused by Open naming the
 // FrameMatrix step or the fold: a record rebound to a version a later
@@ -693,9 +729,9 @@ _TestFrameRecordRefusals(const std::string &name,
     std::vector<int64_t> commitLast(pose.commits.size(), -1);
     for (size_t s = 0; s < file->steps.size(); ++s) {
         const fb::RigExecWireStep &step = file->steps[s];
-        if (_IsCommitStep(step.kind) && step.object >= 0 &&
-            size_t(step.object) < commitLast.size()) {
-            commitLast[size_t(step.object)] = int64_t(s);
+        const int64_t w = _CommitOf(*file, step);
+        if (w >= 0 && size_t(w) < commitLast.size()) {
+            commitLast[size_t(w)] = int64_t(s);
         }
     }
     // A record bound to the version of its provider that a commit whose
@@ -703,8 +739,7 @@ _TestFrameRecordRefusals(const std::string &name,
     bool rebound = false;
     for (size_t r = 0; r < pose.frameRecords.size() && !rebound; ++r) {
         const fb::FrameRecord &record = pose.frameRecords[r];
-        const int64_t step =
-            _FindStep(*file, fb::StepKind::FrameMatrix, int64_t(r));
+        const int64_t step = _FindRecordStep(*file, int64_t(r));
         for (size_t w = 0; w < pose.commits.size() && step >= 0; ++w) {
             const fb::RigExecWireCommit &commit = pose.commits[w];
             if (commitLast[w] <= step) {
@@ -740,8 +775,7 @@ _TestFrameRecordRefusals(const std::string &name,
     for (size_t r = 0; r < pose.frameRecords.size(); ++r) {
         const fb::FrameRecord &record = pose.frameRecords[r];
         const fb::RigExecWireCommit &commit = pose.commits[record.commit()];
-        const int64_t step =
-            _FindStep(*file, fb::StepKind::FrameMatrix, int64_t(r));
+        const int64_t step = _FindRecordStep(*file, int64_t(r));
         if (!commit.solverOutput || step < 0) {
             continue;
         }
@@ -767,17 +801,20 @@ _TestFrameRecordRefusals(const std::string &name,
         ++recordRefusals;
         break;
     }
-    // A FrameMatrix step naming a record past the table.
-    const int64_t first = _FindStep(*file, fb::StepKind::FrameMatrix, 0);
+    // A FrameMatrix op node storing a record past the table.
+    const int64_t first = _FindRecordStep(*file, 0);
     if (first >= 0) {
+        const uint32_t node = uint32_t(file->steps[size_t(first)].object);
         const auto edit = [&](fb::RigExecWireFile *edited) {
-            edited->steps[size_t(first)].object =
-                int32_t(edited->pose->frameRecords.size());
+            for (auto &output : edited->opGraph->hostOutputs)
+                if (output->node == node)
+                    output->object =
+                        uint32_t(edited->pose->frameRecords.size());
         };
-        _ExpectShownRefusal(name, "FrameMatrix past the records", bytes, edit,
-                            _EditedStepName(bytes, edit, size_t(first)) +
-                                " names frame record " + records + " of " +
-                                records);
+        _ExpectShownRefusal(
+            name, "FrameMatrix past the records", bytes, edit,
+            "op_graph.host_outputs: node " + std::to_string(node) +
+                " stores a matrix of no frame record " + records);
         ++recordRefusals;
     }
     // The first revision with a transform list: an entry past the table,
@@ -789,6 +826,10 @@ _TestFrameRecordRefusals(const std::string &name,
             const fb::RigExecWireRevision &revision = chains[c].revisions[r];
             const int64_t fold =
                 _FindStep(*file, fb::StepKind::InfluenceFold, int64_t(id));
+            if (!revision.transformRecords.empty() &&
+                RigExecFormatRunsAsOps(revision)) {
+                ++opRecordLists;
+            }
             if (revision.transformRecords.empty() || fold < 0) {
                 continue;
             }
@@ -822,10 +863,25 @@ static int versionRefusals = 0;
 // The retired values and forms edited into a real bake, each refused by
 // Open in the step graph's or the step rules' words: a Snapshots read; a
 // step of the SnapshotFinals kind, named as retired even where it stands
-// in for a commit's first step or a VolumePlacements step, whose own rules
-// would otherwise refuse the file first; a whole-map VolumePlacements step
-// and one placing a slot that is no volume; and the format version before
-// the oldest readable one, refused with its re-export message.
+// in for a commit's first step or a volume placement's op step, whose own
+// rules would otherwise refuse the file first; a step of the reserved
+// VolumePlacements kind and a placement node storing a slot that is no
+// volume; and the format version before the oldest readable one, refused
+// with its re-export message.
+static int64_t
+_PlacementOutput(const fb::RigExecWireFile &file,
+                 const fb::RigExecWireStep &step)
+{
+    if (step.kind != fb::StepKind::OpNode || !file.opGraph || step.object < 0)
+        return -1;
+    const auto &outputs = file.opGraph->hostOutputs;
+    for (size_t o = 0; o < outputs.size(); ++o)
+        if (outputs[o]->node == uint64_t(step.object) &&
+            (outputs[o]->target == 1 || outputs[o]->target == 2))
+            return int64_t(o);
+    return -1;
+}
+
 static void
 _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
 {
@@ -860,14 +916,14 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
                 " is a retired SnapshotFinals step");
     }
     reservedRefusals += status >= 0 ? 2 : 1;
-    // The first step of the first commit and the first VolumePlacements
-    // step, relabelled.
+    // The first step of the first commit and the first volume placement's
+    // op step, relabelled.
     for (const bool commit : {true, false}) {
         int64_t at = -1;
         for (size_t s = 0; s < file->steps.size() && at < 0; ++s) {
             const fb::StepKind kind = file->steps[s].kind;
-            if (commit ? _IsCommitStep(kind)
-                       : kind == fb::StepKind::VolumePlacements) {
+            if (commit ? _CommitOf(*file, file->steps[s]) >= 0
+                       : _PlacementOutput(*file, file->steps[s]) >= 0) {
                 at = int64_t(s);
             }
         }
@@ -885,6 +941,32 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
             "step " + std::to_string(at) + " is a retired SnapshotFinals step");
         ++reservedRefusals;
     }
+    // A constraint's op arm relabelled as the retired Constraint step.
+    int64_t arm = -1;
+    uint32_t solved = 0;
+    for (size_t s = 0; file->opGraph && s < file->steps.size() && arm < 0;
+         ++s) {
+        if (file->steps[s].kind != fb::StepKind::OpNode)
+            continue;
+        for (const auto &output : file->opGraph->hostOutputs)
+            if (output && output->target == 35 &&
+                output->node == uint64_t(file->steps[s].object)) {
+                arm = int64_t(s);
+                solved = output->object;
+                break;
+            }
+    }
+    if (arm >= 0) {
+        const auto relabel = [&](fb::RigExecWireFile *edited) {
+            edited->steps[size_t(arm)].kind = fb::StepKind::ReservedConstraint;
+            edited->steps[size_t(arm)].object = int32_t(solved);
+        };
+        _ExpectShownRefusal(name, "a constraint's op arm as a Constraint step",
+                            bytes, relabel,
+                            _EditedStepName(bytes, relabel, size_t(arm)) +
+                                ": the retired Constraint step");
+        ++reservedRefusals;
+    }
 
     // The format version before the oldest readable one.
     const uint32_t previous = RigExecFormatOldestReadable - 1;
@@ -896,7 +978,7 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
         "unsupported .rigexec format version " + std::to_string(previous) +
         " (this reader reads " + std::to_string(RigExecFormatOldestReadable) +
         " through " + std::to_string(RigExecFormatVersion) +
-        "); re-export: per-group range chains";
+        "); re-export: step 10 op nodes";
     CHECK(got == want);
     if (got != want) {
         std::printf("%s, previous version: open said '%s', expected '%s'\n",
@@ -904,11 +986,11 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
     }
     ++versionRefusals;
 
-    // The first VolumePlacements step, in the whole-map form and placing a
-    // slot that is no volume.
+    // The first volume placement's op step, of the reserved kind, and its
+    // node storing a slot that is no volume.
     int64_t place = -1;
     for (size_t s = 0; s < file->steps.size() && place < 0; ++s) {
-        if (file->steps[s].kind == fb::StepKind::VolumePlacements) {
+        if (_PlacementOutput(*file, file->steps[s]) >= 0) {
             place = int64_t(s);
         }
     }
@@ -917,18 +999,23 @@ _TestRetiredRefusals(const std::string &name, const std::vector<uint8_t> &bytes)
     if (place < 0 || plain == volumes.end()) {
         return;
     }
-    const auto wholeMap = [&](fb::RigExecWireFile *edited) {
-        edited->steps[size_t(place)].part = -1;
+    const auto retiredKind = [&](fb::RigExecWireFile *edited) {
+        edited->steps[size_t(place)].kind =
+            fb::StepKind::ReservedVolumePlacements;
     };
-    _ExpectShownRefusal(name, "whole-map VolumePlacements", bytes, wholeMap,
-                        _EditedStepName(bytes, wholeMap, size_t(place)) +
-                            " is the retired whole-map placement (part -1)");
+    _ExpectShownRefusal(name, "retired VolumePlacements step", bytes,
+                        retiredKind,
+                        _EditedStepName(bytes, retiredKind, size_t(place)) +
+                            ": the retired VolumePlacements step");
     const int32_t slot = int32_t(plain - volumes.begin());
+    const size_t output =
+        size_t(_PlacementOutput(*file, file->steps[size_t(place)]));
     const auto notVolume = [&](fb::RigExecWireFile *edited) {
-        edited->steps[size_t(place)].object = slot;
+        edited->opGraph->hostOutputs[output]->object = uint32_t(slot);
     };
-    _ExpectShownRefusal(name, "VolumePlacements of no volume", bytes, notVolume,
-                        _EditedStepName(bytes, notVolume, size_t(place)) +
+    _ExpectShownRefusal(name, "volume placement of no volume", bytes, notVolume,
+                        "op_graph.host_outputs: node " +
+                            std::to_string(file->steps[size_t(place)].object) +
                             " places slot " + std::to_string(slot) +
                             ", which is no volume slot");
     volumeRefusals += 2;
@@ -955,8 +1042,7 @@ _TestPointBindingRefusals(const std::string &name, const Source &bytes)
     for (size_t c = 0; c < chains.size(); ++c) {
         for (size_t r = 0; r < chains[c].revisions.size(); ++r, ++id) {
             const fb::RigExecWireRevision &revision = chains[c].revisions[r];
-            const int64_t reader =
-                _FindStep(*file, fb::StepKind::RevisionStatic, int64_t(id));
+            const int64_t reader = _BindingReader(*file, id);
             if (revision.pointBindings.empty() ||
                 revision.pointBindings[0].candidates.empty() || reader < 0) {
                 continue;
@@ -1033,10 +1119,15 @@ _TestPointBindingRefusals(const std::string &name, const Source &bytes)
             const auto undeclared = [&](fb::RigExecWireFile *edited) {
                 _DropRead(edited, size_t(reader), domain, slot);
             };
-            _ExpectShownRefusal(name, "reader without its version read", bytes,
-                                undeclared,
-                                who + " does not declare " + domainName + "[" +
-                                    std::to_string(slot) + "] for " + input);
+            // An op chain head's reads are its common graph projection's too,
+            // which refuses the edit first.
+            _ExpectShownRefusal(
+                name, "reader without its version read", bytes, undeclared,
+                file->steps[size_t(reader)].kind == fb::StepKind::OpChainHead
+                    ? std::string("common_graph: semantic typed projection "
+                                  "differs from body")
+                    : who + " does not declare " + domainName + "[" +
+                          std::to_string(slot) + "] for " + input);
             pointBindingRefusals += 5;
             ++pointBindingRows;
             return;
@@ -1133,8 +1224,7 @@ _TestOwnChainPreceding()
     for (size_t c = 0; c < chains.size(); ++c) {
         for (size_t r = 0; r < chains[c].revisions.size(); ++r, ++id) {
             const auto &bindings = chains[c].revisions[r].pointBindings;
-            const int64_t reader =
-                _FindStep(*file, fb::StepKind::RevisionStatic, int64_t(id));
+            const int64_t reader = _BindingReader(*file, id);
             if (bindings.empty() || bindings[0].finalRead ||
                 bindings[0].candidates.size() != 1 || reader < 0) {
                 continue;
@@ -2155,9 +2245,42 @@ _TestInputApi(const RigExecExampleFixture &fixture, const UsdStageRefPtr &stage,
             return;
         }
         CHECK(input->SetInput(dragName, value, &why));
-        CHECK(input->Execute(&error));
-        const std::string moved = _CompareRuns(*input, *fresh, false);
-        if (!moved.empty()) {
+        const bool executed = input->Execute(&error);
+        // A constraint weight dragged past 1 stops its mover's node.
+        const std::string weightSuffix = ".inputs:defaultWeight";
+        const bool weightDrag =
+            value > 1.0 && dragName.size() > weightSuffix.size() &&
+            dragName.compare(dragName.size() - weightSuffix.size(),
+                             weightSuffix.size(), weightSuffix) == 0;
+        const std::string typeName =
+            weightDrag ? stage
+                             ->GetPrimAtPath(SdfPath(dragName.substr(
+                                 0, dragName.size() - weightSuffix.size())))
+                             .GetTypeName()
+                             .GetString()
+                       : std::string();
+        const bool outsideWeight =
+            weightDrag &&
+            (typeName == "RigExecMatrixMover" ||
+             (typeName.size() > 10 &&
+              typeName.compare(typeName.size() - 10, 10, "Constraint") == 0));
+        if (outsideWeight) {
+            CHECK(!executed);
+            CHECK(error ==
+                  dragName.substr(0, dragName.size() - weightSuffix.size()) +
+                      ": inputs:defaultWeight is outside finite "
+                      "[0, 1]");
+        } else {
+            CHECK(executed);
+            if (!executed)
+                std::printf("%s: drag of %s: %s\n", fixture.stage,
+                            dragName.c_str(), error.c_str());
+        }
+        const std::string moved =
+            outsideWeight ? std::string() : _CompareRuns(*input, *fresh, false);
+        if (outsideWeight) {
+            moveNote = "refused";
+        } else if (!moved.empty()) {
             ++inputApiMoved;
             moveNote = "moves " + moved;
         } else {
@@ -2364,7 +2487,7 @@ main(int argc, char **argv)
                 reservedRefusals, volumeRefusals, versionRefusals);
     CHECK(phaseFixtureRows == 3);
     CHECK(recordRefusals > 0);
-    CHECK(recordListRefusals > 0);
+    CHECK(recordListRefusals > 0 || opRecordLists > 0);
     CHECK(reservedRefusals > 0);
     CHECK(volumeRefusals > 0);
     CHECK(versionRefusals > 0);

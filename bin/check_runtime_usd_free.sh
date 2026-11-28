@@ -1,7 +1,8 @@
 #!/bin/bash
-# Compile the runtime, the EvalCore step table, the op scheduler, and the
-# binary format with no OpenUSD include path. Fails if a translation unit
-# needs a pxr header, or if an undefined symbol is an OpenUSD type.
+# Compile the runtime, the EvalCore step table, the op scheduler, the binary
+# format, the op core, and the built-in type and op libraries with no OpenUSD
+# include path. Fails if a translation unit needs a pxr header, or if an
+# undefined symbol is an OpenUSD type.
 #
 # Usage: bin/check_runtime_usd_free.sh [BUILD_DIR | --sdk MANIFEST_DIR]
 #        [--list-objects prints one line per distinct object target]
@@ -13,6 +14,9 @@
 # is runtime-generated resolve under M, every other relative entry under
 # this checkout (never both), and an absolute or '..' entry marks a
 # producer-dependent layout that cannot be checked from a consumer.
+# The op core and the type and op libraries come from opCoreSources.txt,
+# which an installed SDK ships beside the other manifests; a build tree adds
+# libs/rigExecBuiltins/builtins.cpp.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -61,9 +65,10 @@ else
     MANIFESTS="$BUILD"
 fi
 if [[ ! -f "$MANIFESTS/runtimeSources.txt" || ! -f "$MANIFESTS/runtimeIncludes.txt" ||
-      ! -f "$MANIFESTS/evalCoreSources.txt" || ! -f "$MANIFESTS/evalCoreIncludes.txt" ]]; then
+      ! -f "$MANIFESTS/evalCoreSources.txt" || ! -f "$MANIFESTS/evalCoreIncludes.txt" ||
+      ! -f "$MANIFESTS/opCoreSources.txt" ]]; then
     if [[ $installed -eq 1 ]]; then
-        echo "no SDK manifests in $MANIFESTS: expected runtimeSources.txt, runtimeIncludes.txt, evalCoreSources.txt and evalCoreIncludes.txt there (install the SDK from a matching build)" >&2
+        echo "no SDK manifests in $MANIFESTS: expected runtimeSources.txt, runtimeIncludes.txt, evalCoreSources.txt, evalCoreIncludes.txt and opCoreSources.txt there (install the SDK from a matching build)" >&2
     else
         echo "configure and build rigExecRuntime first (missing source manifest in $MANIFESTS)" >&2
     fi
@@ -153,14 +158,14 @@ for manifest in runtimeIncludes.txt evalCoreIncludes.txt; do
 done
 
 objs=()
+units=()
 declare -A object_of=()  # object key -> the source that claimed it
 # Each manifest entry is a translation unit: C for .c, C++ for the other final
 # suffixes cmake/exportManifests.cmake accepts. The list is case-sensitive here,
 # in the exporter, and in the Godot example's SConstruct. Anything else is a
 # producer bug and stops the check rather than being skipped.
-compile_one() {
-    local src="$1" key obj extension
-    extension="${src##*.}"
+plan_one() {
+    local src="$1" key obj
     # The object key carries the whole manifest spelling with '/' folded, so
     # mesh.cpp, a mesh.cxx beside it and a mesh.scalar.cxx each get their own
     # object, and one unit named by two manifests compiles once.
@@ -177,21 +182,29 @@ compile_one() {
         fi
         return 0
     fi
-    object_of["$key"]="$src"
-    case "$extension" in
-        c)
-            gcc "${CFLAGS[@]}" -c "$src" -o "$obj" ;;
-        cc|cxx|cpp|c++)
-            g++ "${CXXFLAGS[@]}" -c "$src" -o "$obj" ;;
+    case "${src##*.}" in
+        c|cc|cxx|cpp|c++) ;;
         *)
             echo "$src: not a translation unit (supported: .c .cc .cxx .cpp .c++)" >&2
             exit 1 ;;
     esac
+    object_of["$key"]="$src"
+    units+=("$src")
     objs+=("$obj")
 }
 
+# Output goes to a per-unit log so parallel compiles do not interleave.
+compile_unit() {
+    local src="$1" obj="$2"
+    local log="$obj.log"
+    case "${src##*.}" in
+        c) gcc "${CFLAGS[@]}" -c "$src" -o "$obj" >"$log" 2>&1 ;;
+        *) g++ "${CXXFLAGS[@]}" -c "$src" -o "$obj" >"$log" 2>&1 ;;
+    esac
+}
+
 sources=()
-for manifest in runtimeSources.txt evalCoreSources.txt; do
+for manifest in runtimeSources.txt evalCoreSources.txt opCoreSources.txt; do
     while IFS= read -r src; do
         src="${src%$'\r'}"
         [[ -z "$src" ]] && continue
@@ -210,9 +223,13 @@ for manifest in runtimeSources.txt evalCoreSources.txt; do
         sources+=("$src")
     done < "$MANIFESTS/$manifest"
 done
+if [[ $installed -eq 0 ]]; then
+    sources+=("$ROOT/libs/rigExecBuiltins/builtins.cpp")
+fi
 sources+=(
     "$ROOT/libs/rigExecGraph/opGraph.cpp"
     "$ROOT/libs/rigExecBinary/format.cpp"
+    "$ROOT/libs/rigExecBinary/manifest.cpp"
     "$ROOT/libs/rigExecBinary/transport.cpp"
     "$ROOT/thirdparty/lzma/C/LzmaEnc.c"
     "$ROOT/thirdparty/lzma/C/LzmaDec.c"
@@ -221,10 +238,39 @@ sources+=(
 )
 
 for src in "${sources[@]}"; do
-    compile_one "$src"
+    plan_one "$src"
 done
 
-if nm -uC "${objs[@]}" | grep -E 'pxr::|[^A-Za-z0-9_](Gf|Usd|Sdf|Vt|Tf|Hd|Exec)[A-Za-z0-9_]*' ; then
+jobs_max="$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
+failed=0
+running=0
+for i in "${!units[@]}"; do
+    if [[ $running -ge $jobs_max ]]; then
+        wait -n || failed=1
+        running=$((running - 1))
+    fi
+    compile_unit "${units[$i]}" "${objs[$i]}" &
+    running=$((running + 1))
+done
+while [[ $running -gt 0 ]]; do
+    wait -n || failed=1
+    running=$((running - 1))
+done
+for i in "${!units[@]}"; do
+    if [[ -s "${objs[$i]}.log" ]]; then
+        echo "== ${units[$i]}" >&2
+        cat "${objs[$i]}.log" >&2
+    fi
+done
+if [[ $failed -ne 0 ]]; then
+    echo "runtime sources failed to compile" >&2
+    exit 1
+fi
+
+# Symbol lines only: with several objects nm also prints each object's
+# path, and a mktemp directory name such as tmp.VtYcwFeMAb matches.
+if nm -uC "${objs[@]}" | grep -E '^[[:space:]]+U ' |
+    grep -E 'pxr::|[^A-Za-z0-9_](Gf|Usd|Sdf|Vt|Tf|Hd|Exec)[A-Za-z0-9_]*' ; then
     echo "runtime link line names an OpenUSD symbol" >&2
     exit 1
 fi

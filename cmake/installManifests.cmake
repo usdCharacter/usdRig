@@ -13,7 +13,8 @@ function(rigexec_add_sdk_manifest_export)
     endforeach ()
 
     set(_outputs "")
-    foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
+    foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes
+             opCoreSources)
         list(APPEND _outputs "${RIGEXEC_MANIFEST_EXPORT_OUT_DIR}/${_manifest}.txt")
     endforeach ()
 
@@ -30,6 +31,7 @@ function(rigexec_add_sdk_manifest_export)
             "${RIGEXEC_MANIFEST_EXPORT_BUILD_DIR}/runtimeIncludes.txt"
             "${RIGEXEC_MANIFEST_EXPORT_BUILD_DIR}/evalCoreSources.txt"
             "${RIGEXEC_MANIFEST_EXPORT_BUILD_DIR}/evalCoreIncludes.txt"
+            "${RIGEXEC_MANIFEST_EXPORT_BUILD_DIR}/opCoreSources.txt"
         VERBATIM)
     add_custom_target(rigexecSdkManifests ALL DEPENDS ${_outputs})
 endfunction()
@@ -61,6 +63,7 @@ include(\"${CMAKE_CURRENT_FUNCTION_LIST_DIR}/verifyManifests.cmake\")")
         "${_staged}/runtimeIncludes.txt"
         "${_staged}/evalCoreSources.txt"
         "${_staged}/evalCoreIncludes.txt"
+        "${_staged}/opCoreSources.txt"
         DESTINATION "${RIGEXEC_MANIFEST_INSTALL_DESTINATION}")
     if (RIGEXEC_MANIFEST_INSTALL_FLAGS_FILE)
         install(FILES "${RIGEXEC_MANIFEST_INSTALL_FLAGS_FILE}"
@@ -88,7 +91,7 @@ if (DEFINED ENV{DESTDIR} AND NOT \"\$ENV{DESTDIR}\" STREQUAL \"\")
 else ()
     set(_candidates \"\${CMAKE_INSTALL_PREFIX}/\${_dest}\")
 endif ()
-foreach (_manifest IN ITEMS runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
+foreach (_manifest IN ITEMS runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes opCoreSources)
     set(_installed \"\")
     foreach (_candidate IN LISTS _candidates)
         if (EXISTS \"\${_candidate}/\${_manifest}.txt\")

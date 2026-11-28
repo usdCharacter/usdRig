@@ -1,30 +1,48 @@
-// A consumer built against the installed SDK alone: the sealed compiled-program
-// view answers the queries it advertises, and the evaluator's execution records
-// are not nameable from the installed headers. Each probe is a pair of
-// overloads; the first is viable only when the name is reachable through the
-// installed headers, so a probe returning 1 is a record the seal keeps out.
-#include "rigExec/compiledProgram.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/rigEvaluator.h"
+// A consumer built against the installed SDK alone. The install ships
+// rigExec/api/ and the internal headers listed in
+// tools/rigexec_installed_internal.txt, nothing else under rigExec/. A host
+// reads a compiled rig through RigExecProgramView; the evaluator's execution
+// records are not nameable. Each probe is a pair of overloads; the first is
+// viable only when the name is reachable through the installed headers, so a
+// probe returning 1 is a record the seal keeps out.
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/api/compile.h"
+#include "rigExec/api/evaluator.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/api/programView.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecSchema/schemaTokens.h"
 
-// The install ships the sealed view, not the evaluator's execution records.
-// This file is built only against the installed SDK, so these headers must not
-// be reachable here.
-#if __has_include("rigExec/bakedProgramImpl.h")
-#error "bakedProgramImpl.h is shipped to installed consumers"
+// Built only against the installed SDK, so these must not be reachable.
+#if __has_include("rigExec/internal/compiledProgram.h")
+#error "internal/compiledProgram.h is shipped to installed consumers"
 #endif
-#if __has_include("rigExec/frozenProgram.h")
-#error "frozenProgram.h is shipped to installed consumers"
+#if __has_include("rigExec/internal/bakedProgramImpl.h")
+#error "internal/bakedProgramImpl.h is shipped to installed consumers"
 #endif
-#if __has_include("rigExec/frozenContextInternal.h")
-#error "frozenContextInternal.h is shipped to installed consumers"
+#if __has_include("rigExec/internal/frozenProgram.h")
+#error "internal/frozenProgram.h is shipped to installed consumers"
 #endif
-#if __has_include("rigExec/bakedSchedule.h")
-#error "bakedSchedule.h is shipped to installed consumers"
+#if __has_include("rigExec/internal/frozenContextInternal.h")
+#error "internal/frozenContextInternal.h is shipped to installed consumers"
 #endif
-#if __has_include("rigExec/bakedOpGraph.h")
-#error "bakedOpGraph.h is shipped to installed consumers"
+#if __has_include("rigExec/internal/bakedSchedule.h")
+#error "internal/bakedSchedule.h is shipped to installed consumers"
+#endif
+#if __has_include("rigExec/internal/bakedOpGraph.h")
+#error "internal/bakedOpGraph.h is shipped to installed consumers"
+#endif
+#if __has_include("rigExec/internal/compile/rigDescData.h")
+#error "internal/compile/rigDescData.h is shipped to installed consumers"
+#endif
+#if __has_include("rigExec/internal/program/program.h")
+#error "internal/program/program.h is shipped to installed consumers"
+#endif
+#if __has_include("rigExec/api/backgroundScheduler.h")
+#error "the background scheduler is shipped in the engine, not rigExecPlayback"
+#endif
+#if __has_include("rigExec/internal/program/alignedBuffer.h")
+#error "internal/program/alignedBuffer.h is shipped to installed consumers"
 #endif
 
 #include "pxr/base/tf/token.h"
@@ -34,8 +52,12 @@
 #include "pxr/usd/usdGeom/tokens.h"
 
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <set>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -69,77 +91,6 @@ int failures = 0;
             std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #condition);   \
         }                                                                      \
     } while (0)
-
-template <class View>
-int
-_WritesSolverScratch(
-    View &view,
-    decltype(view.GetSolver(0).ribbonPointsBinding.gather.clear(), 0))
-{
-    return 0;
-}
-template <class View>
-long
-_WritesSolverScratch(const View &view, long)
-{
-    return 1;
-}
-
-// Even a read: the pose interpolator's solve output is builder scratch.
-template <class View>
-int
-_ReadsInterpolatorScratch(const View &view,
-                          decltype(view.GetPoseInterpolator(0).scratch, 0))
-{
-    return 0;
-}
-template <class View>
-long
-_ReadsInterpolatorScratch(const View &view, long)
-{
-    return 1;
-}
-
-// Each pair names one record the view used to lend by index; the first
-// overload is viable only when that accessor still exists.
-template <class View>
-int
-_LendsChainRecord(View &view, decltype(view.GetChain(0), 0))
-{
-    return 0;
-}
-template <class View>
-long
-_LendsChainRecord(const View &view, long)
-{
-    return 1;
-}
-
-template <class View>
-int
-_LendsRevisionRecord(View &view, decltype(view.GetChainRevision(0, 0), 0))
-{
-    return 0;
-}
-template <class View>
-long
-_LendsRevisionRecord(const View &view, long)
-{
-    return 1;
-}
-
-template <class View>
-int
-_LendsWeightRecord(View &view, decltype(view.GetWeightObject(0), 0))
-{
-    return 0;
-}
-template <class View>
-long
-_LendsWeightRecord(const View &view, long)
-{
-    return 1;
-}
 
 template <class Program>
 int
@@ -275,46 +226,19 @@ TestSeal()
     if (!program) {
         return;
     }
-    const RigExecCompiledProgram &view = program->GetCompiledProgram();
-
-    CHECK(view.GetStepCount() > 0);
-    CHECK(view.GetComposeGroupCount() > 0);
-    CHECK(view.GetProviderSlotCount() > 0);
-    CHECK(!view.GetBoundPaths().empty());
-    CHECK(view.GetPathTexts().size() == view.GetBoundPaths().size());
-    CHECK(!view.GetOpGraph().empty());
-    CHECK(!view.GetControlPaths().empty());
-    CHECK(view.GetProgramDigest(evaluator.GetCompiledRigSignature()) != 0);
-    CHECK(view.GetConstantDigest() != 0);
-    CHECK(view.GetChainCount() > 0);
-    CHECK(view.GetChainTargets().count(SdfPath("/View/Channels.dial")) > 0);
-    CHECK(view.GetRevisionCount() > 0);
-    for (size_t chain = 0; chain < view.GetChainCount(); ++chain) {
-        CHECK(!view.GetChainFacts(chain).target.IsEmpty());
-        for (size_t revision = 0; revision < view.GetChainRevisionCount(chain);
-             ++revision) {
-            CHECK(!view.GetChainRevisionFacts(chain, revision)
-                       .moverPath.IsEmpty());
-        }
-    }
-    CHECK(view.GetWeightObjectCount() == 1);
-    if (view.GetWeightObjectCount() > 0) {
-        CHECK(view.GetWeightObjectFacts(0).path ==
-              SdfPath("/View/Rig/Weights/PanelEdge"));
-    }
-    CHECK(view.GetPropertyChainCount() > 0);
-    CHECK(view.GetBoundInputCount() > 0);
-    CHECK(view.GetAvarSlotCount() > 0);
-
-    std::shared_ptr<const RigExecCompiledProgram> held =
-        program->ShareCompiledProgram();
-    CHECK(held != nullptr);
-    if (!held) {
-        return;
-    }
-    CHECK(held == program->ShareCompiledProgram());
-    CHECK(held->IsSameVersionAs(view));
-    CHECK(held->GetStepCount() == view.GetStepCount());
+    static_assert(std::is_same<decltype(RigExecProgramView().Program()),
+                               const RigExecBakedProgram *>::value,
+                  "the program view lends a read-only program");
+    const RigExecProgramView view = evaluator.GetProgramView();
+    CHECK(static_cast<bool>(view));
+    CHECK(view.Program() == program);
+    CHECK(view.ClusterCount() > 0);
+    CHECK(view.ClusterCount() == program->GetClusterCount());
+    CHECK(view.LastTime() == UsdTimeCode::Default());
+    const RigExecProgramView empty;
+    CHECK(!empty);
+    CHECK(empty.ClusterCount() == 0);
+    CHECK(empty.LastTime() == UsdTimeCode::Default());
 
     const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(1.0));
     CHECK(pose.valid);
@@ -331,26 +255,98 @@ TestSeal()
             CHECK(dialed->second.Get<double>() == 6.0);
         }
     }
+    CHECK(view.LastTime() == UsdTimeCode(1.0));
+    CHECK(evaluator.GetProgramView().ClusterCount() == view.ClusterCount());
 
     // Nothing a consumer can reach is a writable execution record.
-    CHECK(_WritesSolverScratch(view, 0) == 1);
-    CHECK(_ReadsInterpolatorScratch(view, 0) == 1);
-    CHECK(_LendsChainRecord(view, 0) == 1);
-    CHECK(_LendsRevisionRecord(view, 0) == 1);
-    CHECK(_LendsWeightRecord(view, 0) == 1);
     CHECK(_ReachesStepGraph(*program, 0) == 1);
+    CHECK(_ReachesStepGraph(*view.Program(), 0) == 1);
     std::shared_ptr<const RigExecFrozenProgram> frozen;
     CHECK(_ReadsFrozenHandle(frozen, 0) == 1);
     CHECK(_NamesImplType<RigExecBakedProgramImpl>(0, 0) == 1);
-    CHECK(view.GetStepCount() > 0);
+    CHECK(_NamesImplType<RigExecCompiledProgram>(0, 0) == 1);
+    CHECK(_NamesImplType<RigExecProgram>(0, 0) == 1);
+    CHECK(_NamesImplType<RigExecEvaluatorState>(0, 0) == 1);
+}
+
+std::set<std::string>
+ReadInstalledInternalList(const std::filesystem::path &listPath)
+{
+    std::set<std::string> listed;
+    std::ifstream in(listPath);
+    CHECK(in.good());
+    std::string line;
+    while (std::getline(in, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+            line.pop_back();
+        }
+        if (!line.empty() && line.front() != '#') {
+            listed.insert("internal/" + line);
+        }
+    }
+    return listed;
+}
+
+// Under include/rigExec/ the install holds api/ and exactly the listed
+// internal headers.
+void
+TestInstalledHeaderSet(const std::filesystem::path &includeRoot,
+                       const std::filesystem::path &listPath)
+{
+    const std::filesystem::path rigExecDir = includeRoot / "rigExec";
+    CHECK(std::filesystem::is_directory(rigExecDir / "api"));
+    const std::set<std::string> listed = ReadInstalledInternalList(listPath);
+    CHECK(!listed.empty());
+    std::set<std::string> installedInternal;
+    size_t apiHeaders = 0;
+    for (const auto &entry :
+         std::filesystem::recursive_directory_iterator(rigExecDir)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        const std::string rel =
+            entry.path().lexically_relative(rigExecDir).generic_string();
+        if (rel.rfind("api/", 0) == 0 &&
+            rel.find('/', 4) == std::string::npos) {
+            ++apiHeaders;
+        } else if (rel.rfind("internal/", 0) == 0) {
+            installedInternal.insert(rel);
+        } else {
+            ++failures;
+            std::printf("FAIL installed outside api/ and the internal list: "
+                        "rigExec/%s\n",
+                        rel.c_str());
+        }
+    }
+    CHECK(apiHeaders > 0);
+    for (const std::string &rel : installedInternal) {
+        if (!listed.count(rel)) {
+            ++failures;
+            std::printf("FAIL unlisted internal header installed: rigExec/%s\n",
+                        rel.c_str());
+        }
+    }
+    for (const std::string &rel : listed) {
+        if (!installedInternal.count(rel)) {
+            ++failures;
+            std::printf("FAIL listed internal header missing: rigExec/%s\n",
+                        rel.c_str());
+        }
+    }
 }
 
 } // namespace
 
 int
-main()
+main(int argc, char **argv)
 {
+    if (argc != 3) {
+        std::printf("usage: %s <installed include dir> <internal list>\n",
+                    argv[0]);
+        return 2;
+    }
     TestSeal();
+    TestInstalledHeaderSet(argv[1], argv[2]);
     if (failures > 0) {
         std::printf("%d failure(s)\n", failures);
         return 1;

@@ -4,22 +4,24 @@
 // admission under edits, lifts and held frames, alongside numerical and
 // body-purity checks. Every registered example participates.
 // argv[1] = path to the examples directory.
-#include "rigExec/inputReplay.h"
-#include "rigExec/bakedOpValues.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bodyPurity.h"
-#include "rigExec/frozenContextInternal.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/internal/bakedOpValues.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bodyPurity.h"
+#include "rigExec/internal/frozenContextInternal.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBake/bake.h"
 #include "rigExecBake/revisionReads.h"
 #include "rigExecBinary/format.h"
 #include "rigExecBinary/generated/rigexec_generated.h"
 #include "rigExecMath/latticeKernel.h"
+#include "rigExecMath/providerMatrixKernel.h"
 #include "rigExecAuthoring/rigBuilder.h"
 #include "rigExecExampleFixtures.h"
 
 #include "pxr/base/arch/env.h"
+#include "pxr/base/gf/matrix3d.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3d.h"
@@ -320,6 +322,121 @@ RunChecked(RigExecRigEvaluator *evaluator,
     return pose;
 }
 
+// The weight drags that put their packet out of its contract, each with
+// the error its packet stops the frame with. Every other drag must run.
+const std::map<std::string, std::string> invalidWeightDrags = {
+    {"/BlendArmAsset/Rig/Weights/WristW.rigExec:defaultWeight",
+     "StaticWeights: a dense packet's default weight is not 0"},
+    {"/PropMathAsset/Rig/Weights/CardW.rigExec:defaultWeight",
+     "StaticWeights: a weight is not finite or outside [0, 1]"},
+    {"/ReadPhaseAsset/Rig/Weights/CageW.rigExec:defaultWeight",
+     "StaticWeights: a weight is not finite or outside [0, 1]"},
+    {"/SpineAsset/Rig/Weights/FinW.rigExec:defaultWeight",
+     "StaticWeights: a weight is not finite or outside [0, 1]"},
+};
+
+std::map<std::string, size_t> invalidWeightDragsSeen;
+
+// The drags that reach a matrix mover's default weight through a connection
+// and carry it outside [0, 1]: the mover whose MatrixDeform stops the frame.
+const std::map<std::string, std::string> invalidReachedWeightDrags = {
+    {"/PhaseConnectAsset/Rig/Movers/Dial/Gain.inputs:value",
+     "/PhaseConnectAsset/Rig/Movers/Cards/GainCard"},
+};
+
+// Whether \p drag is listed in invalidWeightDrags; if so, checks that
+// \p pose stopped at the dragged weight's packet with exactly its error.
+bool
+CheckInvalidWeightDrag(const RigExecRigPose &pose,
+                       const std::vector<RigExecValueOverride> &drag)
+{
+    if (drag.empty())
+        return false;
+    const SdfPath dragged =
+        drag.front().prim.AppendProperty(drag.front().attribute);
+    // A constraint's weight dragged outside [0, 1] stops its mover's node.
+    const VtValue &value = drag.front().value;
+    const double weight =
+        value.IsHolding<float>()    ? double(value.UncheckedGet<float>())
+        : value.IsHolding<double>() ? value.UncheckedGet<double>()
+                                    : 0.5;
+    if (drag.front().attribute == TfToken("inputs:defaultWeight") &&
+        !(weight >= 0.0 && weight <= 1.0) && !pose.valid) {
+        ++invalidWeightDragsSeen[dragged.GetString()];
+        const bool failed =
+            pose.diagnostics.size() == 2 &&
+            pose.diagnostics[0] ==
+                dragged.GetPrimPath().GetString() +
+                    ": inputs:defaultWeight is outside finite [0, 1]" &&
+            pose.diagnostics[1] == "native program did not complete generation";
+        if (!failed)
+            std::printf("FAIL %s: the drag did not stop at its constraint\n",
+                        dragged.GetText());
+        CHECK(failed);
+        return true;
+    }
+    const auto reached = invalidReachedWeightDrags.find(dragged.GetString());
+    if (reached != invalidReachedWeightDrags.end() && !pose.valid) {
+        const std::string prefix = reached->second + ": node ";
+        const std::string suffix =
+            " (rig:MatrixDeform) failed: MatrixDeform: a default weight is not "
+            "finite or outside [0, 1]";
+        const std::string &line =
+            pose.diagnostics.empty() ? std::string() : pose.diagnostics[0];
+        const bool failed =
+            pose.diagnostics.size() == 2 && line.rfind(prefix, 0) == 0 &&
+            line.size() > suffix.size() &&
+            line.compare(line.size() - suffix.size(), suffix.size(), suffix) ==
+                0 &&
+            pose.diagnostics[1] == "native program did not complete generation";
+        if (!failed)
+            std::printf("FAIL %s: the drag did not stop at %s\n",
+                        dragged.GetText(), reached->second.c_str());
+        CHECK(failed);
+        return true;
+    }
+    const auto found = invalidWeightDrags.find(dragged.GetString());
+    if (found == invalidWeightDrags.end())
+        return false;
+    ++invalidWeightDragsSeen[found->first];
+    const std::string prefix = dragged.GetPrimPath().GetString() + ": node ";
+    const std::string suffix = " (rig:StaticWeights) failed: " + found->second;
+    const bool failed =
+        !pose.valid && pose.diagnostics.size() == 2 &&
+        pose.diagnostics[0].rfind(prefix, 0) == 0 &&
+        pose.diagnostics[0].size() > suffix.size() &&
+        pose.diagnostics[0].compare(pose.diagnostics[0].size() - suffix.size(),
+                                    suffix.size(), suffix) == 0 &&
+        pose.diagnostics[1] == "native program did not complete generation";
+    if (!failed)
+        std::printf("FAIL %s: the drag did not stop at its packet with "
+                    "'%s'\n",
+                    dragged.GetText(), found->second.c_str());
+    CHECK(failed);
+    return true;
+}
+
+void
+RunCheckedOrFailsAtItsPacket(RigExecRigEvaluator *evaluator,
+                             const std::vector<RigExecValueOverride> &drag,
+                             UsdTimeCode time, const std::string &what)
+{
+    evaluator->SetInteractiveOverrides(drag);
+    const size_t generations = evaluator->GetBakedGenerationCount();
+    const RigExecRigPose pose = evaluator->Evaluate(time);
+    if (CheckInvalidWeightDrag(pose, drag))
+        return;
+    CHECK(pose.valid);
+    CHECK(pose.comparisonMismatches == 0);
+    CHECK(evaluator->GetBakedGenerationCount() == generations + 1);
+    const size_t mismatches = LeafMismatches(*evaluator, drag, time, what);
+    if (mismatches) {
+        std::printf("FAIL %s: %zu leaf/read mismatch(es)\n", what.c_str(),
+                    mismatches);
+    }
+    CHECK(mismatches == 0);
+}
+
 template <class T>
 RigExecValueOverride
 DragOf(const SdfPath &property, T value)
@@ -503,8 +620,8 @@ def Xform "Asset"
             )
             {
                 double avars:rz.timeSamples = {
-                    1: 0.2,
-                    10: 0.4,
+                    1: 0.1,
+                    10: 0.2,
                 }
                 matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
             }
@@ -655,28 +772,15 @@ ReaderWalkMismatches(const RigExecRigEvaluator &evaluator,
 void
 TestProviderMatrixFallbackAdmission()
 {
-    RigExecBakedProgramImpl program;
     const RigExecPointFrame identity;
-    const auto landmarks = identity.points;
-    program.restFrames = {identity};
-    program.restPts = {landmarks};
-    program.base = {identity};
-    program.fin = {identity};
-    program.baseLast = {0};
-    program.finLast = {0};
-    program.baseMatrix = {GfMatrix4d(1.0)};
-    program.finalMatrix = {GfMatrix4d(1.0)};
-    program.jointSlots = {0};
-    RigExecBakedStep step;
-    step.kind = RigExecBakedStepKind::ProviderMatrix;
-    step.object = 0;
-    step.part = 1;
+    RigExecPointFrame rest = identity;
+    using Frame = RigExecProviderFrameT<GfVec3d>;
+    const auto view = [](const RigExecPointFrame &frame) {
+        return Frame{frame.points, frame.IsValid(), frame.IsDegenerate()};
+    };
     const auto run = [&](const RigExecPointFrame &final) {
-        program.fin[0] = final;
-        // Poison the previous output to check publication, including recovery.
-        program.finalMatrix[0] = GfMatrix4d(7.0);
-        RigExecBakedRunPoseStep(&program, &step, UsdTimeCode(1.0));
-        return program.finalMatrix[0];
+        return RigExecProviderFinalMatrixT<GfMatrix3d, GfVec3d, GfMatrix4d>(
+            view(rest), view(final), view(identity), true);
     };
     RigExecPointFrame translated = identity;
     for (auto &point : translated.points)
@@ -697,17 +801,17 @@ TestProviderMatrixFallbackAdmission()
     }
     // A degenerate rest does not reject a still-usable final fallback. Keep
     // the captured reference basis and Base, as the seeded-provider path does.
-    program.restFrames[0].flags |= RigExecPointFrameDegenerate;
+    rest.flags |= RigExecPointFrameDegenerate;
     CHECK(run(translated) == expected);
-    program.restFrames[0] = identity;
+    rest = identity;
     CHECK(run(translated) == expected);
 }
 
 // The walk resolver against the read it restates, over every reader walk
 // (chain-routed bindings and path leaves read through the resolved inputs)
 // of every fixture, at three frames: with no override, under a drag on a
-// chain target the walks meet and on a NaN there (which skips the chain,
-// leaving the override standing at its target), and lifted. The in-memory
+// chain target the walks meet, on a NaN there (which fails the frame with
+// the chain's error), and lifted. The in-memory
 // rig adds a float read of a double chain target.
 void
 TestWalkResolverEqualsGetAttribute(const std::string &examples)
@@ -725,7 +829,7 @@ TestWalkResolverEqualsGetAttribute(const std::string &examples)
         stages.emplace_back("float at double", stage);
         rigs.push_back(SdfPath("/Asset/Rig"));
     }
-    size_t checked = 0, doubleTails = 0, skipped = 0;
+    size_t checked = 0, doubleTails = 0, nanFailures = 0;
     for (size_t i = 0; i < stages.size(); ++i) {
         const std::string &name = stages[i].first;
         const UsdStageRefPtr &stage = stages[i].second;
@@ -751,23 +855,38 @@ TestWalkResolverEqualsGetAttribute(const std::string &examples)
         }
         for (const UsdTimeCode t : Frames(stage)) {
             std::vector<std::vector<RigExecValueOverride>> cases = {{}};
+            size_t nanCase = SIZE_MAX;
             if (!target.IsEmpty()) {
                 cases.push_back(DragBy(stage, target, t, 0.25));
                 const UsdAttribute a = stage->GetAttributeAtPath(target);
+                nanCase = cases.size();
                 if (a.GetTypeName() == SdfValueTypeNames->Double) {
                     cases.push_back({DragOf(target, std::nan(""))});
                 } else if (a.GetTypeName() == SdfValueTypeNames->Float) {
                     cases.push_back({DragOf(target, std::nanf(""))});
-                }
+                } else
+                    nanCase = SIZE_MAX;
                 cases.push_back({});
             }
             for (size_t c = 0; c < cases.size(); ++c) {
                 evaluator->SetInteractiveOverrides(cases[c]);
                 const RigExecRigPose pose = evaluator->Evaluate(t);
-                CHECK(pose.valid);
-                for (const char valid : program->chainValid) {
-                    skipped += valid ? 0 : 1;
+                if (c == nanCase) {
+                    CHECK(!pose.valid);
+                    CHECK(std::any_of(
+                        pose.diagnostics.begin(), pose.diagnostics.end(),
+                        [&](const std::string &line) {
+                            return line.find("property chain " +
+                                             target.GetString() +
+                                             ": authored base is not "
+                                             "finite") != std::string::npos;
+                        }));
+                    ++nanFailures;
+                    continue;
                 }
+                if (CheckInvalidWeightDrag(pose, cases[c]))
+                    continue;
+                CHECK(pose.valid);
                 const std::string what = "walk resolver " + name + " at " +
                                          Text(t.GetValue()) + " case " +
                                          std::to_string(c);
@@ -777,11 +896,11 @@ TestWalkResolverEqualsGetAttribute(const std::string &examples)
         }
     }
     std::printf("walk resolver: %zu walk read(s) checked, %zu float walk(s) "
-                "of a double hop, %zu skipped chain(s) seen\n",
-                checked, doubleTails, skipped);
+                "of a double hop, %zu NaN drag(s) failed their frame\n",
+                checked, doubleTails, nanFailures);
     CHECK(checked > 0);
     CHECK(doubleTails > 0);
-    CHECK(skipped > 0);
+    CHECK(nanFailures > 0);
 }
 
 // For every visited binding, after every run, the leaf is the read: with no
@@ -815,9 +934,13 @@ CheckBodyLeavesEqualTheFunnel(const Fixture &f, const UsdStageRefPtr &stage,
             if (drag.empty()) {
                 return;
             }
-            RunChecked(evaluator, drag, t,
-                       name + " " + kind + " " + path.GetString() + " at " +
-                           Text(t.GetValue()));
+            const std::string what = name + " " + kind + " " +
+                                     path.GetString() + " at " +
+                                     Text(t.GetValue());
+            if (std::string(kind) == "weight object")
+                RunCheckedOrFailsAtItsPacket(evaluator, drag, t, what);
+            else
+                RunChecked(evaluator, drag, t, what);
         }
         RunChecked(evaluator, {}, frames.back(),
                    name + " lifted " + kind + " " + path.GetString());
@@ -1320,6 +1443,11 @@ TestBindingFixtureInputs(const std::string &examples)
         CheckAHeldLeafIsNotResampled(f, evaluator.get(), t);
         CheckBodyLeavesEqualTheFunnel(f, stage, evaluator.get());
     }
+    // Each fixture drags its weight at three frames.
+    for (const char *weight :
+         {"/BlendArmAsset/Rig/Weights/WristW.rigExec:defaultWeight",
+          "/PropMathAsset/Rig/Weights/CardW.rigExec:defaultWeight"})
+        CHECK(invalidWeightDragsSeen[weight] == 3);
 }
 
 uint64_t
@@ -2412,18 +2540,10 @@ RoutedDeformerCases(const std::string &examples)
         return;
     }
     const SdfPath cage = lattice->binding.cagePoints;
-    // The bind's Bernstein factors are the revision's own compiled rig data: a
-    // frame that moves only the posed cage reuses them.
-    const size_t binds = lattice->surfaceCache.LatticeBuilds();
-    CHECK(binds > 0);
     const RigExecRigPose cageNext =
         RunChecked(evaluator.get(), {}, UsdTimeCode(t.GetValue() + 1.0),
                    "lattice cage, next frame");
-    const RigExecBakedProgramImpl::GeomRevision *nextFrame =
-        FirstRevisionOf(*evaluator, RigExecRevisionOp::Lattice);
-    CHECK(nextFrame && nextFrame->surfaceCache.LatticeBuilds() == binds);
-    // The posed cage moved between the frames, so the strip's points did:
-    // the lattice ran at t+1, through the bind it kept.
+    // The posed cage moved between the frames, so the strip's points did.
     const SdfPath slab("/LatticeAsset/Geom/Slab.points");
     const auto slabBefore = cageBefore.movedProperties.find(slab);
     const auto slabNext = cageNext.movedProperties.find(slab);
@@ -2443,10 +2563,6 @@ RoutedDeformerCases(const std::string &examples)
     CHECK(attribute.Set(moved));
     const RigExecRigPose pose =
         RunChecked(evaluator.get(), {}, t, "lattice cage, edited");
-    // A new bind cage moves the bound the factors were taken in.
-    const RigExecBakedProgramImpl::GeomRevision *edited =
-        FirstRevisionOf(*evaluator, RigExecRevisionOp::Lattice);
-    CHECK(edited && edited->surfaceCache.LatticeBuilds() > binds);
     ShadowChecked(*evaluator, {}, t, "lattice cage, edited");
     CHECK(evaluator->GetBakedProgramBuildCount() == builds);
     CHECK(PoseMismatches(FreshPose(stage, rig, t), pose,
@@ -2856,7 +2972,12 @@ TestNoBodyReadsTheStage(const std::string &examples)
             evaluator->SetInteractiveOverrides(drag);
             const size_t generations = evaluator->GetBakedGenerationCount();
             const RigExecRigPose pose = evaluator->Evaluate(t);
-            CHECK(pose.valid);
+            if (!CheckInvalidWeightDrag(pose, drag) && !pose.valid) {
+                ++failures;
+                std::printf("FAIL %s %s at %g: the pose is invalid: %s\n",
+                            f.name.c_str(), what.c_str(), t.GetValue(),
+                            TfStringJoin(pose.diagnostics, "; ").c_str());
+            }
             ++fixtureRuns;
             if (evaluator->GetBakedGenerationCount() == generations + 1) {
                 ++fixtureBaked;
@@ -2937,6 +3058,10 @@ TestNoBodyReadsTheStage(const std::string &examples)
     }
     // The volatile scope is exercised: some fixture reaches the oracle.
     CHECK(!volatileRigs.empty());
+    for (const char *weight :
+         {"/ReadPhaseAsset/Rig/Weights/CageW.rigExec:defaultWeight",
+          "/SpineAsset/Rig/Weights/FinW.rigExec:defaultWeight"})
+        CHECK(invalidWeightDragsSeen[weight] > 0);
 }
 
 // A cubic wire over ten points whose envelope is sparse with a zero
@@ -3785,14 +3910,10 @@ def Xform "LatticeAsset"
 }
 )usda";
 
-// Equal lattice binds share one basis. Each revision builds its own on its
-// first frame; once that run joins, the program hands both one immutable
-// bind, which answers what a fresh program's own binds do, so a snapshot
-// frozen right after the first frame holds one bind too. A divisions edit
-// rebuilds the program, and the new revisions share their new bind the
-// same way.
+// Two equal lattices deform their equal strips equally, frame to frame and
+// after a divisions edit, which rebuilds the program.
 void
-TestEqualLatticeBindsShareOneBasis()
+TestTwinLatticesAgree()
 {
     const SdfPath rig("/LatticeAsset/Rig");
     const SdfPath moverA("/LatticeAsset/Rig/Movers/DeformA");
@@ -3803,27 +3924,6 @@ TestEqualLatticeBindsShareOneBasis()
     CHECK(rigExec::RigExecInputReplayImportFromString(stage->GetRootLayer(),
                                                       kTwinLattices));
     auto evaluator = MakeEvaluator(stage, rig);
-    using Revision = RigExecBakedProgramImpl::GeomRevision;
-    // \p B's lattice revision of the mover at \p path.
-    const auto revisionIn = [](const RigExecBakedProgramImpl *B,
-                               const SdfPath &path) -> const Revision * {
-        if (!B) {
-            return nullptr;
-        }
-        for (const auto &chain : B->chains) {
-            for (const Revision &revision : chain.revisions) {
-                if (revision.op == RigExecRevisionOp::Lattice &&
-                    revision.moverPath == path) {
-                    return &revision;
-                }
-            }
-        }
-        return nullptr;
-    };
-    // The standing program's.
-    const auto revisionOf = [&](const SdfPath &path) {
-        return revisionIn(Program(*evaluator), path);
-    };
     const auto pointsAt = [](const RigExecRigPose &pose, const SdfPath &path) {
         const auto found = pose.movedProperties.find(path);
         return found != pose.movedProperties.end() &&
@@ -3831,67 +3931,19 @@ TestEqualLatticeBindsShareOneBasis()
                    ? found->second.UncheckedGet<VtVec3fArray>()
                    : VtVec3fArray();
     };
-    // \p B's two revisions hold one bind at \p divisions, each having
-    // built once.
-    const auto shareOneIn = [&](const RigExecBakedProgramImpl *B,
-                                const GfVec3i &divisions,
-                                const std::string &what) {
-        const Revision *a = revisionIn(B, moverA);
-        const Revision *b = revisionIn(B, moverB);
-        CHECK(a && b);
-        if (!a || !b) {
-            return;
-        }
-        const auto &bind = a->surfaceCache.RetainedLatticeBind();
-        const bool shared =
-            bind && bind == b->surfaceCache.RetainedLatticeBind();
-        if (!shared) {
-            std::printf("FAIL %s: the lattice binds are not shared\n",
-                        what.c_str());
-        }
-        CHECK(shared);
-        CHECK(a->surfaceCache.LatticeBuilds() == 1 &&
-              b->surfaceCache.LatticeBuilds() == 1);
-        CHECK(bind && bind->divisions[0] == divisions[0] &&
-              bind->divisions[1] == divisions[1] &&
-              bind->divisions[2] == divisions[2]);
-    };
-    const auto shareOne = [&](const GfVec3i &divisions,
-                              const std::string &what) {
-        shareOneIn(Program(*evaluator), divisions, what);
-    };
     const RigExecRigPose first =
         RunChecked(evaluator.get(), {}, UsdTimeCode(1013), "twin, first");
-    // Shared once the first frame joined, before anything copies the
-    // program: a snapshot frozen now copies the one bind.
-    shareOne(GfVec3i(2, 2, 3), "twin, first");
-    {
-        std::shared_ptr<const RigExecFrozenProgram> frozen;
-        std::string error;
-        CHECK(RigExecFreezeProgram(*evaluator, &frozen, &error));
-        if (frozen) {
-            shareOneIn(frozen->program.get(), GfVec3i(2, 2, 3),
-                       "twin, frozen after the first frame");
-        } else {
-            std::printf("FAIL twin: freeze refused: %s\n", error.c_str());
-        }
-    }
+    CHECK(!pointsAt(first, slabA).empty() &&
+          pointsAt(first, slabA) == pointsAt(first, slabB));
     const RigExecRigPose next =
         RunChecked(evaluator.get(), {}, UsdTimeCode(1014), "twin, next");
-    shareOne(GfVec3i(2, 2, 3), "twin, next");
-    // The cage moved, so both strips ran through the shared bind.
     const VtVec3fArray movedA = pointsAt(next, slabA);
     CHECK(!movedA.empty() && movedA != pointsAt(first, slabA));
     CHECK(movedA == pointsAt(next, slabB));
     CHECK(PoseMismatches(FreshPose(stage, rig, UsdTimeCode(1014)), next,
                          "twin, next") == 0);
     ShadowChecked(*evaluator, {}, UsdTimeCode(1014), "twin, next");
-    const Revision *before = revisionOf(moverA);
-    const std::shared_ptr<const RigExecLatticeBind<GfVec3f>> previous =
-        before ? before->surfaceCache.RetainedLatticeBind() : nullptr;
 
-    // The divisions are topology: their edit rebuilds the program, whose
-    // revisions build their binds again and share the new one.
     const size_t builds = evaluator->GetBakedProgramBuildCount();
     {
         SdfChangeBlock block;
@@ -3905,10 +3957,6 @@ TestEqualLatticeBindsShareOneBasis()
     CHECK(evaluator->GetBakedProgramBuildCount() > builds);
     const RigExecRigPose rebuilt = RunChecked(
         evaluator.get(), {}, UsdTimeCode(1015), "twin, rebuilt next");
-    shareOne(GfVec3i(2, 3, 2), "twin, rebuilt next");
-    const Revision *after = revisionOf(moverA);
-    CHECK(previous && after &&
-          after->surfaceCache.RetainedLatticeBind() != previous);
     CHECK(!pointsAt(rebuilt, slabA).empty() &&
           pointsAt(rebuilt, slabA) == pointsAt(rebuilt, slabB));
     CHECK(PoseMismatches(FreshPose(stage, rig, UsdTimeCode(1015)), rebuilt,
@@ -4026,7 +4074,7 @@ TestSparseSourceKeys(const std::string &examples)
     CHECK(step(2, "new program stamp") == keyed);
     CHECK(step(2, "held after the stamp") == held);
     if (RigExecBakedProgramImpl *M = mutableProgram()) {
-        M->everRan = false;
+        M->runState = RigExecBakedRunState::Cold;
         M->opAdapter.everRan = false;
     }
     CHECK(step(2, "failed run's reset") == keyed);
@@ -4166,8 +4214,8 @@ TestAFrozenCloneKeepsSparseSourceKeys(const std::string &examples)
             context.workspace = lane;
             RigExecFrozenRunReport report;
             const RigExecRigPose pose = RigExecEvaluateFrozen(
-                context, inputs, RigExecMakeProductionStepRunner(), nullptr,
-                f.rig, &report);
+                context, inputs, RigExecMakeProductionStepRunner(),
+                RigExecCancellationToken(), &report);
             CHECK(pose.valid && report.ran);
             if (report.sourceKeyMismatches) {
                 std::printf("FAIL %s: %zu kept source key(s) moved\n",
@@ -4281,8 +4329,8 @@ WatchFrozenJob(const RigExecRigEvaluator &evaluator,
     context.frozen = snapshot.get();
     context.workspace = lane;
     return RigExecEvaluateFrozen(context, inputs,
-                                 RigExecMakeProductionStepRunner(), nullptr,
-                                 rig, report);
+                                 RigExecMakeProductionStepRunner(),
+                                 RigExecCancellationToken(), report);
 }
 
 // The sparse source watch compares only what can have moved, and its
@@ -4650,7 +4698,8 @@ TestATrackedConstraintKeepsItsKey(const std::string &examples)
             }
             const RigExecBakedStep &s =
                 B->steps[B->opGraph.ops[c].originalIndex];
-            if (s.kind != RigExecBakedStepKind::Constraint) {
+            if (RigExecBakedIdentityOf(*B, s).kind !=
+                RigExecBakedStepKind::Constraint) {
                 continue;
             }
             const bool keeps = RigExecBakedConstraintSourceTracked(*B, s);
@@ -4751,12 +4800,13 @@ TestATrackedConstraintKeepsItsKey(const std::string &examples)
     const auto opOf = [&](const RigExecBakedProgramImpl &P) {
         for (uint32_t c = 0; c < P.opGraph.ops.size(); ++c) {
             const RigExecBakedStep &s = P.steps[P.opGraph.ops[c].originalIndex];
-            if (s.kind != RigExecBakedStepKind::Constraint || s.object < 0 ||
-                size_t(s.object) >= P.walkSteps.size() ||
-                P.walkSteps[size_t(s.object)].solverBatch) {
+            const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(P, s);
+            if (id.kind != RigExecBakedStepKind::Constraint || id.part >= 0 ||
+                id.object < 0 || size_t(id.object) >= P.walkSteps.size() ||
+                P.walkSteps[size_t(id.object)].solverBatch) {
                 continue;
             }
-            const int k = P.walkSteps[size_t(s.object)].index;
+            const int k = P.walkSteps[size_t(id.object)].index;
             if (k >= 0 && size_t(k) < P.constraints.size() &&
                 P.constraints[size_t(k)].path == follow.GetPath()) {
                 return c;
@@ -5247,7 +5297,7 @@ TestTheChangedListsClearTheFlags(const std::string &examples)
     // A forced run (a failed run's reset) under a placed upstream value,
     // then a sparse run under a moved one.
     evaluator->SetUpstreamInputs({DragOf(control, 30.0)});
-    B->everRan = false;
+    B->runState = RigExecBakedRunState::Cold;
     B->opAdapter.everRan = false;
     plainRun(1010, "changed lists, forced");
     B = program();
@@ -5377,7 +5427,7 @@ main(int argc, char **argv)
     TestNoBodyReadsTheStage(examples);
     TestSparseProviderLeaves(examples);
     TestConstraintArraysAreCompiledRigState();
-    TestEqualLatticeBindsShareOneBasis();
+    TestTwinLatticesAgree();
     TestSparseSourceKeys(examples);
     TestAFrozenCloneKeepsSparseSourceKeys(examples);
     TestTheSparseWatchVisitsWhatMoved(examples);

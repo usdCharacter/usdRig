@@ -1,8 +1,8 @@
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/movers/moverRegistry.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/frameCache.h"
-#include "rigExec/frozenContext.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/moverRegistry.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/api/frameCache.h"
+#include "rigExec/api/frozenContext.h"
 #include "rigExecBake/bake.h"
 #include "rigExecBinary/format.h"
 #include "rigExecAuthoring/rigBuilder.h"
@@ -11,7 +11,7 @@
 #include "rigExecRuntime/store.h"
 #include "rigExecRuntime/stageArrayInputs.h"
 #include "rigExecScene/usdSceneAccess.h"
-#include "rigExecScene/sceneProgramTranslation.h"
+#include "rigExecScene/sceneDescriptors.h"
 
 #include "pxr/base/plug/plugin.h"
 #include "pxr/base/plug/registry.h"
@@ -717,86 +717,6 @@ MakeExportRig(const char *moverType)
     return stage;
 }
 
-void
-TestDetachedExternalProgram()
-{
-    // An explicit recompile must retain the real original SCC authority after
-    // its writer bindings were rebuilt into an otherwise acyclic program.
-    RigExecSceneProgram cyclic;
-    cyclic.layout.valueKeys = {"raw", "solve", "field", "commit"};
-    cyclic.layout.leaves = {0};
-    std::string retainedError;
-    CHECK(cyclic.Append("Solve", RigExecSceneCopyOp{3, 1}, &retainedError));
-    CHECK(cyclic.Append("Field", RigExecSceneCopyOp{1, 2}, &retainedError));
-    CHECK(cyclic.Append("Commit", RigExecSceneCopyOp{2, 3}, &retainedError));
-    CHECK(cyclic.Compile(RigExecCyclePolicy::SetAside, &retainedError));
-    RigExecOpExclusionProof authority;
-    authority.keys = {"Solve", "Field"};
-    authority.removedKeys = {"Commit"};
-    authority.cycles = cyclic.graph.cycles;
-    authority.cycleMembers = cyclic.graph.cycleMembers;
-    RigExecSceneProgram normalized;
-    normalized.layout.valueKeys = cyclic.layout.valueKeys;
-    normalized.layout.leaves = {0};
-    CHECK(normalized.Append("Solve", RigExecSceneCopyOp{0, 1}, &retainedError));
-    CHECK(normalized.Append("Field", RigExecSceneCopyOp{1, 2}, &retainedError));
-    CHECK(normalized.Compile(RigExecCyclePolicy::SetAside, &authority,
-                             &retainedError));
-    CHECK(normalized.graph.ops.empty());
-    CHECK(normalized.Compile(RigExecCyclePolicy::SetAside, nullptr));
-    CHECK(normalized.graph.ops.empty() &&
-          normalized.graph.cycleMembers == authority.cycleMembers);
-    const auto normalizedIdentity = normalized.identity;
-    authority.keys.push_back("Field");
-    CHECK(!normalized.Compile(RigExecCyclePolicy::SetAside, &authority,
-                              &retainedError));
-    CHECK(normalized.identity == normalizedIdentity &&
-          normalized.graph.ops.empty());
-    auto stage = MakeExportRig("ExternalQuadraticMover");
-    RigExecUsdSceneAccess source(stage);
-    RigExecSceneDescriptors scene;
-    std::string error;
-    CHECK(RigExecCaptureSceneDescriptors(
-        source, kRig, {UsdTimeCode::Default(), UsdTimeCode(1), UsdTimeCode(3)},
-        &scene, &error));
-    RigExecSceneProgram program;
-    CHECK(RigExecTranslateSceneProgram(scene, &program, &error));
-    CHECK(program.Compile(RigExecCyclePolicy::SetAside, &error));
-    const auto preservedIdentity = program.identity;
-    const auto preservedPublic = program.publicValues;
-    const auto preservedMembers = program.graph.cycleMembers;
-    auto invalidScene = scene;
-    invalidScene.identities.clear();
-    error.clear();
-    CHECK(!RigExecTranslateSceneProgram(invalidScene, &program, &error));
-    CHECK(!error.empty());
-    CHECK(program.identity == preservedIdentity &&
-          program.publicValues == preservedPublic &&
-          program.graph.cycleMembers == preservedMembers);
-    RigExecValueId output = UINT64_MAX;
-    CHECK(program.layout.routes.Resolve(
-        scene, {kTarget, RigExecSceneValueDomain::Points},
-        SdfPath("/Rig/External"), TfToken("final"), &output, &error));
-    RigExecSceneProgramRuntime runtime;
-    CHECK(runtime.Prepare(program, &error));
-    for (size_t identity : {size_t(2), size_t(1), size_t(2)}) {
-        CHECK(runtime.Evaluate(program, identity, {}, &error));
-        VtValue boxed;
-        CHECK(RigExecReadSceneGraphValue(runtime.values, output, &boxed));
-        CHECK(boxed.IsHolding<VtVec3fArray>());
-        const auto &points = boxed.UncheckedGet<VtVec3fArray>();
-        CHECK(points.size() == kBase.size());
-        const float gain = identity == 2 ? 1.5f : 0.5f,
-                    lift = identity == 2 ? 2.0f : 0.0f;
-        for (size_t i = 0; i < points.size(); ++i) {
-            const auto &base = kBase[i];
-            const GfVec3f expected(base[0], base[1] + 0.5f * lift,
-                                   base[2] + 0.5f * gain * base[0] * base[0]);
-            CHECK((points[i] - expected).GetLength() < 1e-6f);
-        }
-    }
-}
-
 const std::vector<RrVec3f> &
 Points(const RigExecRuntimeReader &reader, const SdfPath &path)
 {
@@ -993,26 +913,16 @@ TestExport(const char *fixturePath)
     CheckDeformed(Points(*reader, kTarget), 5.0f, 0.5f, "posed arithmetic");
     reader->ResetInputs();
 
-    // Without the kernel the mover is a no-op, and every frame says so.
+    // Without the kernel the run is refused and names the mover.
     auto bare = RigExecRuntimeReader::Open(result.bytes.data(),
                                            result.bytes.size(), &error);
     CHECK(bare);
-    CHECK(bare->Execute(&error));
-    CHECK(Mentions(bare->GetDiagnostics(),
-                   "warning: /Rig/External is a " + type +
-                       ", which this runtime has no kernel for"));
-    const std::vector<RrVec3f> &passed = Points(*bare, kTarget);
-    CHECK(passed.size() == kBase.size());
-    for (size_t i = 0; i < passed.size(); ++i) {
-        for (size_t a = 0; a < 3; ++a) {
-            CHECK(passed[i][a] == kBase[i][a]);
-        }
-    }
-    CheckSame(Points(*bare, kReference),
-              baked.Evaluate(UsdTimeCode(frame))
-                  .movedProperties.at(kReference)
-                  .Get<VtVec3fArray>(),
-              "reference beside a missing kernel");
+    CHECK(!bare->Execute(&error));
+    CHECK(error == "/Rig/External is a " + type +
+                       ", which this runtime has no kernel for");
+    CHECK(!RigExecRuntimeReader::Open(result.bytes.data(), result.bytes.size(),
+                                      nullptr, 0, &error));
+    CHECK(error.find("no kernel for") != std::string::npos);
 
     const auto checkRefresh = [&] {
         bool ranExternal = false;
@@ -1028,13 +938,12 @@ TestExport(const char *fixturePath)
         CHECK(bare->Execute(&error));
         CHECK(bare->GetCounters().executedOpCount == 0);
     };
-    // Registration after a cached pass-through wakes the revision without an
-    // input edit, and leaves its independent control/reference branch asleep.
+    // Registration after a refused run lets the program run.
     CHECK(bare->SetExternalKernel(type, handler->runtimeKernel, &error));
     CHECK(bare->Execute(&error));
-    CHECK(!Mentions(bare->GetDiagnostics(), "no kernel"));
     CheckDeformed(Points(*bare, kTarget), 0.0f, 0.5f, "late registration");
-    checkRefresh();
+    CHECK(bare->Execute(&error));
+    CHECK(bare->GetCounters().executedOpCount == 0);
 
     // A host may replace callbacks while prepare returns the same state.
     RigExecExternalKernel replacement;
@@ -1058,7 +967,7 @@ TestExport(const char *fixturePath)
     checkOffset(4.0f);
     checkRefresh();
 
-    // A kernel that cannot read the compiled data bytes leaves it passing through.
+    // A kernel that cannot read the compiled data bytes refuses the run.
     RigExecExternalKernel refusing = handler->runtimeKernel;
     refusing.prepare = [](const uint8_t *, size_t,
                           std::string *why) -> std::shared_ptr<const void> {
@@ -1069,10 +978,8 @@ TestExport(const char *fixturePath)
     CHECK(!bare->SetExternalKernel(type, refusing, &error));
     CHECK(error.find("refused") != std::string::npos);
     CHECK(bare->GetMissingExternalKernels() == std::vector<std::string>{type});
-    CHECK(bare->Execute(&error));
-    CheckSame(Points(*bare, kTarget), kBase, "refused replacement");
-    CHECK(Mentions(bare->GetDiagnostics(), "no kernel"));
-    checkRefresh();
+    CHECK(!bare->Execute(&error));
+    CHECK(error.find("no kernel for") != std::string::npos);
     CHECK(bare->SetExternalKernel(type, handler->runtimeKernel, &error));
     CHECK(bare->Execute(&error));
     CheckDeformed(Points(*bare, kTarget), 0.0f, 0.5f, "registration recovery");
@@ -1201,17 +1108,17 @@ TestTheExternalPayloadIsTheAssemblersAnswer()
                                            revision->binding, values,
                                            UsdTimeCode(time), &fresh);
             const RigExecMoverParameters &packet = revision->parameters;
+            const RigExecExternalRevision &external = revision->external;
             if (!(fresh.valid && packet.valid &&
-                  packet.externalSchema == fresh.schema &&
-                  packet.externalData == fresh.data)) {
+                  external.schema == fresh.schema &&
+                  external.data == fresh.data)) {
                 throw std::runtime_error(label + " " + what +
                                          ": the packet's payload is not the "
                                          "assembler's answer");
             }
             std::vector<uint8_t> compiledRigA, frameA, compiledRigB, frameB;
-            CHECK(handler->encodeExternal(packet.externalData,
-                                          revision->binding, &compiledRigA,
-                                          &frameA));
+            CHECK(handler->encodeExternal(external.data, revision->binding,
+                                          &compiledRigA, &frameA));
             CHECK(handler->encodeExternal(fresh.data, revision->binding,
                                           &compiledRigB, &frameB));
             CHECK(compiledRigA == compiledRigB && frameA == frameB);
@@ -1267,20 +1174,21 @@ TestExternalFailureAtomicAndStagingRecovery()
     parameters.kind = TfToken("external");
     parameters.enabled = true;
     parameters.valid = true;
-    parameters.externalHandler = &handler;
+    RigExecExternalRevision external;
+    external.handler = &handler;
     const std::vector<GfVec3f> entering(kBase.begin(), kBase.end());
     for (float strength : {1.0f, .5f})
         for (int mode = 0; mode < 3; ++mode) {
             parameters.weights = RigExecWeightPacket::Constant(strength);
-            parameters.externalData = VtValue(mode);
+            external.data = VtValue(mode);
             auto points = entering;
             CHECK(!RigExecApplyRevisionKernel(RigExecRevisionOp::External,
                                               parameters, &points, false,
-                                              nullptr));
+                                              nullptr, nullptr, &external));
             CHECK(points == entering);
             CHECK(!RigExecRunRevisionKernel(RigExecRevisionOp::External,
-                                            parameters, &points, false,
-                                            nullptr));
+                                            parameters, &points, false, nullptr,
+                                            nullptr, &external));
             CHECK(points == entering);
         }
     RigExecBakedProgramImpl program;
@@ -1310,8 +1218,9 @@ TestExternalFailureAtomicAndStagingRecovery()
     for (float strength : {1.0f, .5f})
         for (int mode : {0, 3, 1, 3, 2, 3}) {
             parameters.weights = RigExecWeightPacket::Constant(strength);
-            parameters.externalData = VtValue(mode);
+            external.data = VtValue(mode);
             revision.parameters = parameters;
+            revision.external = external;
             revision.status =
                 RigExecStatusForParameters(parameters, revision.moverPath);
             // RevisionStatic's decision, which the fuse selects by.
@@ -1672,8 +1581,7 @@ TestBoundUsdAttributeCapture()
                   a.forwardedTargets == b.forwardedTargets &&
                   a.targetExists == b.targetExists);
         }
-        CHECK(held.applications.empty() && old.applications.empty() &&
-              held.jointBindings.empty() && old.jointBindings.empty());
+        CHECK(held.jointBindings.empty() && old.jointBindings.empty());
         for (const auto &entry : held.nodes) {
             const auto &a = entry.second;
             const auto &b = old.nodes.at(entry.first);
@@ -1757,7 +1665,6 @@ main(int argc, char **argv)
         TestVaryingStructureAndCompileSources();
         TestEvaluation();
         TestTimeVaryingInputsKeyFramesApart();
-        TestDetachedExternalProgram();
         TestExport(argc == 4 ? argv[3] : nullptr);
         TestPhasedReferenceIsBound();
         TestTheExternalPayloadIsTheAssemblersAnswer();

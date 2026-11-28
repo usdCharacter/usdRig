@@ -78,7 +78,7 @@ of the authored poses, so nothing on the prim stores it. Evaluation is one
 operation of the shared graph that reads the last version of its driver's
 frame and of its nearest joint or control ancestor's, so dependencies place
 it after every operation that writes them and before the blend channels
-that read its weights (`libs/rigExec/bakedPose.cpp:2627-2635`): it takes
+that read its weights (`libs/rigExec/internal/bakedPose.cpp:2627-2635`): it takes
 the driver's final and rest frames, forms
 `delta = restLocal⁻¹ · (parent⁻¹ · world)`
 (`libs/rigExecMath/poseArithmeticKernel.h:305-307`), runs one kernel row

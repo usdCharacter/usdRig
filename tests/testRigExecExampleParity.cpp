@@ -2,8 +2,8 @@
 // interactive drags and their release. Independent scalar reference checks
 // remain enabled; compile or admission refusal is a failure, never a skip.
 // argv[1] = path to the examples directory.
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/types.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/api/types.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"
@@ -27,12 +27,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -85,6 +85,100 @@ BumpedValue(const UsdAttribute &attribute, double delta, VtValue *out)
     return false;
 }
 
+// Operator drags the table's +0.25 takes to a value the operator refuses:
+// each such generation is invalid and reports the operator's own error,
+// "<operatorPrim>: node N (<op>) failed: <why>", or for an input its node
+// looks up, "<operatorPrim>: <why>". Every drag not listed here must stay
+// valid.
+struct InvalidDrag {
+    const char *stage;
+    const char *why;
+    bool lookedUp = false;
+    // The mover whose node fails, when the drag reaches it through another;
+    // null for the dragged operator itself.
+    const char *failing = nullptr;
+    // The one frame the drag fails at, every other staying valid; 0 for all.
+    double onlyAt = 0.0;
+};
+constexpr const char *kConstraintWeight =
+    "inputs:defaultWeight is outside finite [0, 1]";
+const InvalidDrag kInvalidOperatorDrags[] = {
+    // Seg2W paints every point: a default weight other than 0 is refused.
+    {"01_FkChainTail.usda",
+     "StaticWeights: a dense packet's default weight is not 0"},
+    // FinW and CageW are strict constants at 1: 1.25 is out of range.
+    {"05_TwistRibbonSpine.usda",
+     "StaticWeights: a weight is not finite or outside [0, 1]"},
+    {"13_ReadPhases.usda",
+     "StaticWeights: a weight is not finite or outside [0, 1]"},
+    // The patches' default weights: 1.25 is out of range.
+    {"12_PatchCurve.usda",
+     "MoverBlend: a default weight is not finite or outside [0, 1]"},
+    {"17_PatchCurveShapes.usda",
+     "MoverBlend: a default weight is not finite or outside [0, 1]"},
+    {"18_PatchMouth.usda",
+     "MoverBlend: a default weight is not finite or outside [0, 1]"},
+    // The full-strength matrix's own default weight: 1.25 is out of range.
+    {"20_MatrixSphere.usda",
+     "MatrixDeform: a default weight is not finite or outside [0, 1]"},
+    // The dragged gain lifts GainCard's connected weight past 1 at 1024 alone.
+    {"16_ConnectionReadPhases.usda",
+     "MatrixDeform: a default weight is not finite or outside [0, 1]", false,
+     "/PhaseConnectAsset/Rig/Movers/Cards/GainCard", 1024.0},
+    {"simple_rig.usd",
+     "MatrixDeform: a default weight is not finite or outside [0, 1]"},
+    {"simple_rig_anim.usd",
+     "MatrixDeform: a default weight is not finite or outside [0, 1]"},
+    // A constraint's default weight at 1: 1.25 is out of range.
+    {"08_AimEyes.usda", kConstraintWeight, true},
+    {"10_AimXformTurret.usda", kConstraintWeight, true},
+    {"aim_par_combo_flattened.usd", kConstraintWeight, true},
+    {"aimtest.usda", kConstraintWeight, true},
+    {"aimtest_points.usda", kConstraintWeight, true},
+    {"biped/Biped.usda", kConstraintWeight, true},
+    {"biped/Biped_anim.usda", kConstraintWeight, true},
+    {"biped/Biped_body.usda", kConstraintWeight, true},
+    {"biped/Biped_stack.usda", kConstraintWeight, true},
+    {"par_rot_aim.usd", kConstraintWeight, true},
+    {"par_rot_aim_redorder.usd", kConstraintWeight, true},
+    {"rigexec_flat.usda", kConstraintWeight, true},
+    {"rot_par_combo.usd", kConstraintWeight, true},
+    {"rotateConstraint.usda", kConstraintWeight, true},
+};
+
+const InvalidDrag *
+ExpectedDragError(const std::string &stage)
+{
+    for (const InvalidDrag &drag : kInvalidOperatorDrags) {
+        if (stage == drag.stage) {
+            return &drag;
+        }
+    }
+    return nullptr;
+}
+
+bool
+ReportsOperatorError(const RigExecRigPose &pose, const std::string &prim,
+                     const InvalidDrag &expected)
+{
+    const std::string why = expected.why;
+    const std::string head = prim + ": node ";
+    const std::string tail = " failed: " + why;
+    for (const std::string &line : pose.diagnostics) {
+        if (expected.lookedUp) {
+            if (line == prim + ": " + why)
+                return true;
+            continue;
+        }
+        if (line.compare(0, head.size(), head) == 0 &&
+            line.size() >= tail.size() &&
+            line.compare(line.size() - tail.size(), tail.size(), tail) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // One drag, held across the fixture's frames. \p generations is the running
 // count the caller has already seen; it is advanced by the frames evaluated
 // here, and a mismatch between the two is the whole point of the exercise --
@@ -96,16 +190,51 @@ BumpedValue(const UsdAttribute &attribute, double delta, VtValue *out)
 void
 DragOne(const std::string &where, RigExecRigEvaluator *rig,
         const std::vector<RigExecValueOverride> &overrides,
-        const std::vector<UsdTimeCode> &frames, size_t *generations)
+        const std::vector<UsdTimeCode> &frames, size_t *generations,
+        const InvalidDrag *expected = nullptr,
+        const std::string &failingPrim = std::string())
 {
+    // A drag is placed on the standing program: valid or not, it never
+    // rebuilds it.
+    const size_t buildAttempts = rig->GetBakedProgramBuildAttemptCount();
     rig->SetInteractiveOverrides(overrides);
     for (const UsdTimeCode frame : frames) {
+        const InvalidDrag *failsHere =
+            expected && expected->onlyAt != 0.0 &&
+                    frame.GetValue() != expected->onlyAt
+                ? nullptr
+                : expected;
+        const std::string failing =
+            failsHere && failsHere->failing ? failsHere->failing : failingPrim;
         for (int pass = 0; pass < 2; ++pass) {
             const RigExecRigPose pose = rig->Evaluate(frame);
-            if (!pose.valid) {
-                ++failures;
-                std::printf("FAIL %s: an invalid generation under a drag\n",
-                            where.c_str());
+            if (failsHere) {
+                const char *expectedError = failsHere->why;
+                // A failed generation is not one the program answered.
+                if (pose.valid) {
+                    ++failures;
+                    std::printf("FAIL %s: valid at %g; expected \"%s\"\n",
+                                where.c_str(), frame.GetValue(), expectedError);
+                    ++*generations;
+                } else if (!ReportsOperatorError(pose, failing, *failsHere)) {
+                    ++failures;
+                    std::printf("FAIL %s: invalid at %g without \"%s\"\n",
+                                where.c_str(), frame.GetValue(), expectedError);
+                    for (const std::string &diagnostic : pose.diagnostics) {
+                        std::printf("    %s\n", diagnostic.c_str());
+                    }
+                }
+            } else {
+                if (!pose.valid) {
+                    ++failures;
+                    std::printf("FAIL %s: an invalid generation under a "
+                                "drag at %g\n",
+                                where.c_str(), frame.GetValue());
+                    for (const std::string &diagnostic : pose.diagnostics) {
+                        std::printf("    %s\n", diagnostic.c_str());
+                    }
+                }
+                ++*generations;
             }
             CHECK(pose.referenceMismatches == 0);
             if (pose.comparisonMismatches) {
@@ -117,10 +246,15 @@ DragOne(const std::string &where, RigExecRigEvaluator *rig,
                     std::printf("    %s\n", diagnostic.c_str());
                 }
             }
-            ++*generations;
         }
     }
-    // Every requested generation must execute through the graph.
+    if (rig->GetBakedProgramBuildAttemptCount() != buildAttempts) {
+        ++failures;
+        std::printf("FAIL %s: the drag rebuilt the program %zu time(s)\n",
+                    where.c_str(),
+                    rig->GetBakedProgramBuildAttemptCount() - buildAttempts);
+    }
+    // Every valid generation must execute through the graph.
     if (rig->GetBakedGenerationCount() != *generations) {
         ++failures;
         std::printf("FAIL %s: %zu of %zu generation(s) came from the "
@@ -136,8 +270,7 @@ TestOneFixture(const std::string &examplesDir,
                const RigExecExampleFixture &fixture)
 {
     const std::string where = fixture.stage;
-    const UsdStageRefPtr stage =
-        UsdStage::Open(examplesDir + "/" + where);
+    const UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/" + where);
     CHECK(stage);
     if (!stage) {
         return;
@@ -172,8 +305,7 @@ TestOneFixture(const std::string &examplesDir,
     std::vector<std::string> reasons;
     if (!rig.IsBakeable(&reasons)) {
         ++failures;
-        std::printf("FAIL %s: graph admission declined\n",
-                    where.c_str());
+        std::printf("FAIL %s: graph admission declined\n", where.c_str());
         for (const std::string &reason : reasons) {
             std::printf("    %s\n", reason.c_str());
         }
@@ -200,8 +332,8 @@ TestOneFixture(const std::string &examplesDir,
     if (rig.GetBakedGenerationCount() != generations) {
         ++failures;
         std::printf("FAIL %s: %zu of %zu authored generation(s) came from "
-                    "the program\n", where.c_str(),
-                    rig.GetBakedGenerationCount(), generations);
+                    "the program\n",
+                    where.c_str(), rig.GetBakedGenerationCount(), generations);
     }
 
     // The animator's drag: a control avar. Skipped where the example authors
@@ -215,8 +347,8 @@ TestOneFixture(const std::string &examplesDir,
         VtValue dragged;
         if (!prim || !BumpedValue(prim.GetAttribute(avar), 0.5, &dragged)) {
             ++failures;
-            std::printf("FAIL %s: no double or float %s on %s\n",
-                        where.c_str(), avar.GetText(), control.GetText());
+            std::printf("FAIL %s: no double or float %s on %s\n", where.c_str(),
+                        avar.GetText(), control.GetText());
         } else {
             DragOne(where + " (control avar)", &rig,
                     {RigExecValueOverride{control, TfToken(), avar, dragged}},
@@ -237,12 +369,13 @@ TestOneFixture(const std::string &examplesDir,
         VtValue dragged;
         if (!prim || !BumpedValue(prim.GetAttribute(input), 0.25, &dragged)) {
             ++failures;
-            std::printf("FAIL %s: no double or float %s on %s\n",
-                        where.c_str(), input.GetText(), op.GetText());
+            std::printf("FAIL %s: no double or float %s on %s\n", where.c_str(),
+                        input.GetText(), op.GetText());
         } else {
             DragOne(where + " (operator input)", &rig,
                     {RigExecValueOverride{op, TfToken(), input, dragged}},
-                    frames, &generations);
+                    frames, &generations, ExpectedDragError(where),
+                    op.GetString());
         }
     }
 
@@ -254,8 +387,7 @@ TestOneFixture(const std::string &examplesDir,
     CHECK(released.comparisonMismatches == 0);
     CHECK(rig.GetBakedGenerationCount() == generations);
     std::printf("  %-34s %2zu frame(s), %zu generation(s) from the program\n",
-                where.c_str(), frames.size(),
-                rig.GetBakedGenerationCount());
+                where.c_str(), frames.size(), rig.GetBakedGenerationCount());
 }
 
 std::string
@@ -269,7 +401,7 @@ SchemaResourceDir(const std::string &examplesDir)
 #endif
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
@@ -281,8 +413,7 @@ main(int argc, char **argv)
     const std::string examplesDir = argv[1];
     const std::string resources = SchemaResourceDir(examplesDir);
     if (PlugRegistry::GetInstance().RegisterPlugins(resources).empty()) {
-        std::printf("FATAL: no schema plugin found at %s\n",
-                    resources.c_str());
+        std::printf("FATAL: no schema plugin found at %s\n", resources.c_str());
         return 2;
     }
 
@@ -294,8 +425,8 @@ main(int argc, char **argv)
     // An empty sweep passes silently and proves nothing, and the table
     // shrinking to no bakeable fixture is a regression rather than a rest.
     CHECK(baked > 0);
-    CHECK(baked == sizeof(kRigExecExampleFixtures) /
-                   sizeof(kRigExecExampleFixtures[0]));
+    CHECK(baked ==
+          sizeof(kRigExecExampleFixtures) / sizeof(kRigExecExampleFixtures[0]));
 
     std::printf("%s: %zu registered fixture(s) of %zu, %d failure(s)\n",
                 failures ? "FAILED" : "ok", baked,

@@ -157,13 +157,9 @@ file plays in a host that loads no mover library. `usdview`'s binary playback pu
 the history on a jump. `rigExecPose --verify-binary` replays history for a
 rig with temporal operations.
 
-The standalone scene program (the rigpack path) keeps its history the same
-way: `PushHistory` after a frame played in order, and on a jump
-`ClearHistory` followed by `EvaluateHistory` at each of `GetHistoryDepth`
-earlier frames, oldest first. Its history ticks run the temporal operations
-and what they depend on on a runtime of their own, and it matches the native
-evaluator bit for bit. A temporal mover plugin supplies `windowFramesScene`,
-the window from captured scene facts, for it.
+The CPU solve is the same bits at any thread count: one solve runs on one
+thread, and a constraint color's members share no particle, so their order
+cannot change a result.
 
 ## Cloth materials and bindings
 
@@ -275,11 +271,8 @@ contact.set_contact(thickness=0.1, friction=0.3)
 ```
 
 Live, frozen and binary playback use the same CPU profile solver. A
-`.rigexec` file from format 26 on carries the compiled cloth data `RCL3`, which holds
-`rigExec:maxWindowFrames`, the profiles and the resolved bindings. A format-25
-file carries `RCL1` and plays as it was exported: no reach-back window, no
-profiles, and its inputs in the format-25 order. A reader older than format 26
-refuses a format-26 file at the version check; rebake for it.
+`.rigexec` file carries the compiled cloth data `RCL3`, which holds
+`rigExec:maxWindowFrames`, the profiles and the resolved bindings.
 
 ## The cloth on the GPU
 

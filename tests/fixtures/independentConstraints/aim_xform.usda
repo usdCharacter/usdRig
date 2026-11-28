@@ -1,0 +1,29 @@
+#usda 1.0
+
+def Xform "World"
+{
+    def Mesh "Target"
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+
+    def Xform "Source"
+    {
+        double3 xformOp:translate = (0, 0, 2)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def RigExecRoot "Rig"
+    {
+        def Scope "Movers"
+        {
+            def RigExecAimConstraint "C" (
+                apiSchemas = ["RigExecMoverAPI"]
+            )
+            {
+                rel rigExec:moves = </World/Target>
+                rel rigExec:sources = </World/Source>
+            }
+        }
+    }
+}

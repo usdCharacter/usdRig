@@ -8,10 +8,10 @@
 // closures under test are never hand-drawn -- and the capture-index test
 // builds a REAL baked program over a REAL in-memory rig and routes REAL
 // stage notices through it.
-#include "rigExec/frameCacheSparsity.h"
-#include "rigExec/bakedSchedule.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/frozenProgram.h"
+#include "rigExec/internal/frameCacheSparsity.h"
+#include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/internal/frozenProgram.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/notice.h"
@@ -81,9 +81,14 @@ AddVolatileReadStep(RigExecBakedProgramImpl *program, int cluster)
     program->walkSteps.back().index = int(program->constraints.size());
     program->constraints.emplace_back();
     program->constraints.back().weightObject = SdfPath("/Weights/Envelope");
+    RigExecBakedOpOrigin origin;
+    origin.family = RigExecBakedOpFamily::Constraint;
+    origin.kind = RigExecBakedStepKind::Constraint;
+    origin.object = int32_t(program->walkSteps.size() - 1);
     RigExecBakedStep step;
-    step.kind = RigExecBakedStepKind::Constraint;
-    step.object = int(program->walkSteps.size() - 1);
+    step.kind = RigExecBakedStepKind::OpNode;
+    step.object = int(program->opNodeOrigins.size());
+    program->opNodeOrigins.push_back(origin);
     step.cluster = cluster;
     step.externalReads = true;
     program->steps.push_back(std::move(step));
@@ -843,16 +848,16 @@ TestRetainedPublishAndCompiledRigEviction()
     CHECK(cache.Publish(key, UsdTimeCode(1.0), pose, retainedBytes, retained));
     CHECK(cache.Stats().bytes == poseBytes + retainedBytes);
 
-    RigExecRigPose served;
+    std::shared_ptr<const RigExecRigPose> served;
     std::shared_ptr<const void> handle;
     CHECK(cache.Lookup(key, &served, &handle));
-    CHECK(served.jointFramesFinal == pose.jointFramesFinal);
+    CHECK(served->jointFramesFinal == pose.jointFramesFinal);
     CHECK(handle == retained);
 
     // The plain Lookup still serves the pose alone.
-    RigExecRigPose plain;
+    std::shared_ptr<const RigExecRigPose> plain;
     CHECK(cache.Lookup(key, &plain));
-    CHECK(plain.jointFramesFinal == pose.jointFramesFinal);
+    CHECK(plain->jointFramesFinal == pose.jointFramesFinal);
 
     // A pose-only entry serves a null handle.
     const RigExecFrameCacheKey poseOnly{7, 12};
@@ -1110,7 +1115,7 @@ TestCaptureIndexCompiledRigInvalidation()
     CHECK(listener.notices > 0);
     CHECK(!listener.oracleHit);
     CHECK(!listener.routedHit);
-    RigExecRigPose served;
+    std::shared_ptr<const RigExecRigPose> served;
     CHECK(cache.Lookup({compiledRig, 1}, &served));
     CHECK(cache.Lookup({compiledRig, 2}, &served));
     CHECK(cache.Stats().entryCount == 3);
@@ -1405,8 +1410,8 @@ TestRecomposedVersionSeedsSparseReuse()
         const RigExecRigPose live = evaluator.Evaluate(time);
         RigExecFrozenRunReport report;
         const RigExecRigPose pose = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(), nullptr, rig,
-            &report);
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
         CHECK(live.valid && pose.valid && report.ran);
         RigExecRigPose diff;
         RigExecComparePoses(live, pose, &diff);

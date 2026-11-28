@@ -1,0 +1,305 @@
+#include "rigExecOps/deform/projectorOps.h"
+
+#include "rigExecOps/fieldIo.h"
+#include "rigExecOps/internalOps.h"
+#include "rigExecOps/opIo.h"
+#include "rigExecMath/normalsLayoutKernel.h"
+#include "rigExecMath/surfaceProjectorKernel.h"
+
+#include <cstdint>
+#include <iterator>
+#include <string>
+#include <vector>
+
+namespace rigExecOps {
+
+RIGEXEC_DEFINE_OP_HANDLE(SurfaceProjector)
+RIGEXEC_DEFINE_OP_HANDLE(ShaderDials)
+
+RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorBasePoints)
+RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorPoints)
+RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorCounts)
+RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorIndices)
+RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorSourceBase)
+RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorSourceFinal)
+RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorSourceSpaceBase)
+RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorSourceSpaceFinal)
+RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorSpaceFinal)
+RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorWorldToMesh)
+RIGEXEC_DEFINE_PORT_HANDLE(SurfaceProjectorOut)
+
+RIGEXEC_DEFINE_PORT_HANDLE(ShaderDialsDials)
+RIGEXEC_DEFINE_PORT_HANDLE(ShaderDialsOut)
+
+namespace {
+
+using rigExec::RigExecOpIo;
+using rigExecStd::Mat4d;
+using rigExecStd::RigExecArray;
+using rigExecStd::Vec3d;
+using rigExecStd::Vec3f;
+using namespace opIo;
+using namespace fieldIo;
+
+// Both of a pair, or neither.
+bool
+Pair(const Mat4d *a, const Mat4d *b, Mat4d *first, Mat4d *second)
+{
+    if (!a || !b)
+        return false;
+    *first = *a;
+    *second = *b;
+    return true;
+}
+
+enum SurfaceProjectorField : uint32_t {
+    kRayOrigin,
+    kRayDirection,
+    kRayUp,
+    kShaderOffset,
+    kReproject,
+    kSourceSpaceNamed,
+    kSpaceNamed,
+};
+
+/// Instance \p k's ray settings.
+SurfaceProjectorPayload
+PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
+{
+    SurfaceProjectorPayload p;
+    p.rayOrigin = ValueAt<Vec3d>(batch, kRayOrigin, k);
+    p.rayDirection = ValueAt<Vec3d>(batch, kRayDirection, k);
+    p.rayUp = ValueAt<Vec3d>(batch, kRayUp, k);
+    p.shaderOffset = ValueAt<Mat4d>(batch, kShaderOffset, k);
+    p.reproject = FlagAt(batch, kReproject, k);
+    p.sourceSpaceNamed = FlagAt(batch, kSourceSpaceNamed, k);
+    p.spaceNamed = FlagAt(batch, kSpaceNamed, k);
+    return p;
+}
+
+/// Op state: the surface arrays as the solve reads them, its notes, and
+/// the triangulation and normals it keeps between runs.
+struct ProjectorState {
+    std::vector<Vec3f> basePoints, points;
+    std::vector<int> counts, indices;
+    std::vector<rigExec::RigExecSurfaceProjectorNote> notes;
+    rigExec::RigExecSurfaceKernelCache<Vec3f, Vec3d> cache;
+};
+
+template <class T>
+const std::vector<T> &
+Hold(const RigExecArray<T> &from, std::vector<T> *to)
+{
+    to->assign(from.begin(), from.end());
+    return *to;
+}
+
+bool
+ProjectorOne(const RigExecOpIo &io, const SurfaceProjectorPayload &p,
+             ProjectorState &s, std::string *error)
+{
+    const Mat4d *sourceBase = In<Mat4d>(io, SurfaceProjectorSourceBase());
+    const Mat4d *sourceFinal = In<Mat4d>(io, SurfaceProjectorSourceFinal());
+    const Mat4d *spaceBase = In<Mat4d>(io, SurfaceProjectorSourceSpaceBase());
+    const Mat4d *spaceFinal = In<Mat4d>(io, SurfaceProjectorSourceSpaceFinal());
+    rigExec::RigExecSurfaceProjectorInputs<Mat4d, Vec3d> in;
+    in.rayOrigin = p.rayOrigin;
+    in.rayDirection = p.rayDirection;
+    in.rayUp = p.rayUp;
+    in.shaderOffset = p.shaderOffset;
+    in.reproject = p.reproject;
+    in.sourceBase.SetIdentity();
+    in.sourceFinal.SetIdentity();
+    in.sourceSpaceBase.SetIdentity();
+    in.sourceSpaceFinal.SetIdentity();
+    in.hasSource =
+        Pair(sourceBase, sourceFinal, &in.sourceBase, &in.sourceFinal);
+    in.sourceSpaceNamed = p.sourceSpaceNamed;
+    in.hasSourceSpace =
+        p.sourceSpaceNamed &&
+        Pair(spaceBase, spaceFinal, &in.sourceSpaceBase, &in.sourceSpaceFinal);
+    in.spaceNamed = p.spaceNamed;
+    const Mat4d *space = In<Mat4d>(io, SurfaceProjectorSpaceFinal());
+    in.hasSpace = p.spaceNamed && space;
+    in.spaceFinal = space ? *space : Mat4d(1.0);
+    in.worldToMesh = InOr(io, SurfaceProjectorWorldToMesh(), Mat4d(1.0));
+
+    const auto normals = [](const std::vector<Vec3f> &points,
+                            const std::vector<int> &counts,
+                            const std::vector<int> &indices) {
+        return rigExec::RigExecComputeMeshVertexNormalsKernel(points, counts,
+                                                              indices);
+    };
+    std::vector<rigExec::RigExecSurfaceProjectorNote> &notes = s.notes;
+    notes.clear();
+    Mat4d &out = Out<Mat4d>(io, SurfaceProjectorOut());
+    if (rigExec::RigExecSolveSurfaceProjectorNotesT(
+            in,
+            Hold(*In<Points>(io, SurfaceProjectorBasePoints()), &s.basePoints),
+            Hold(*In<Points>(io, SurfaceProjectorPoints()), &s.points),
+            Hold(*In<RigExecArray<int>>(io, SurfaceProjectorCounts()),
+                 &s.counts),
+            Hold(*In<RigExecArray<int>>(io, SurfaceProjectorIndices()),
+                 &s.indices),
+            normals, &out, &notes, &s.cache) ||
+        rigExec::RigExecSurfaceProjectorMissed(notes))
+        return true;
+    std::string why;
+    for (const rigExec::RigExecSurfaceProjectorNote &note : notes) {
+        const std::string text =
+            rigExec::RigExecSurfaceProjectorNoteText(note, std::string());
+        why += (why.empty() ? "" : "; ") + text.substr(text.find(": ") + 2);
+    }
+    return Fail(error, "SurfaceProjector", why);
+}
+
+bool
+CheckProjector(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    if (Fed(check, SurfaceProjectorSourceBase()) !=
+            Fed(check, SurfaceProjectorSourceFinal()) ||
+        Fed(check, SurfaceProjectorSourceSpaceBase()) !=
+            Fed(check, SurfaceProjectorSourceSpaceFinal()))
+        return Fail(error, "SurfaceProjector",
+                    "a source or source space needs its base and final");
+    if (CheckElements(check, SurfaceProjectorBasePoints()) == 0 ||
+        CheckElements(check, SurfaceProjectorPoints()) == 0)
+        return Fail(error, "SurfaceProjector",
+                    "surface has no usable points or topology");
+    return true;
+}
+
+bool
+RunSurfaceProjector(const rigExec::RigExecOpBatch &batch, size_t *failed,
+                    std::string *error)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        return ProjectorOne(rigExec::RigExecBatchInstance(batch, k),
+                            PayloadAt(batch, k),
+                            *static_cast<ProjectorState *>(
+                                rigExec::RigExecBatchState(batch, k)),
+                            error);
+    });
+}
+
+bool
+RunShaderDials(const rigExec::RigExecOpBatch &batch, size_t *failed,
+               std::string *)
+{
+    return EachInstance(batch, failed, [&](size_t k) {
+        const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+        Out<Mat4d>(io, ShaderDialsOut()) =
+            rigExec::RigExecPackShaderDialsT<Mat4d>(
+                ToVector(*In<RigExecArray<double>>(io, ShaderDialsDials())));
+        return true;
+    });
+}
+
+void
+ProjectorValues(const void *payload, rigExec::RigExecFieldValues &out)
+{
+    const auto &p = *static_cast<const SurfaceProjectorPayload *>(payload);
+    out.Set(kRayOrigin, p.rayOrigin);
+    out.Set(kRayDirection, p.rayDirection);
+    out.Set(kRayUp, p.rayUp);
+    out.Set(kShaderOffset, p.shaderOffset);
+    SetFlag(out, kReproject, p.reproject);
+    SetFlag(out, kSourceSpaceNamed, p.sourceSpaceNamed);
+    SetFlag(out, kSpaceNamed, p.spaceNamed);
+}
+
+const rigExec::RigExecFieldDesc kProjectorFields[] = {
+    Value("rayOrigin", rigExecStd::Vec3dType()),
+    Value("rayDirection", rigExecStd::Vec3dType()),
+    Value("rayUp", rigExecStd::Vec3dType()),
+    Value("shaderOffset", rigExecStd::Mat4dType()),
+    Flag("reproject"),
+    Flag("sourceSpaceNamed"),
+    Flag("spaceNamed"),
+};
+
+rigExec::RigExecOpDesc
+ProjectorDesc(const char *name, const rigExec::RigExecPortDesc *ports,
+              size_t portCount, rigExec::RigExecOpBatchFn runBatch,
+              uint32_t capabilities)
+{
+    rigExec::RigExecOpDesc d;
+    d.nameSpace = "rig";
+    d.name = name;
+    d.ports = ports;
+    d.portCount = portCount;
+    d.runBatch = runBatch;
+    d.capabilities = rigExec::kRigExecOpBakeable |
+                     rigExec::kRigExecOpFreezable |
+                     rigExec::kRigExecOpFromLeaves | capabilities;
+    return d;
+}
+
+} // namespace
+
+namespace {
+
+using rigExec::kRigExecPortInput;
+using rigExec::kRigExecPortOptional;
+using rigExec::kRigExecPortOutput;
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
+const rigExec::RigExecPortDesc kProjectorPorts[] = {
+    {&SurfaceProjectorBasePoints(), &rigExecStd::Vec3fArray(),
+     kRigExecPortInput, "basePoints"},
+    {&SurfaceProjectorPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
+     "points"},
+    {&SurfaceProjectorCounts(), &rigExecStd::IntArray(), kRigExecPortInput,
+     "faceVertexCounts"},
+    {&SurfaceProjectorIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
+     "faceVertexIndices"},
+    {&SurfaceProjectorSourceBase(), &rigExecStd::Mat4dType(), kOptional,
+     "sourceBase"},
+    {&SurfaceProjectorSourceFinal(), &rigExecStd::Mat4dType(), kOptional,
+     "sourceFinal"},
+    {&SurfaceProjectorSourceSpaceBase(), &rigExecStd::Mat4dType(), kOptional,
+     "sourceSpaceBase"},
+    {&SurfaceProjectorSourceSpaceFinal(), &rigExecStd::Mat4dType(), kOptional,
+     "sourceSpaceFinal"},
+    {&SurfaceProjectorSpaceFinal(), &rigExecStd::Mat4dType(), kOptional,
+     "spaceFinal"},
+    {&SurfaceProjectorWorldToMesh(), &rigExecStd::Mat4dType(), kOptional,
+     "worldToMesh"},
+    {&SurfaceProjectorOut(), &rigExecStd::Mat4dType(), kRigExecPortOutput,
+     "out"},
+};
+
+const rigExec::RigExecPortDesc kDialPorts[] = {
+    {&ShaderDialsDials(), &rigExecStd::DoubleArray(), kRigExecPortInput,
+     "dials"},
+    {&ShaderDialsOut(), &rigExecStd::Mat4dType(), kRigExecPortOutput, "out"},
+};
+
+const rigExec::RigExecOpDesc kProjectorDesc = [] {
+    rigExec::RigExecOpDesc d = ProjectorDesc(
+        "SurfaceProjector", kProjectorPorts, std::size(kProjectorPorts),
+        &RunSurfaceProjector, rigExec::kRigExecOpSeparateBlend);
+    d.payloadFields = kProjectorFields;
+    d.payloadFieldCount = std::size(kProjectorFields);
+    d.payloadVersion = 1;
+    d.payloadValues = &ProjectorValues;
+    d.validate = &CheckProjector;
+    d.state = StateOf<ProjectorState>();
+    return d;
+}();
+
+const rigExec::RigExecOpDesc kDialDesc = internalOps::WithSchema(
+    ProjectorDesc("ShaderDials", kDialPorts, std::size(kDialPorts),
+                  &RunShaderDials, rigExec::kRigExecOpSeparateBlend),
+    internalOps::kShaderDials);
+
+} // namespace
+
+void
+RegisterProjectorOps(rigExec::RigExecOpRegistrar &registrar)
+{
+    registrar.Add(SurfaceProjector(), kProjectorDesc);
+    registrar.Add(ShaderDials(), kDialDesc);
+}
+
+} // namespace rigExecOps

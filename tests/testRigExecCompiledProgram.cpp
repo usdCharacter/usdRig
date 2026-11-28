@@ -2,11 +2,11 @@
 // holds: every count, every record by index, the operation graph, the
 // declared reads and writes, the digests, the bound paths and the overridden
 // inputs. Sharing hands out the same version, never a copy.
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/compiledProgram.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/compiledProgram.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecSchema/schemaTokens.h"
 #include "pxr/base/plug/registry.h"

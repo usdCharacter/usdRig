@@ -28,22 +28,23 @@
 // the frame rejects passes its preceding points through exactly as the
 // dynamic path does, which is the fuse's decision.
 // argv[1] = path to the examples directory (containing biped/Biped.usda).
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedSchedule.h"
-#include "rigExec/bakedOpGraph.h"
-#include "rigExec/bakedOpValues.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/frozenProgram.h"
-#include "rigExec/frameCacheSparsity.h"
-#include "rigExec/parallel.h"
-#include "rigExec/moverGraph.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/weightField.h"
+#include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/internal/bakedOpGraph.h"
+#include "rigExec/internal/bakedOpValues.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/internal/frozenProgram.h"
+#include "rigExec/internal/frameCacheSparsity.h"
+#include "rigExec/internal/parallel.h"
+#include "rigExec/internal/moverGraph.h"
 #include "rigExecMath/dualQuat.h"
 #include "rigExecMath/pointRanges.h"
 #include "rigExecMath/simdKernels.h"
 #include "rigExecMath/solvers.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/valueAddress.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/valueAddress.h"
 
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/plug/registry.h"
@@ -145,6 +146,54 @@ Build(const std::string &stagePath)
     return BuildStage(UsdStage::Open(stagePath));
 }
 
+/// Defines mover \p path moving \p target: a matrix mover on \p driver,
+/// which runs as op chain members, or, \p legacy, a surface mover projecting
+/// onto a fixed triangle, whose legacy body passes an invalid input through
+/// with a MoverFailed line.
+UsdPrim
+DefineChainMover(const UsdStageRefPtr &stage, const SdfPath &path,
+                 const SdfPath &target, const SdfPath &driver, bool legacy)
+{
+    const UsdPrim mover = stage->DefinePrim(
+        path, TfToken(legacy ? "RigExecSurfaceMover" : "RigExecMatrixMover"));
+    mover.ApplyAPI(TfToken("RigExecMoverAPI"));
+    mover.GetRelationship(TfToken("rigExec:moves")).SetTargets({target});
+    if (!legacy) {
+        mover.GetRelationship(TfToken("rigExec:transform"))
+            .SetTargets({driver});
+        return mover;
+    }
+    const SdfPath surface("/Asset/LegacySurface");
+    if (!stage->GetPrimAtPath(surface)) {
+        const UsdPrim mesh = stage->DefinePrim(surface, TfToken("Mesh"));
+        mesh.GetAttribute(TfToken("points"))
+            .Set(VtVec3fArray{GfVec3f(-10, -10, -1), GfVec3f(10, -10, -1),
+                              GfVec3f(0, 10, 1)});
+        mesh.GetAttribute(TfToken("faceVertexCounts")).Set(VtIntArray{3});
+        mesh.GetAttribute(TfToken("faceVertexIndices"))
+            .Set(VtIntArray{0, 1, 2});
+    }
+    mover.GetRelationship(TfToken("rigExec:surface")).SetTargets({surface});
+    return mover;
+}
+
+/// A tetrahedron's points at Default, grown at frames 1 to 3, so a
+/// surface mover moves them differently each frame.
+void
+SetLegacyChainPoints(const UsdAttribute &points)
+{
+    const VtVec3fArray rest{GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(0, 2, 0),
+                            GfVec3f(0, 0, 3)};
+    points.Set(rest);
+    for (int frame = 1; frame <= 3; ++frame) {
+        VtVec3fArray grown = rest;
+        for (GfVec3f &p : grown) {
+            p *= 1.0f + 0.25f * float(frame);
+        }
+        points.Set(grown, UsdTimeCode(frame));
+    }
+}
+
 /// A rig whose chain carries THREE revisions, which none of the example
 /// stages does: the biped's two chains hold one revision each, so the rules
 /// about reading a chain's running value are vacuous on them.
@@ -153,9 +202,10 @@ Build(const std::string &stagePath)
 /// tests/testRigExecInteractive drives, and it is the shape that found the
 /// missing RevisionDone declaration under the parallel executor. Built here
 /// so the declaration is checked by a test rather than by remembering to run
-/// one environment.
+/// one environment. \p legacy: surface movers on a tetrahedron, a chain of
+/// legacy chunk and fuse steps.
 UsdStageRefPtr
-MakeStackedChainStage()
+MakeStackedChainStage(bool legacy = false)
 {
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
@@ -166,20 +216,21 @@ MakeStackedChainStage()
     const SdfPath target("/Asset/Shape.points");
     const UsdPrim shape =
         stage->DefinePrim(target.GetPrimPath(), TfToken("Points"));
-    shape.GetAttribute(TfToken("points"))
-        .Set(VtVec3fArray{GfVec3f(0), GfVec3f(1, 0, 0)});
+    if (legacy) {
+        SetLegacyChainPoints(shape.GetAttribute(TfToken("points")));
+    } else {
+        shape.GetAttribute(TfToken("points"))
+            .Set(VtVec3fArray{GfVec3f(0), GfVec3f(1, 0, 0)});
+    }
     shape.GetAttribute(TfToken("extent"))
         .Set(VtVec3fArray{GfVec3f(0), GfVec3f(1, 0, 0)});
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
     for (int i = 0; i < 3; ++i) {
-        const UsdPrim mover = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/M" + std::to_string(i)),
-            TfToken("RigExecMatrixMover"));
-        mover.ApplyAPI(TfToken("RigExecMoverAPI"));
-        mover.GetRelationship(TfToken("rigExec:moves")).SetTargets({target});
-        mover.GetRelationship(TfToken("rigExec:transform"))
-            .SetTargets({driver.GetPath()});
-        mover.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
+        DefineChainMover(stage,
+                         SdfPath("/Asset/Rig/Movers/M" + std::to_string(i)),
+                         target, driver.GetPath(), legacy)
+            .GetAttribute(TfToken("inputs:defaultWeight"))
+            .Set(1.0f);
     }
     return stage;
 }
@@ -189,9 +240,11 @@ MakeStackedChainStage()
 /// still. \p firstWeight is M0's inputs:defaultWeight; zero makes its points
 /// the ones it entered with however its driver moves. \p failMiddle gives M1
 /// an out-of-range weight at frame 2 only, so M1 passes through there and
-/// applies again at frame 3.
+/// applies again at frame 3 (\p legacy: surface movers over a growing
+/// tetrahedron, whose legacy bodies pass through; matrix movers stop the
+/// frame).
 UsdStageRefPtr
-MakeAnimatedChainStage(float firstWeight, bool failMiddle)
+MakeAnimatedChainStage(float firstWeight, bool failMiddle, bool legacy = false)
 {
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
@@ -208,17 +261,17 @@ MakeAnimatedChainStage(float firstWeight, bool failMiddle)
     const SdfPath target("/Asset/Shape.points");
     const UsdPrim shape =
         stage->DefinePrim(target.GetPrimPath(), TfToken("Points"));
-    shape.GetAttribute(TfToken("points"))
-        .Set(VtVec3fArray{GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(0, 2, 0)});
+    if (legacy) {
+        SetLegacyChainPoints(shape.GetAttribute(TfToken("points")));
+    } else {
+        shape.GetAttribute(TfToken("points"))
+            .Set(VtVec3fArray{GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(0, 2, 0)});
+    }
     stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
     for (int i = 0; i < 3; ++i) {
-        const UsdPrim mover = stage->DefinePrim(
-            SdfPath("/Asset/Rig/Movers/M" + std::to_string(i)),
-            TfToken("RigExecMatrixMover"));
-        mover.ApplyAPI(TfToken("RigExecMoverAPI"));
-        mover.GetRelationship(TfToken("rigExec:moves")).SetTargets({target});
-        mover.GetRelationship(TfToken("rigExec:transform"))
-            .SetTargets({i == 0 ? moving.GetPath() : still.GetPath()});
+        const UsdPrim mover = DefineChainMover(
+            stage, SdfPath("/Asset/Rig/Movers/M" + std::to_string(i)), target,
+            i == 0 ? moving.GetPath() : still.GetPath(), legacy);
         UsdAttribute weight =
             mover.GetAttribute(TfToken("inputs:defaultWeight"));
         if (i == 0) {
@@ -588,10 +641,12 @@ TestTheGraphDescribesTheProgram(const BuiltProgram &built, const char *name)
         // last writer published, which never moves, and so needs no
         // RevisionDone: those slots are exempt.
         std::vector<int> groupSlots;
-        if ((step.kind == RigExecBakedStepKind::RevisionChunk ||
-             step.kind == RigExecBakedStepKind::RevisionFuse) &&
-            step.object >= 0 && size_t(step.object) < revisions) {
-            const auto &[c, r] = B.revisionIndex[size_t(step.object)];
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(B, step);
+        if ((identity.kind == RigExecBakedStepKind::RevisionChunk ||
+             identity.kind == RigExecBakedStepKind::RevisionFuse) &&
+            identity.object >= 0 && size_t(identity.object) < revisions) {
+            const auto &[c, r] = B.revisionIndex[size_t(identity.object)];
             const auto &revision = B.chains[size_t(c)].revisions[size_t(r)];
             for (size_t g = 0; g < revision.enteringWriter.size(); ++g) {
                 const int writer = revision.enteringWriter[g];
@@ -665,18 +720,14 @@ TestTheGraphDescribesTheProgram(const BuiltProgram &built, const char *name)
     };
     for (size_t index = 0; index < B.steps.size(); ++index) {
         const RigExecBakedStep &step = B.steps[index];
-        const bool head = step.kind == RigExecBakedStepKind::SolverCommit ||
-                          step.kind == RigExecBakedStepKind::Constraint;
-        if (!head && step.kind != RigExecBakedStepKind::CommitApply) {
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        const bool head = step.kind == RigExecBakedStepKind::OpNode &&
+                          (id.kind == RigExecBakedStepKind::SolverCommit ||
+                           id.kind == RigExecBakedStepKind::CommitApply);
+        if (!head || id.object < 0 || size_t(id.object) >= B.commits.size()) {
             continue;
         }
-        if (step.object < 0 || size_t(step.object) >= B.commits.size()) {
-            continue;
-        }
-        const RigExecBakedCommit &commit = B.commits[size_t(step.object)];
-        if (head == commit.split) {
-            continue; // the other arrangement's step of this commit
-        }
+        const RigExecBakedCommit &commit = B.commits[size_t(id.object)];
         const auto require = [&](RigExecBakedSlotDomain domain, int slot,
                                  const char *what) {
             if (declaresRead(step, domain, slot)) {
@@ -2934,10 +2985,13 @@ TestALeafControlDragRunsOnlyItsCone(const std::string &stagePath,
     for (size_t k = 0; k < B.GetProviderProgram().sampled.size(); ++k) {
         if (B.GetProviderProgram().sampled[k].attribute != source)
             continue;
-        for (size_t s = 0; s < B.steps.size(); ++s)
-            if (B.steps[s].kind == RigExecBakedStepKind::SpaceExpression &&
-                B.steps[s].part == 2 && B.steps[s].object == int(k))
+        for (size_t s = 0; s < B.steps.size(); ++s) {
+            const RigExecBakedStepIdentity id =
+                RigExecBakedIdentityOf(B, B.steps[s]);
+            if (id.kind == RigExecBakedStepKind::SpaceExpression &&
+                id.part == 2 && id.object == int(k))
                 sourceSeeds.push_back(int(s));
+        }
     }
     const RigExecBakedClusterSet stepBound = StepConeBound(B, sourceSeeds);
     const size_t stepsRan = B.opExecution.executed;
@@ -3227,15 +3281,18 @@ HandBuiltHeadTier(RigExecBakedProgramImpl *B)
     CHECK(ScheduleByHand(B));
 }
 
-// The head step of chain \p chain, part \p part.
+// The head step of chain \p chain, part \p part (1 to its revision count).
 uint32_t
-HeadStepOf(const RigExecBakedProgramImpl &B, int chain, int part)
+HeadStepOf(const RigExecBakedProgramImpl &B, size_t chain, size_t part)
 {
     for (uint32_t i : RigExecBakedHeadIndices(B)) {
-        if (B.steps[i].object == chain && B.steps[i].part == part) {
+        size_t c = 0, p = 0;
+        if (RigExecBakedPropertyPartOf(B, B.steps[i], &c, &p) && c == chain &&
+            p == part) {
             return i;
         }
     }
+    CHECK(false);
     return 0;
 }
 
@@ -3324,7 +3381,7 @@ TestTheHeadValidatorRejectsAMalformedTier(const BuiltProgram &built)
     {
         RigExecBakedProgramImpl B;
         HandBuiltHeadTier(&B);
-        auto &step = B.steps[HeadStepOf(B, 0, 1)];
+        auto &step = B.steps[HeadStepOf(B, 0, 2)];
         step.reads.clear();
         ExpectHeadRejected(B, "a missing predecessor version",
                            "omits its predecessor property version");
@@ -3341,8 +3398,8 @@ TestTheHeadValidatorRejectsAMalformedTier(const BuiltProgram &built)
     {
         RigExecBakedProgramImpl B;
         HandBuiltHeadTier(&B);
-        auto &step = B.steps[HeadStepOf(B, 0, 1)];
-        step.writes.push_back(B.steps[HeadStepOf(B, 0, 0)].writes.front());
+        auto &step = B.steps[HeadStepOf(B, 0, 2)];
+        step.writes.push_back(B.steps[HeadStepOf(B, 0, 1)].writes.front());
         ExpectHeadRejected(B, "duplicate version producer",
                            "has more than one head producer");
     }
@@ -3479,13 +3536,7 @@ TestVerifierRestoresAdoptedLayoutsAndBlendCaches()
     sample.layout = layout;
     sample.lastPoints = {GfVec3f(2, 0, 0)};
     sample.layoutRefused = true;
-    revision.blendSamples.resize(1);
-    revision.blendSamples[0].samples.resize(2);
-    revision.blendSamples[0].samples[0].layout = layout;
-    revision.blendSamples[0].samples[1].activation = 0.5f;
-    revision.blendSamples[0].samples[1].points = sample.lastPoints;
     revision.deltasVersion = 7;
-    const auto computed = revision.blendSamples;
     RigExecBakedRunShadow shadow;
     shadow.Capture(B);
 
@@ -3499,7 +3550,6 @@ TestVerifierRestoresAdoptedLayoutsAndBlendCaches()
     revision.topologyResolved = false;
     sample.lastPoints[0] = GfVec3f(9, 0, 0);
     sample.layoutRefused = false;
-    revision.blendSamples.clear();
     ++revision.deltasVersion;
     CHECK(shadow.Compare(B, &differences) > 0);
     shadow.Restore(&B);
@@ -3510,20 +3560,7 @@ TestVerifierRestoresAdoptedLayoutsAndBlendCaches()
     CHECK(sample.layout == layout);
     CHECK(sample.lastPoints == std::vector<GfVec3f>{GfVec3f(2, 0, 0)});
     CHECK(sample.layoutRefused);
-    CHECK(revision.blendSamples == computed);
-    CHECK(revision.blendSamples[0].samples[0].layout == layout);
-    CHECK(!revision.blendSamples[0].samples[1].borrowsPoints);
     CHECK(revision.deltasVersion == 7);
-    revision.blendSamples[0].samples[1].points[0] = GfVec3f(10);
-    shadow.Restore(&B);
-    CHECK(revision.blendSamples == computed);
-    {
-        RigExecBakedRunShadow retained;
-        retained.Capture(B);
-        revision.blendSamples.clear();
-        retained.Restore(&B);
-    }
-    CHECK(revision.blendSamples == computed);
     differences.clear();
     CHECK(shadow.Compare(B, &differences) == 0);
     auto changed = std::make_shared<RigExecBlendSampleLayout>(*layout);
@@ -3655,136 +3692,6 @@ TestVerifierRestoresInputsAndChecksSelectedWork()
     CHECK(B.closed.Test(0) && !B.closed.Test(1));
     CHECK(B.closedSteps.Test(0) && !B.closedSteps.Test(1));
     CHECK(!B.closureFull);
-}
-
-static void
-TestProviderRefreshFailureBoundaries()
-{
-    const auto translated = [](double x) {
-        RigExecPointFrame frame;
-        for (auto &point : frame.points)
-            point[0] += x;
-        return frame;
-    };
-    const auto make = [&](size_t count) {
-        auto program = std::make_unique<RigExecBakedProgramImpl>();
-        auto &B = *program;
-        B.paths = {SdfPath("/Rig/P"), SdfPath("/Rig/P/A"), SdfPath("/Rig/P/B")};
-        B.pathTexts = RigExecBakedSpellPathTexts(B.paths);
-        B.base.resize(6);
-        B.fin.resize(6);
-        for (size_t slot = 0; slot < 3; ++slot) {
-            B.base[slot] = translated(double(slot + 1));
-            B.fin[slot] = translated(double(slot + 4));
-            B.base[slot + 3] = translated(100);
-            B.fin[slot + 3] = translated(200);
-        }
-        B.providerValues = RigExecTypedValueStore(2);
-        B.providerValues.Publish(0, translated(7));
-        B.providerValues.Publish(1, translated(11));
-        RigExecBakedProgramImpl::ProviderRefresh refresh;
-        refresh.slot = 0;
-        refresh.baseValue = 0;
-        refresh.currentValue = 1;
-        refresh.baseRead = 0;
-        refresh.finRead = 0;
-        refresh.baseWrite = 3;
-        refresh.finWrite = 3;
-        for (size_t k = 0; k < count; ++k) {
-            RigExecBakedProgramImpl::ProviderRefresh::Carry carry;
-            carry.slot = int(k + 1);
-            carry.baseRead = carry.finRead = uint32_t(k + 1);
-            carry.baseWrite = carry.finWrite = uint32_t(k + 4);
-            refresh.carries.push_back(std::move(carry));
-        }
-        refresh.baseInputs.resize(count);
-        refresh.finInputs.resize(count);
-        refresh.baseOutputs.resize(count);
-        refresh.finOutputs.resize(count);
-        refresh.blocked.resize(count);
-        B.providerRefreshes.push_back(std::move(refresh));
-        return program;
-    };
-    const auto run = [](RigExecBakedProgramImpl &B) {
-        RigExecBakedStep step;
-        step.kind = RigExecBakedStepKind::ProviderRefresh;
-        step.object = 0;
-        RigExecBakedRunProviderRefresh(&B, &step);
-        return step.diagnostics;
-    };
-    {
-        auto program = make(2);
-        auto &B = *program;
-        B.providerValues.values[1] = RigExecTypedValueState();
-        const auto diagnostics = run(B);
-        CHECK(B.base[3] == translated(1) && B.fin[3] == translated(4));
-        CHECK(B.base[4] == translated(2) && B.fin[4] == translated(5));
-        CHECK(B.base[5] == translated(3) && B.fin[5] == translated(6));
-        CHECK(diagnostics ==
-              std::vector<std::string>{
-                  "connected final pose input incomplete: /Rig/P"});
-    }
-    {
-        auto program = make(2);
-        auto &B = *program;
-        auto invalid = translated(11);
-        invalid.flags = 0;
-        B.providerValues.Publish(1, invalid);
-        const auto diagnostics = run(B);
-        CHECK(B.base[3] == translated(7) && B.fin[3] == translated(4));
-        CHECK(B.base[4] == translated(8) && B.fin[4] == translated(5));
-        CHECK(B.base[5] == translated(9) && B.fin[5] == translated(6));
-        CHECK(diagnostics ==
-              std::vector<std::string>{
-                  "/Rig/P produced an invalid or degenerate frame for /Rig/P; "
-                  "constraint passed through"});
-    }
-    for (const size_t count : {size_t(0), size_t(1)}) {
-        auto program = make(count);
-        auto &B = *program;
-        B.fin[0].points.fill(GfVec3d(0));
-        if (count) {
-            B.providerParentRawLeaves = {-1, 0, -1};
-            B.providerLeafBlocked = {0};
-            GfMatrix4d parent(1.0);
-            parent.SetTranslate(GfVec3d(1, 0, 0));
-            B.providerLeaves.values = {VtValue(parent)};
-            B.providerRefreshes[0].carries[0].blockingSlots = {1};
-        }
-        CHECK(run(B).empty());
-        CHECK(B.base[3] == translated(7) && B.fin[3] == translated(11));
-        if (count)
-            CHECK(B.base[4] == translated(2) && B.fin[4] == translated(5));
-    }
-    {
-        auto program = make(2);
-        auto &B = *program;
-        B.fin[2].flags = 0;
-        const auto invalid = B.fin[2];
-        const auto diagnostics = run(B);
-        CHECK(B.base[3] == translated(7) && B.fin[3] == translated(4));
-        CHECK(B.base[4] == translated(8) && B.fin[4] == translated(5));
-        CHECK(B.base[5] == translated(9) && B.fin[5] == invalid);
-        CHECK(diagnostics ==
-              std::vector<std::string>{
-                  "/Rig/P could not propagate its pose revision through "
-                  "/Rig/P/B; constraint passed through"});
-    }
-    {
-        auto program = make(1);
-        auto &B = *program;
-        B.commits.resize(1);
-        B.commits[0].present = {1};
-        B.commits[0].abandoned = false;
-        B.providerRefreshes[0].priorConstraints = {{0, 0}};
-        CHECK(run(B).empty());
-        CHECK(B.base[3] == translated(1) && B.fin[3] == translated(4));
-        CHECK(B.base[4] == translated(2) && B.fin[4] == translated(5));
-        B.commits[0].abandoned = true;
-        CHECK(run(B).empty());
-        CHECK(B.base[3] == translated(7) && B.fin[3] == translated(11));
-        CHECK(B.base[4] == translated(8) && B.fin[4] == translated(12));
-    }
 }
 
 /// The shapes the edge sweep cannot see, each of which the validator must
@@ -4030,6 +3937,12 @@ TestAPlacementReadNeedsItsVolumesStep()
         auto &field = B->weightFields[0];
         field.object = field.consumer = 0;
         field.form = RigExecBakedProgramImpl::WeightField::Form::Revision;
+        field.nodeObjects = {0};
+        RigExecBakedOpOrigin origin;
+        origin.family = RigExecBakedOpFamily::WeightField;
+        origin.object = 0;
+        origin.part = 0;
+        B->opNodeOrigins = {origin};
         field.placementPhase =
             RigExecBakedProgramImpl::WeightField::PlacementPhase::Final;
         for (const auto &range : placementReads)
@@ -4056,7 +3969,7 @@ TestAPlacementReadNeedsItsVolumesStep()
             B->steps.push_back(step);
         }
         RigExecBakedStep measure;
-        measure.kind = RigExecBakedStepKind::WeightField;
+        measure.kind = RigExecBakedStepKind::OpNode;
         measure.object = 0;
         measure.reads = std::move(placementReads);
         measure.reads.push_back(RigExecBakedOne(D::ChainBase, 0));
@@ -4101,7 +4014,7 @@ TestAPlacementReadNeedsItsVolumesStep()
         CHECK(error.empty());
         const int a = index(B, RigExecBakedStepKind::VolumePlacements, 1);
         const int b = index(B, RigExecBakedStepKind::VolumePlacements, 2);
-        const int measured = index(B, RigExecBakedStepKind::WeightField, 0);
+        const int measured = index(B, RigExecBakedStepKind::OpNode, 0);
         const int assembled = index(B, RigExecBakedStepKind::RevisionStatic, 0);
         CHECK(a >= 0 && b >= 0 && measured >= 0 && assembled >= 0);
         if (a < 0 || b < 0 || measured < 0 || assembled < 0)
@@ -4158,9 +4071,11 @@ std::string
 CanonicalLabel(const RigExecBakedProgramImpl &B, RigExecBakedStepKind kind,
                int object)
 {
-    for (const auto &step : B.steps)
-        if (step.kind == kind && step.object == object)
+    for (const auto &step : B.steps) {
+        const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+        if (id.kind == kind && id.object == object)
             return "(" + step.label + ")";
+    }
     CHECK(false);
     return "(missing operation)";
 }
@@ -4238,8 +4153,10 @@ TestTheValidatorRejectsALaterPoseVersion()
             const size_t solverIndex = size_t(solver - B.solvers.data());
             auto solve = std::find_if(
                 B.steps.begin(), B.steps.end(), [&](const auto &step) {
-                    return step.kind == RigExecBakedStepKind::Solve &&
-                           step.object == int(solverIndex);
+                    const RigExecBakedStepIdentity id =
+                        RigExecBakedIdentityOf(B, step);
+                    return id.kind == RigExecBakedStepKind::Solve &&
+                           id.object == int(solverIndex);
                 });
             CHECK(solve != B.steps.end());
             if (solve != B.steps.end()) {
@@ -4294,9 +4211,11 @@ TestTheValidatorRejectsALaterPoseVersion()
         const auto original = first;
         const size_t finSize = B.fin.size(), baseSize = B.base.size();
         auto apply =
-            std::find_if(B.steps.begin(), B.steps.end(), [](const auto &step) {
-                return step.kind == RigExecBakedStepKind::SolverCommit &&
-                       step.object == 0;
+            std::find_if(B.steps.begin(), B.steps.end(), [&](const auto &step) {
+                const RigExecBakedStepIdentity id =
+                    RigExecBakedIdentityOf(B, step);
+                return id.kind == RigExecBakedStepKind::SolverCommit &&
+                       id.object == 0;
             });
         CHECK(apply != B.steps.end() && !first.split && first.solverOutput);
         if (apply != B.steps.end() && !first.split && first.solverOutput) {
@@ -4336,14 +4255,16 @@ TestTheValidatorRejectsALaterPoseVersion()
         int matrix = -1;
         uint32_t slot = 0;
         for (size_t index = 0; index < B.steps.size() && matrix < 0; ++index) {
-            if (B.steps[index].kind != RigExecBakedStepKind::ProviderMatrix) {
+            const RigExecBakedStepIdentity id =
+                RigExecBakedIdentityOf(B, B.steps[index]);
+            if (id.kind != RigExecBakedStepKind::ProviderMatrix) {
                 continue;
             }
             for (const RigExecBakedSlotRange &read : B.steps[index].reads) {
                 if (read.domain == RigExecBakedSlotDomain::PoseFin &&
                     !read.IsEmpty()) {
                     matrix = int(index);
-                    slot = uint32_t(B.steps[index].object);
+                    slot = uint32_t(id.object);
                     break;
                 }
             }
@@ -4439,10 +4360,12 @@ TestTheValidatorRejectsABadFrameRecord(const std::string &fixtures)
         passes("a frame record bound to a later commit's version");
     }
     {
-        // A fold reading one record past the table.
+        // A fold (a matrix revision's MoverTransform op node) reading one
+        // record past the table.
         RigExecBakedStep *fold = nullptr;
         for (RigExecBakedStep &step : B.steps) {
-            if (step.kind == RigExecBakedStepKind::InfluenceFold) {
+            if (RigExecBakedIdentityOf(B, step).kind ==
+                RigExecBakedStepKind::InfluenceFold) {
                 for (const RigExecBakedSlotRange &read : step.reads) {
                     if (read.domain == RigExecBakedSlotDomain::FrameMatrix) {
                         fold = &step;
@@ -4477,18 +4400,21 @@ TestTheValidatorRejectsABadFrameRecord(const std::string &fixtures)
         // A FrameMatrix step naming a negative record.
         RigExecBakedStep *first = nullptr;
         for (RigExecBakedStep &step : B.steps) {
-            if (step.kind == RigExecBakedStepKind::FrameMatrix &&
-                step.object == 0) {
+            const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+            if (id.kind == RigExecBakedStepKind::FrameMatrix &&
+                id.object == 0) {
                 first = &step;
             }
         }
         CHECK(first != nullptr);
         if (first) {
-            first->object = -1;
+            RigExecBakedOpOrigin &origin =
+                B.opNodeOrigins[size_t(first->object)];
+            origin.object = -1;
             ExpectRejected(
                 B, "a FrameMatrix step naming record -1",
                 {"(" + first->label + ") names frame record -1 of 3"});
-            first->object = 0;
+            origin.object = 0;
             passes("a FrameMatrix step naming record -1");
         }
     }
@@ -4591,53 +4517,6 @@ TestASwitchCycleIsDetectedNotEmitted()
                   std::isnan(B.posedM[1][3][0]));
         }
     }
-    {
-        // A real compose descendant must inherit an excluded parent's
-        // unavailable matrix on both first and held generations.
-        RigExecBakedProgramImpl B;
-        B.posedM.assign(3, GfMatrix4d(1));
-        B.base.resize(3);
-        B.fin.resize(3);
-        B.slotKind.assign(3, RigExecBakedSlotKind::FirstFramePose);
-        B.parent = {-1, -1, 0};
-        B.noScaleAvars.assign(3, 0);
-        B.posedAuthored.assign(3, 0);
-        B.posedAuthoredM.assign(3, GfMatrix4d(1));
-        B.parentSpaceAuthored.assign(3, 0);
-        B.parentSpaceM.assign(3, GfMatrix4d(1));
-        B.posedD.assign(3, GfMatrix4d(1));
-        B.parentDinv.assign(3, GfMatrix4d(1));
-        B.rotOrder.assign(3, TfToken("XYZ"));
-        B.avars.assign(33, 0);
-        for (size_t i = 0; i < 3; ++i) {
-            for (size_t k = 3; k < 6; ++k)
-                B.avars[i * 11 + k] = 1;
-            B.avars[i * 11 + 10] = 1;
-        }
-        B.composeGroups.push_back({2, 3, {0}});
-        B.steps.push_back(HandStep({RigExecBakedOne(D::PosedM, 1)},
-                                   {RigExecBakedOne(D::PosedM, 0)}));
-        B.steps.push_back(HandStep({RigExecBakedOne(D::PosedM, 0)},
-                                   {RigExecBakedOne(D::PosedM, 1)}));
-        auto child = HandStep({RigExecBakedOne(D::PosedM, 0)},
-                              {RigExecBakedOne(D::PoseBase, 2),
-                               RigExecBakedOne(D::PoseFin, 2),
-                               RigExecBakedOne(D::PosedM, 2)});
-        child.kind = RigExecBakedStepKind::ComposeSubtree;
-        child.object = 0;
-        B.steps.push_back(child);
-        CHECK(ScheduleByHand(&B));
-        CHECK(B.excludedSteps.size() == 2 && B.steps.size() == 1);
-        for (int visit = 0; visit < 2; ++visit) {
-            B.posedM[0] = GfMatrix4d(1);
-            B.posedM[1] = GfMatrix4d(1);
-            CHECK(RigExecBakedExecuteOpGraph(&B, UsdTimeCode(1), false));
-            CHECK(std::isnan(B.posedM[0][3][0]));
-            CHECK(!B.base[2].IsValid() || B.base[2].IsDegenerate());
-            CHECK(!B.fin[2].IsValid() || B.fin[2].IsDegenerate());
-            CHECK(std::isnan(B.posedM[2][3][0]));
-        }
-    }
 }
 
 /// Every reader of a chain's running points names exactly the version it
@@ -4706,18 +4585,17 @@ TestEachChainReaderBindsOneVersion(const BuiltProgram &built, const char *name)
             CHECK(out.empty());
             continue;
         }
+        const int field = RigExecBakedWeightFieldOf(B, step);
         const bool fieldReader =
-            step.kind == RigExecBakedStepKind::WeightField &&
-            step.object >= 0 && size_t(step.object) < B.weightFields.size() &&
-            B.weightFields[size_t(step.object)].form ==
+            field >= 0 &&
+            B.weightFields[size_t(field)].form ==
                 RigExecBakedProgramImpl::WeightField::Form::Revision;
         if (step.kind != RigExecBakedStepKind::RevisionChunk &&
             step.kind != RigExecBakedStepKind::RevisionFuse &&
             step.kind != RigExecBakedStepKind::RevisionStatic && !fieldReader)
             continue;
-        const int id = fieldReader
-                           ? B.weightFields[size_t(step.object)].consumer
-                           : step.object;
+        const int id =
+            fieldReader ? B.weightFields[size_t(field)].consumer : step.object;
         const auto &[c, r] = B.revisionIndex[size_t(id)];
         const auto &revision = B.chains[size_t(c)].revisions[size_t(r)];
         const bool reader = step.kind != RigExecBakedStepKind::RevisionStatic;
@@ -4727,9 +4605,14 @@ TestEachChainReaderBindsOneVersion(const BuiltProgram &built, const char *name)
                   std::vector<int>{revision.weightField});
             const auto producer = std::find_if(
                 B.steps.begin(), B.steps.end(), [&](const auto &candidate) {
-                    return candidate.kind ==
-                               RigExecBakedStepKind::WeightField &&
-                           candidate.object == revision.weightField;
+                    return RigExecBakedWeightFieldOf(B, candidate) ==
+                               revision.weightField &&
+                           std::find(candidate.writes.begin(),
+                                     candidate.writes.end(),
+                                     RigExecBakedOne(
+                                         RigExecBakedSlotDomain::WeightField,
+                                         revision.weightField)) !=
+                               candidate.writes.end();
                 });
             CHECK(producer != B.steps.end());
             if (producer != B.steps.end())
@@ -4832,7 +4715,7 @@ TestEachChainReaderBindsOneVersion(const BuiltProgram &built, const char *name)
             expectedDirty.push_back(id - 1);
         }
         if (fieldReader) {
-            const auto &field = B.weightFields[size_t(step.object)];
+            const auto &fieldOf = B.weightFields[size_t(field)];
             const auto bases =
                 slots(step.reads, RigExecBakedSlotDomain::ChainBase);
             const auto finals =
@@ -4840,7 +4723,7 @@ TestEachChainReaderBindsOneVersion(const BuiltProgram &built, const char *name)
             CHECK(std::binary_search(bases.begin(), bases.end(), c));
             // The entering point view and explicitly phased oracle inputs are
             // separate body reads, even when both select the same revision.
-            for (const auto &input : field.pointReads)
+            for (const auto &input : fieldOf.pointReads)
                 for (const auto &candidate : input.binding.candidates) {
                     CHECK(candidate.chain >= 0 &&
                           size_t(candidate.chain) < B.chains.size());
@@ -5380,7 +5263,7 @@ TestThePointVersionsKeepTheOrder(const BuiltProgram &built, const char *name)
 void
 TestTheValidatorRejectsAnUnboundPointVersion()
 {
-    BuiltProgram built = BuildStage(MakeStackedChainStage());
+    BuiltProgram built = BuildStage(MakeStackedChainStage(true));
     CHECK(built.program != nullptr);
     if (!built.program) {
         return;
@@ -5792,8 +5675,10 @@ TestAChainRevisionRecoversAcrossAFailure()
 {
     TfSetenv("RIGEXEC_VERIFY_CHAIN_VERSIONS", "1");
     const auto finish = [] { TfSetenv("RIGEXEC_VERIFY_CHAIN_VERSIONS", "0"); };
-    const BuiltProgram built = BuildStage(MakeAnimatedChainStage(1.0f, true));
-    const BuiltProgram fresh = BuildStage(MakeAnimatedChainStage(1.0f, true));
+    const BuiltProgram built =
+        BuildStage(MakeAnimatedChainStage(1.0f, true, true));
+    const BuiltProgram fresh =
+        BuildStage(MakeAnimatedChainStage(1.0f, true, true));
     CHECK(built.program != nullptr && fresh.program != nullptr);
     if (!built.program || !fresh.program) {
         finish();
@@ -5843,7 +5728,7 @@ TestAChainRevisionRecoversAcrossAFailure()
     // decided against: the outgoing program's numbers, read before the
     // adoption moves them.
     const BuiltProgram outgoing =
-        BuildStage(MakeAnimatedChainStage(1.0f, true));
+        BuildStage(MakeAnimatedChainStage(1.0f, true, true));
     CHECK(outgoing.program != nullptr);
     if (!outgoing.program) {
         finish();
@@ -5905,7 +5790,7 @@ TestAChainRevisionRecoversAcrossAFailure()
 
 /// An edit that leaves a revision's points byte for byte where they were
 /// keeps their content version, so nothing that reads them runs again: M0
-/// has a zero weight, so its driver moves its packet and never its points.
+/// has a zero weight, so its driver moves its transform and never its points.
 void
 TestUnmovedPointsKeepTheirVersion()
 {
@@ -5936,30 +5821,31 @@ TestUnmovedPointsKeepTheirVersion()
     if (m0 < 0) {
         return;
     }
-    const RigExecBakedProgramImpl::GeomRevision &zero =
-        chain.revisions[size_t(B.revisionIndex[size_t(m0)].second)];
     RigExecRigPose pose;
     CHECK(built.program->Run(UsdTimeCode(1.0), &pose));
-    const uint64_t first = zero.doneVersion;
     const uint64_t points = chain.resultVersion;
     const VtVec3fArray result = chain.result;
     CHECK(built.program->Run(UsdTimeCode(2.0), &pose));
     CHECK(pose.comparisonMismatches == 0);
     using K = RigExecBakedStepKind;
-    // The packet moved, so M0 ran, and its points did not.
-    CHECK(RanLast(B, K::RevisionChunk, m0) && RanLast(B, K::RevisionFuse, m0));
-    CHECK(zero.doneVersion == first);
-    for (int r = 0; r < 3; ++r) {
-        CHECK(r == m0 || (!RanLast(B, K::RevisionChunk, r) &&
-                          !RanLast(B, K::RevisionFuse, r)));
+    // The transform moved, so M0's MoverTransform node ran, and its points
+    // did not.
+    bool folded = false;
+    for (size_t c = 0; c < B.opGraph.ops.size(); ++c) {
+        const RigExecBakedStepIdentity id =
+            RigExecBakedIdentityOf(B, B.steps[B.opGraph.ops[c].originalIndex]);
+        if (id.kind == K::InfluenceFold && id.object == m0) {
+            folded = c < B.opExecution.ran.size() && B.opExecution.ran[c];
+        }
     }
+    CHECK(folded);
     CHECK(!RanLast(B, K::ChainStatus, 0));
     CHECK(chain.resultVersion == points && SameBits(chain.result, result));
     CHECK(B.chainVersionMismatches == 0);
 }
 
-/// Two chains of matrix movers, A0..A2 on /Asset/ShapeA and B0, B1 on
-/// /Asset/ShapeB. A1, A2 and B1 carry an out-of-range inputs:defaultWeight
+/// Two chains of volume-correct movers over growing tetrahedra, A0..A2 on
+/// /Asset/ShapeA and B0, B1 on /Asset/ShapeB. A1, A2 and B1 carry an out-of-range inputs:defaultWeight
 /// at frame 2 only, so three revisions in two chains pass through there and
 /// apply again at frames 1 and 3.
 UsdStageRefPtr
@@ -5983,18 +5869,13 @@ MakeFailingChainsStage()
         const SdfPath target(std::string("/Asset/") + shape + ".points");
         const UsdPrim points =
             stage->DefinePrim(target.GetPrimPath(), TfToken("Points"));
-        points.GetAttribute(TfToken("points"))
-            .Set(VtVec3fArray{GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(0, 2, 0)});
+        SetLegacyChainPoints(points.GetAttribute(TfToken("points")));
         for (int i = 0; i < count; ++i) {
-            const UsdPrim mover =
-                stage->DefinePrim(SdfPath(std::string("/Asset/Rig/Movers/") +
-                                          prefix + std::to_string(i)),
-                                  TfToken("RigExecMatrixMover"));
-            mover.ApplyAPI(TfToken("RigExecMoverAPI"));
-            mover.GetRelationship(TfToken("rigExec:moves"))
-                .SetTargets({target});
-            mover.GetRelationship(TfToken("rigExec:transform"))
-                .SetTargets({i == 0 ? moving.GetPath() : still.GetPath()});
+            const UsdPrim mover = DefineChainMover(
+                stage,
+                SdfPath(std::string("/Asset/Rig/Movers/") + prefix +
+                        std::to_string(i)),
+                target, i == 0 ? moving.GetPath() : still.GetPath(), true);
             UsdAttribute weight =
                 mover.GetAttribute(TfToken("inputs:defaultWeight"));
             if (failing.count(i)) {
@@ -6026,6 +5907,16 @@ MoverFailedLines(const std::vector<std::string> &diagnostics)
         }
     }
     return lines;
+}
+
+/// Whether the first of \p lines is the error of the mover \p prefix
+/// ("path: ") that stopped the frame, holding \p why.
+bool
+StoppedAt(const std::vector<std::string> &lines, const char *prefix,
+          const char *why)
+{
+    return !lines.empty() && lines[0].rfind(prefix, 0) == 0 &&
+           lines[0].find(why) != std::string::npos;
 }
 
 /// Whether some line of \p lines names the mover \p prefix ("path:").
@@ -6377,7 +6268,8 @@ RanLastPart(const RigExecBakedProgramImpl &B, RigExecBakedStepKind kind,
             int object, int part)
 {
     for (size_t c = 0; c < B.opGraph.ops.size(); ++c) {
-        const RigExecBakedStep &step = B.steps[B.opGraph.ops[c].originalIndex];
+        const RigExecBakedStepIdentity step =
+            RigExecBakedIdentityOf(B, B.steps[B.opGraph.ops[c].originalIndex]);
         if (step.kind == kind && step.object == object && step.part == part) {
             return c < B.opExecution.ran.size() && B.opExecution.ran[c];
         }
@@ -6466,8 +6358,9 @@ TestARangeChainIsCutIntoRanges(const BuiltProgram &built, const char *name)
         CHECK(revision.op == RigExecRevisionOp::Matrix);
         CHECK(revision.role == Role::Range && revision.rangeRole &&
               !revision.chunked);
-        // A Matrix revision's role rests on nothing a run can flip.
-        CHECK(revision.pins.empty());
+        // A Matrix revision's role rests on nothing a run can flip; its
+        // blend arm pins rigExec:weightBlend, so an authored edit rebuilds.
+        CHECK(revision.pins.size() == 1);
         CHECK(revision.chunks.size() == groups &&
               revision.groups.size() == groups &&
               revision.groupIds.size() == groups &&
@@ -6502,26 +6395,32 @@ TestARangeChainIsCutIntoRanges(const BuiltProgram &built, const char *name)
             CHECK(revision.groupIds[g] == RigExecGroupSource());
         }
         const int previous = r > 0 ? B.revisionChunkBase[size_t(id) - 1] : -1;
-        size_t steps = 0, joins = 0;
+        size_t steps = 0, heads = 0, joins = 0;
         for (size_t index = 0; index < B.steps.size(); ++index) {
             const RigExecBakedStep &step = B.steps[index];
-            if (step.object != id) {
+            const RigExecBakedStepIdentity identity =
+                RigExecBakedIdentityOf(B, step);
+            if (identity.object != id) {
                 continue;
             }
-            if (step.kind == K::RevisionChunk) {
+            if (step.kind == K::OpChainHead &&
+                identity.kind == K::RevisionStatic) {
+                ++heads;
+                CHECK(DeclaresSlot(step.writes, D::RevisionPacket, id));
+            } else if (step.kind == K::OpChainRange &&
+                       identity.kind == K::RevisionChunk) {
                 ++steps;
                 CHECK(DeclaresSlot(step.writes, D::RevisionOut,
-                                   base + step.part));
+                                   base + identity.part));
                 CHECK(DeclaredSlots(step.writes, D::RevisionOut) == 1);
-                CHECK(DeclaresSlot(step.reads, D::RevisionPacket, id));
-                CHECK(DeclaresSlot(step.reads, D::ChainBase, 0));
+                CHECK(DeclaresSlot(step.reads, D::ChainBase, 0) == (r == 0));
                 CHECK(DeclaredSlots(step.reads, D::RevisionOut) ==
                       (r > 0 ? 1u : 0u));
                 CHECK(DeclaredSlots(step.reads, D::RevisionDone) == 0 &&
                       DeclaredSlots(step.reads, D::ChainDirty) == 0);
                 if (r > 0) {
                     CHECK(DeclaresSlot(step.reads, D::RevisionOut,
-                                       previous + step.part));
+                                       previous + identity.part));
                 }
             } else if (step.kind == K::RevisionFuse) {
                 ++joins;
@@ -6542,7 +6441,7 @@ TestARangeChainIsCutIntoRanges(const BuiltProgram &built, const char *name)
                 CHECK(DeclaredSlots(step.writes, D::RevisionOut) == 0);
             }
         }
-        CHECK(steps == groups && joins == 1);
+        CHECK(steps == groups && heads == 1 && joins == 1);
     }
     std::printf("  %s: 3 revisions of %zu groups each\n", name, groups);
 }
@@ -6575,8 +6474,10 @@ TestTheValidatorRejectsABrokenRangeChain()
     const int id = B.chainRevisionBegin[0] + 1;
     int group = -1;
     for (size_t index = 0; index < B.steps.size(); ++index) {
-        if (B.steps[index].kind == K::RevisionChunk &&
-            B.steps[index].object == id && B.steps[index].part == 1) {
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(B, B.steps[index]);
+        if (identity.kind == K::RevisionChunk && identity.object == id &&
+            identity.part == 1) {
             group = int(index);
         }
     }
@@ -6705,11 +6606,12 @@ TestTheValidatorRejectsABrokenRangeChain()
 }
 
 /// The range chain against itself built with RIGEXEC_BAKED_RANGE_CHAINS=0
-/// (one chunk and one fuse per revision) over frames {1,2,3,2,1,3}: every
+/// (an op chain of one vertex group) over frames {1,2,3,2,1,3}: every
 /// revision's version, the chain's points and every diagnostic agree bit
-/// for bit, M1's MoverFailed line stands at frame 2 alone, and both
+/// for bit, and at frame 2, where M1's default weight leaves [0, 1], its
+/// MatrixDeform stops both frames with the same error. Both
 /// RIGEXEC_VERIFY_CHAIN_VERSIONS and the RIGEXEC_VERIFY_RANGE_CHAINS judge
-/// find nothing. The judge itself is shown to catch one wrong point.
+/// find nothing.
 void
 TestARangeChainMatchesTheWholeChain()
 {
@@ -6743,7 +6645,7 @@ TestARangeChainMatchesTheWholeChain()
     }
     for (size_t r = 0; r < 3; ++r) {
         CHECK(R.chains[0].revisions[r].rangeRole);
-        CHECK(!W.chains[0].revisions[r].rangeRole &&
+        CHECK(W.chains[0].revisions[r].rangeRole &&
               W.chains[0].revisions[r].chunks.size() == 1);
         CHECK(R.chains[0].revisions[r].moverPath ==
               W.chains[0].revisions[r].moverPath);
@@ -6754,18 +6656,34 @@ TestARangeChainMatchesTheWholeChain()
         return;
     }
     const SdfPath target("/Asset/Shape.points");
-    // Version r + 1 of the whole chain: where its fuse left it.
+    // Version r + 1 of a chain, out of its groups.
     const auto version = [](const RigExecBakedProgramImpl::GeomChain &chain,
                             size_t r) {
-        const int source = chain.revisions[r].currentSource;
-        return source < 0 ? std::vector<GfVec3f>(chain.lastBase.cbegin(),
-                                                 chain.lastBase.cend())
-                          : chain.revisions[size_t(source)].output;
+        std::vector<GfVec3f> gathered;
+        const GfVec3f *points = nullptr;
+        size_t count = 0;
+        RigExecBakedVersionPoints(chain, r + 1, &gathered, &points, &count);
+        return std::vector<GfVec3f>(points, points + count);
     };
     for (const double frame : {1.0, 2.0, 3.0, 2.0, 1.0, 3.0}) {
         RigExecRigPose rangedPose, wholePose;
-        CHECK(ranged.program->Run(UsdTimeCode(frame), &rangedPose));
-        CHECK(whole.program->Run(UsdTimeCode(frame), &wholePose));
+        const bool rangedRan =
+            ranged.program->Run(UsdTimeCode(frame), &rangedPose);
+        const bool wholeRan =
+            whole.program->Run(UsdTimeCode(frame), &wholePose);
+        if (frame == 2.0) {
+            for (const RigExecRigPose *pose : {&rangedPose, &wholePose}) {
+                CHECK(!pose->valid && pose->movedProperties.empty());
+                CHECK(StoppedAt(pose->diagnostics, "/Asset/Rig/Movers/M1: ",
+                                "MatrixDeform: a default weight is not finite "
+                                "or outside [0, 1]"));
+            }
+            CHECK(!rangedRan && !wholeRan &&
+                  rangedPose.diagnostics == wholePose.diagnostics);
+            continue;
+        }
+        CHECK(wholeRan);
+        CHECK(rangedRan);
         CHECK(rangedPose.comparisonMismatches == 0 &&
               wholePose.comparisonMismatches == 0);
         const auto &rangedChain = R.chains[0];
@@ -6773,14 +6691,7 @@ TestARangeChainMatchesTheWholeChain()
         CHECK(rangedChain.result.size() == 10000);
         CHECK(SameBits(rangedChain.result, wholeChain.result));
         for (size_t r = 0; r < 3; ++r) {
-            // The ranged chain's version r + 1 out of its groups.
-            std::vector<GfVec3f> gathered;
-            const GfVec3f *points = nullptr;
-            size_t count = 0;
-            RigExecBakedVersionPoints(rangedChain, r + 1, &gathered, &points,
-                                      &count);
-            const std::vector<GfVec3f> rangedVersion(points, points + count);
-            if (!SameBits(rangedVersion, version(wholeChain, r))) {
+            if (!SameBits(version(rangedChain, r), version(wholeChain, r))) {
                 ++failures;
                 std::printf("FAIL range chain frame %g: revision %zu's "
                             "version differs from the whole chain's\n",
@@ -6799,42 +6710,12 @@ TestARangeChainMatchesTheWholeChain()
               SameBits(rangedPoints->second.UncheckedGet<VtVec3fArray>(),
                        wholePoints->second.UncheckedGet<VtVec3fArray>()));
         CHECK(rangedPose.diagnostics == wholePose.diagnostics);
-        const std::vector<std::string> lines =
-            MoverFailedLines(rangedPose.diagnostics);
-        CHECK(NamesMover(lines, "/Asset/Rig/Movers/M1:") == (frame == 2.0));
-        CHECK((rangedChain.revisions[size_t(middle)].resultStatus ==
-               TfToken("moverFailed")) == (frame == 2.0));
+        CHECK(MoverFailedLines(rangedPose.diagnostics).empty());
+        CHECK(rangedChain.revisions[size_t(middle)].resultStatus !=
+              TfToken("moverFailed"));
     }
     CHECK(R.chainVersionMismatches == 0 && W.chainVersionMismatches == 0);
     CHECK(R.rangeVerifyMismatches == 0);
-
-    // The judge reports a group that disagrees with the revision run whole:
-    // one point of a group the last revision published from its own buffer,
-    // edited in place behind the published reference and put back.
-    RigExecBakedProgramImpl &edited = const_cast<RigExecBakedProgramImpl &>(R);
-    RigExecBakedProgramImpl::GeomRevision &last = edited.chains[0].revisions[2];
-    GfVec3f *poked = nullptr;
-    for (RigExecGroupState<GfVec3f> &group : last.groups) {
-        if (group.ownPublished >= 0 && group.own[size_t(group.ownPublished)] &&
-            group.published.count > 0 &&
-            group.published.data ==
-                group.own[size_t(group.ownPublished)]->data()) {
-            poked = group.own[size_t(group.ownPublished)]->data();
-            break;
-        }
-    }
-    CHECK(poked != nullptr);
-    if (poked) {
-        const GfVec3f kept = *poked;
-        (*poked)[0] += 1.0f;
-        {
-            TfErrorMark mark;
-            CHECK(RigExecBakedVerifyRangeChains(&edited) == 1);
-            mark.Clear();
-        }
-        *poked = kept;
-        CHECK(RigExecBakedVerifyRangeChains(&edited) == 0);
-    }
 }
 
 /// 10,000 points under a static base (G = 10 groups of 1,000) and three
@@ -6983,8 +6864,10 @@ TestARangeChainCutsOffUnmovedRanges()
         // A group the gated revision aliases has no step.
         size_t steps = 0;
         for (const RigExecBakedStep &step : B.steps) {
-            if (step.kind == K::RevisionChunk &&
-                step.object == first + int(r)) {
+            const RigExecBakedStepIdentity identity =
+                RigExecBakedIdentityOf(B, step);
+            if (identity.kind == K::RevisionChunk &&
+                identity.object == first + int(r)) {
                 ++steps;
             }
         }
@@ -7099,11 +6982,12 @@ MakeReversedLinesStage()
     return stage;
 }
 
-/// The joins publish their lines in the unsplit chain's order: two failing
-/// movers whose chain order is the reverse of their paths' order report, at
-/// frame 2, exactly the lines the chain built whole reports, Zeta's first.
-/// The canonical order breaks ties among ready steps by path, so a join
-/// that waited only for its own ranges would let Alpha's line overtake.
+/// Two movers whose chain order is the reverse of their paths' order both
+/// take a default weight outside [0, 1] at frame 2: the ranged chain stops
+/// the frame with one error, the lowest failed op node's, Alpha's, whatever
+/// order the ranges ran in, and no line of Zeta's. The chain built with
+/// RIGEXEC_BAKED_RANGE_CHAINS=0 (one vertex group) stops the same way; every
+/// other frame matches it.
 void
 TestRangeJoinsKeepTheLineOrder()
 {
@@ -7141,8 +7025,22 @@ TestRangeJoinsKeepTheLineOrder()
     };
     for (const double frame : {1.0, 2.0, 3.0, 2.0}) {
         RigExecRigPose rangedPose, wholePose;
-        CHECK(ranged.program->Run(UsdTimeCode(frame), &rangedPose));
-        CHECK(whole.program->Run(UsdTimeCode(frame), &wholePose));
+        const bool rangedRan =
+            ranged.program->Run(UsdTimeCode(frame), &rangedPose);
+        const bool wholeRan =
+            whole.program->Run(UsdTimeCode(frame), &wholePose);
+        if (frame == 2.0) {
+            CHECK(!rangedRan && !rangedPose.valid && !wholeRan);
+            CHECK(StoppedAt(rangedPose.diagnostics, "/Asset/Rig/Movers/Alpha: ",
+                            "MatrixDeform: a default weight is not finite or "
+                            "outside [0, 1]"));
+            CHECK(
+                !NamesMover(rangedPose.diagnostics, "/Asset/Rig/Movers/Zeta"));
+            CHECK(wholePose.diagnostics == rangedPose.diagnostics);
+            continue;
+        }
+        CHECK(wholeRan);
+        CHECK(rangedRan);
         CHECK(SameBits(
             R.chains[0].result,
             rigExec::RigExecBakedProgramAccess::StepGraph(*whole.program)
@@ -7159,13 +7057,8 @@ TestRangeJoinsKeepTheLineOrder()
                 std::printf("  whole:  %s\n", line.c_str());
             }
         }
-        const int first = at(rangedPose.diagnostics, zetaLine);
-        const int second = at(rangedPose.diagnostics, alphaLine);
-        if (frame == 2.0) {
-            CHECK(first >= 0 && second > first);
-        } else {
-            CHECK(first < 0 && second < 0);
-        }
+        CHECK(at(rangedPose.diagnostics, zetaLine) < 0 &&
+              at(rangedPose.diagnostics, alphaLine) < 0);
     }
 }
 
@@ -7472,9 +7365,10 @@ GatheredVersion(const RigExecBakedProgramImpl::GeomChain &chain, size_t version)
 /// The group chain against itself built with RIGEXEC_BAKED_RANGE_CHAINS=0
 /// over frames {1,2,3,2,1,3,4,5,6,7,8,9,8}, in live and export role modes,
 /// with and without RIGEXEC_BAKED_GROUP_GATES: every version, the chain's
-/// points and every diagnostic agree bit for bit (Middle's MoverFailed line
-/// at frame 2 alone), and the content-version, packet-version and
-/// range-chain judges and the gate self-check find nothing.
+/// points and every diagnostic agree bit for bit, and the content-version,
+/// packet-version and range-chain judges and the gate self-check find
+/// nothing. At frame 2 Middle's default weight leaves [0, 1]: its
+/// MatrixDeform stops both frames with the same error.
 void
 TestGroupChainsMatchTheWholeChain()
 {
@@ -7523,8 +7417,21 @@ TestGroupChainsMatchTheWholeChain()
             for (const double frame : {1.0, 2.0, 3.0, 2.0, 1.0, 3.0, 4.0, 5.0,
                                        6.0, 7.0, 8.0, 9.0, 8.0}) {
                 RigExecRigPose rangedPose, wholePose;
-                CHECK(ranged.program->Run(UsdTimeCode(frame), &rangedPose));
-                CHECK(whole.program->Run(UsdTimeCode(frame), &wholePose));
+                const bool rangedRan =
+                    ranged.program->Run(UsdTimeCode(frame), &rangedPose);
+                const bool wholeRan =
+                    whole.program->Run(UsdTimeCode(frame), &wholePose);
+                if (frame == 2.0) {
+                    CHECK(!rangedRan && !rangedPose.valid && !wholeRan);
+                    CHECK(StoppedAt(rangedPose.diagnostics,
+                                    "/Asset/Rig/Movers/Middle: ",
+                                    "MatrixDeform: a default weight is not "
+                                    "finite or outside [0, 1]"));
+                    CHECK(wholePose.diagnostics == rangedPose.diagnostics);
+                    continue;
+                }
+                CHECK(wholeRan);
+                CHECK(rangedRan);
                 CHECK(rangedPose.comparisonMismatches == 0);
                 const auto &rangedChain = R.chains[0];
                 const auto &wholeChain = W.chains[0];
@@ -7543,9 +7450,7 @@ TestGroupChainsMatchTheWholeChain()
                     CHECK(rangedChain.revisions[r].rangeRefusals == 0);
                 }
                 CHECK(rangedPose.diagnostics == wholePose.diagnostics);
-                CHECK(NamesMover(MoverFailedLines(rangedPose.diagnostics),
-                                 "/Asset/Rig/Movers/Middle:") ==
-                      (frame == 2.0));
+                CHECK(MoverFailedLines(rangedPose.diagnostics).empty());
             }
             CHECK(R.chainVersionMismatches == 0);
             CHECK(R.packetVersionMismatches == 0);
@@ -7648,8 +7553,8 @@ MakeSmoothChainStage(const char *middle = "RigExecSmoothMover")
 
 /// The smooth chain against itself built with RIGEXEC_BAKED_RANGE_CHAINS=0
 /// over frames {1, 2, 3, 2, 1}, live and export: the smooth takes the Range
-/// role, each of its group steps declares its own group and its halo groups
-/// of the entering version (the rows beside its own) and nothing else, and
+/// role and runs as op range steps, each declaring its own group and its
+/// halo groups of the entering version (the rows beside its own), and
 /// every version and diagnostic agrees bit for bit, under the content,
 /// packet and range-chain judges. From frame 1 to 2 only row 0 moves, so of
 /// the smooth's groups only group 0's bytes move: group 1 reads row 9 of
@@ -7712,11 +7617,14 @@ TestASmoothGroupReadsItsHalo()
         const int id = R.chainRevisionBegin[0] + 1;
         size_t groupSteps = 0;
         for (const RigExecBakedStep &step : R.steps) {
-            if (step.kind != RigExecBakedStepKind::RevisionChunk ||
-                step.object != id || step.part < 0) {
+            const rigExec::RigExecBakedStepIdentity identity =
+                rigExec::RigExecBakedIdentityOf(R, step);
+            if (step.kind != RigExecBakedStepKind::OpChainRange ||
+                identity.kind != RigExecBakedStepKind::RevisionChunk ||
+                identity.object != id || identity.part < 0) {
                 continue;
             }
-            const size_t g = size_t(step.part);
+            const size_t g = size_t(identity.part);
             size_t slotted = smooth.enteringWriter[g] >= 0 ? 1 : 0;
             for (const int h : smooth.haloGroups[g]) {
                 slotted += smooth.enteringWriter[size_t(h)] >= 0 ? 1 : 0;
@@ -7768,7 +7676,8 @@ TestASmoothGroupReadsItsHalo()
 /// The smooth chain with a delta mush in the smooth's place (ten iterations,
 /// the vertex transport), against itself built with
 /// RIGEXEC_BAKED_RANGE_CHAINS=0, live and export: the delta mush takes the
-/// Range role, its halo covers the rows its smoothing reaches (the groups
+/// Range role and runs as op range steps, its halo covers the rows its
+/// smoothing reaches (the groups
 /// beside its own, and none past the second), and every version and
 /// diagnostic agrees bit for bit under the judges. From frame 1 to 2 only
 /// row 0 moves, which ten iterations carry no further than group 1.
@@ -7830,11 +7739,14 @@ TestADeltaMushGroupReadsItsRegion()
         const int id = R.chainRevisionBegin[0] + 1;
         size_t groupSteps = 0;
         for (const RigExecBakedStep &step : R.steps) {
-            if (step.kind != RigExecBakedStepKind::RevisionChunk ||
-                step.object != id || step.part < 0) {
+            const rigExec::RigExecBakedStepIdentity identity =
+                rigExec::RigExecBakedIdentityOf(R, step);
+            if (step.kind != RigExecBakedStepKind::OpChainRange ||
+                identity.kind != RigExecBakedStepKind::RevisionChunk ||
+                identity.object != id || identity.part < 0) {
                 continue;
             }
-            const size_t g = size_t(step.part);
+            const size_t g = size_t(identity.part);
             size_t slotted = mush.enteringWriter[g] >= 0 ? 1 : 0;
             for (const int h : mush.haloGroups[g]) {
                 slotted += mush.enteringWriter[size_t(h)] >= 0 ? 1 : 0;
@@ -7917,7 +7829,8 @@ TestGroupStepsRunOnlyMovedGroups()
     }
     const RigExecBakedProgramImpl::GeomChain &chain = B.chains[0];
     const int first = B.chainRevisionBegin[0];
-    constexpr size_t kGated = 0, kLinear = 1, kBlend = 2, kDual = 4;
+    constexpr size_t kGated = 0, kLinear = 1, kBlend = 2, kMiddle = 3,
+                     kDual = 4, kLast = 5;
     // Runs \p frame and checks, revision by revision, which group steps ran
     // and which written groups moved their version: \p ran(r, g) and
     // \p moved(r, g).
@@ -8012,9 +7925,10 @@ TestGroupStepsRunOnlyMovedGroups()
             }
         }
     };
+    // Middle's default weight stops frame 2 with an error.
     for (const double frame : {1.0, 2.0, 3.0, 4.0}) {
         RigExecRigPose pose;
-        CHECK(built.program->Run(UsdTimeCode(frame), &pose));
+        CHECK(built.program->Run(UsdTimeCode(frame), &pose) == (frame != 2.0));
     }
     step(
         5.0, "J3 drag",
@@ -8032,8 +7946,13 @@ TestGroupStepsRunOnlyMovedGroups()
     step(
         7.0, "a frame that moves nothing", [](size_t, size_t) { return false; },
         [](size_t, size_t) { return false; });
+    // The skins and the blend read the base whole; the matrices' op range
+    // steps read only the group that moved.
     step(
-        8.0, "a base move in group 0", [](size_t, size_t) { return true; },
+        8.0, "a base move in group 0",
+        [&](size_t r, size_t g) {
+            return g == 0 || (r != kMiddle && r != kLast);
+        },
         [](size_t, size_t g) { return g == 0; });
     step(
         9.0, "a frame that moves nothing", [](size_t, size_t) { return false; },
@@ -8056,7 +7975,8 @@ TestARebuildAdoptsAGroupChain()
     }
     for (const double frame : {1.0, 2.0, 3.0}) {
         RigExecRigPose pose;
-        CHECK(outgoing.program->Run(UsdTimeCode(frame), &pose));
+        CHECK(outgoing.program->Run(UsdTimeCode(frame), &pose) ==
+              (frame != 2.0));
     }
     std::vector<std::string> reasons;
     std::unique_ptr<RigExecBakedProgram> rebuilt =
@@ -8179,7 +8099,8 @@ WeightOverlayRevision(const RigExecBakedProgramImpl &B, int *object)
     return found;
 }
 
-/// RevisionStatic reuses its published weight field while the WeightPacket
+/// A revision (here an op chain's, whose head has RevisionStatic's identity)
+/// reuses its published weight field while the WeightPacket
 /// op value it was resolved from keeps its revision and the count stands,
 /// and keys the field by a content version that moves exactly when the
 /// bytes do. Under RIGEXEC_VERIFY_PACKET_VERSIONS every published packet is
@@ -8233,7 +8154,7 @@ TestTheWeightOverlayIsReusedByVersion()
     // did not, so the field is the held one and keeps its version.
     CHECK(built.program->Run(UsdTimeCode(2.0), &pose));
     CHECK(pose.comparisonMismatches == 0);
-    CHECK(RanLast(B, K::RevisionStatic, object));
+    CHECK(RanLastPart(B, K::RevisionStatic, object, -1));
     CHECK(packet.revision == standing);
     CHECK(field(1.0f) && revision.weightValuesVersion == version);
 
@@ -8241,7 +8162,7 @@ TestTheWeightOverlayIsReusedByVersion()
     // (the claim follows the new revision), and the version stands.
     CHECK(built.program->Run(UsdTimeCode(3.0), &pose));
     CHECK(pose.comparisonMismatches == 0);
-    CHECK(RanLast(B, K::RevisionStatic, object));
+    CHECK(RanLastPart(B, K::RevisionStatic, object, -1));
     CHECK(packet.revision != standing);
     CHECK(revision.weightValuesPacketRevision == packet.revision);
     CHECK(field(1.0f) && revision.weightValuesVersion == version);
@@ -8300,7 +8221,7 @@ TestADefaultOnlyMoveResolvesTheWeightField()
     // The default alone moved: the field follows it and its version moves.
     CHECK(built.program->Run(UsdTimeCode(3.0), &pose));
     CHECK(pose.comparisonMismatches == 0);
-    CHECK(RanLast(B, RigExecBakedStepKind::RevisionStatic, object));
+    CHECK(RanLastPart(B, RigExecBakedStepKind::RevisionStatic, object, -1));
     if (!field(0.75f)) {
         std::printf("FAIL default-only move: the field did not follow the "
                     "packet's default\n");
@@ -8439,7 +8360,7 @@ TestTheChainStatusKeepsAnUnmovedResult()
     }
     RigExecBakedProgramImpl::GeomChain &chain = B.chains[0];
     CHECK(chain.groupBounds.size() >= 3);
-    CHECK(W.chains[0].groupBounds.empty());
+    CHECK(W.chains[0].groupBounds.size() == 2);
     RigExecBakedStep *status = nullptr;
     for (RigExecBakedStep &step : B.steps) {
         if (step.kind == RigExecBakedStepKind::ChainStatus &&
@@ -9089,9 +9010,11 @@ GroupStepParts(const RigExecBakedProgramImpl &B, int id)
 {
     std::vector<int> parts;
     for (const RigExecBakedStep &step : B.steps) {
-        if (step.kind == RigExecBakedStepKind::RevisionChunk &&
-            step.object == id) {
-            parts.push_back(step.part);
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(B, step);
+        if (identity.kind == RigExecBakedStepKind::RevisionChunk &&
+            identity.object == id) {
+            parts.push_back(identity.part);
         }
     }
     std::sort(parts.begin(), parts.end());
@@ -9152,8 +9075,14 @@ TestARangeChainGetsItsRolesAndGates()
     CHECK(gated.groupWritten ==
           std::vector<char>({1, 0, 0, 0, 0, 0, 0, 0, 0, 0}));
     CHECK(GroupStepParts(B, first + g0) == std::vector<int>({0}));
-    CHECK(HasPin(gated, Pin::WeightDefaultZero) && gated.pins.size() == 1 &&
-          gated.pins[0].weightObject == gated.weightObject);
+    // Its gate rests on the weight's zero default; its blend arm pins
+    // rigExec:weightBlend.
+    CHECK(HasPin(gated, Pin::WeightDefaultZero) &&
+          HasPin(gated, Pin::LeafToken) && gated.pins.size() == 2);
+    for (const auto &pin : gated.pins) {
+        CHECK(pin.kind != Pin::WeightDefaultZero ||
+              pin.weightObject == gated.weightObject);
+    }
     CHECK(RigExecBakedGroupSlot(B, first + g0, 0) ==
               B.revisionChunkBase[size_t(first + g0)] &&
           RigExecBakedGroupSlot(B, first + g0, 5) == -1);
@@ -9173,20 +9102,25 @@ TestARangeChainGetsItsRolesAndGates()
                          revisions[size_t(r)].groupWritten.end(),
                          char(1)) == 10);
     }
-    CHECK(revisions[size_t(f)].pins.empty() &&
-          revisions[size_t(g1)].pins.empty());
+    for (const int r : {f, g1}) {
+        CHECK(revisions[size_t(r)].pins.size() == 1 &&
+              revisions[size_t(r)].pins[0].kind == Pin::LeafToken);
+    }
     // G1 right after G0: its group 5 is F's (the version entering G0 passes
     // it through), its group 0 G0's.
     if (g1 == g0 + 1 && f == g0 - 1) {
         const auto &next = revisions[size_t(g1)];
         CHECK(next.enteringWriter[5] == f && next.enteringWriter[0] == g0);
         for (const RigExecBakedStep &step : B.steps) {
-            if (step.kind != K::RevisionChunk || step.object != first + g1) {
+            const RigExecBakedStepIdentity identity =
+                RigExecBakedIdentityOf(B, step);
+            if (identity.kind != K::RevisionChunk ||
+                identity.object != first + g1) {
                 continue;
             }
-            const int writer = step.part == 0 ? g0 : f;
+            const int writer = identity.part == 0 ? g0 : f;
             const int slot =
-                RigExecBakedGroupSlot(B, first + writer, size_t(step.part));
+                RigExecBakedGroupSlot(B, first + writer, size_t(identity.part));
             CHECK(slot >= 0 && DeclaresSlot(step.reads, D::RevisionOut, slot) &&
                   DeclaredSlots(step.reads, D::RevisionOut) == 1);
             CHECK(DeclaredSlots(step.reads, D::RevisionDone) == 0);
@@ -9507,6 +9441,14 @@ TestExportModeBakesOnlyConstants()
         }
     }
     expected.insert(SdfPath("/Asset/Rig/Weights/Gate.rigExec:defaultWeight"));
+    for (const char *matrix : {"G1", "G0", "F"}) {
+        expected.insert(SdfPath(movers + matrix)
+                            .AppendProperty(TfToken("rigExec:weightBlend")));
+    }
+    // The blend op holds its dense target and activation as Build read them.
+    expected.insert(SdfPath("/Asset/Raised.points"));
+    expected.insert(
+        SdfPath("/Asset/Rig/BlendInputs/Raise/Full.rigExec:activation"));
     CHECK(exported.program->GetExportPinnedPaths() == expected);
     if (exported.program->GetExportPinnedPaths() != expected) {
         for (const SdfPath &path : exported.program->GetExportPinnedPaths()) {
@@ -9567,7 +9509,9 @@ TestExportModeBakesOnlyConstants()
             CHECK(std::count(b->revisions[size_t(gb)].groupWritten.begin(),
                              b->revisions[size_t(gb)].groupWritten.end(),
                              char(1)) == 10 &&
-                  b->revisions[size_t(gb)].pins.empty());
+                  b->revisions[size_t(gb)].pins.size() == 1 &&
+                  b->revisions[size_t(gb)].pins[0].kind ==
+                      RigExecBakedRolePin::Kind::LeafToken);
         }
         CHECK(connectedExport.program->GetExportPinnedPaths().count(
                   gateDefault) == 0);
@@ -9677,10 +9621,9 @@ ChainPositionOf(const RigExecBakedProgramImpl &B, const char *mover)
 }
 
 /// Shift, a full-strength matrix mover, then Blend, whose one sample reads
-/// the chain's points as of Blend itself: a cycle through Blend's packet,
-/// its group steps and its join, which the cycle handling sets aside, so
-/// Blend passes the base through and its join's ids are published before
-/// ChainInputs takes the base. The 8 base points move at frames 2 and 3.
+/// the chain's points as of Blend itself through a phase, which runs Blend
+/// whole: a cycle through Blend's packet, which the cycle handling sets
+/// aside. The 8 base points move at frames 2 and 3.
 const char *const kSetAsideChain = R"USDA(#usda 1.0
 (
     startTimeCode = 1
@@ -9781,12 +9724,11 @@ TestASetAsideJoinFollowsTheBase()
     const RigExecBakedProgramImpl::GeomChain &chain = R.chains[0];
     CHECK(chain.groupBounds.size() == 5);
     CHECK(chain.revisions[size_t(blend)].role ==
-          RigExecBakedRevisionRole::Range);
+          RigExecBakedRevisionRole::Whole);
     for (const double frame : {1.0, 2.0, 2.0, 3.0, 3.0, 1.0}) {
         RigExecRigPose rangedPose, wholePose;
         CHECK(ranged.program->Run(UsdTimeCode(frame), &rangedPose));
         CHECK(whole.program->Run(UsdTimeCode(frame), &wholePose));
-        CHECK(chain.revisions[size_t(blend)].rangeSetAside);
         if (!SameBits(chain.result, W.chains[0].result)) {
             ++failures;
             std::printf("FAIL set-aside chain frame %g: the chain's points "
@@ -9921,12 +9863,74 @@ def Scope "Asset"
 }
 )USDA";
 
+/// Names each published property the two poses disagree on, with the bits
+/// of the first differing float.
+void
+ReportMovedPropertyDifferences(double frame, const RigExecRigPose &ranged,
+                               const RigExecRigPose &whole)
+{
+    const auto floatsOf = [](const VtValue &value) {
+        std::vector<float> floats;
+        if (value.IsHolding<VtArray<GfVec3f>>()) {
+            for (const GfVec3f &v : value.UncheckedGet<VtArray<GfVec3f>>()) {
+                floats.insert(floats.end(), {v[0], v[1], v[2]});
+            }
+        } else if (value.IsHolding<GfVec3f>()) {
+            const GfVec3f &v = value.UncheckedGet<GfVec3f>();
+            floats.assign({v[0], v[1], v[2]});
+        } else if (value.IsHolding<VtArray<float>>()) {
+            const VtArray<float> &a = value.UncheckedGet<VtArray<float>>();
+            floats.assign(a.cbegin(), a.cend());
+        } else if (value.IsHolding<float>()) {
+            floats.assign({value.UncheckedGet<float>()});
+        }
+        return floats;
+    };
+    for (const auto &entry : ranged.movedProperties) {
+        const auto found = whole.movedProperties.find(entry.first);
+        if (found == whole.movedProperties.end()) {
+            std::printf("FAIL   frame %g: %s is published by the ranged "
+                        "build only\n",
+                        frame, entry.first.GetText());
+            continue;
+        }
+        if (entry.second == found->second) {
+            continue;
+        }
+        const std::vector<float> a = floatsOf(entry.second);
+        const std::vector<float> b = floatsOf(found->second);
+        std::printf("FAIL   frame %g: %s differs (%s, %zu and %zu floats)\n",
+                    frame, entry.first.GetText(),
+                    entry.second.GetTypeName().c_str(), a.size(), b.size());
+        for (size_t i = 0; i < a.size() && i < b.size(); ++i) {
+            uint32_t x = 0, y = 0;
+            std::memcpy(&x, &a[i], sizeof(x));
+            std::memcpy(&y, &b[i], sizeof(y));
+            if (x != y) {
+                std::printf("FAIL     float %zu: ranged %.9g (%08x) whole "
+                            "%.9g (%08x)\n",
+                            i, double(a[i]), unsigned(x), double(b[i]),
+                            unsigned(y));
+                break;
+            }
+        }
+    }
+    for (const auto &entry : whole.movedProperties) {
+        if (!ranged.movedProperties.count(entry.first)) {
+            std::printf("FAIL   frame %g: %s is published by the whole "
+                        "build only\n",
+                        frame, entry.first.GetText());
+        }
+    }
+}
+
 /// Whole readers after Range revisions: a current-phase weight field
 /// gathers the version entering its mover into the field's own scratch, a
 /// phased dense blend sample into its binding's, and a cross-domain points
 /// read into a local binding's. Over {1,2,3,2,1,3} the chain's points,
 /// every version, the published values (the picked point among them) and
-/// the lines agree with the chain built whole.
+/// the lines agree with the chain built whole. Bindings poison their gather
+/// as they go, so a read that outlives its binding fails on every platform.
 void
 TestWholeReadersGatherAfterRangeRevisions()
 {
@@ -9947,10 +9951,12 @@ TestWholeReadersGatherAfterRangeRevisions()
                                   "/Asset/Rig/Movers/Raise"};
     bool shaped = R.chains.size() == 1 && W.chains.size() == 1 &&
                   R.chains[0].groupBounds.size() == 5;
+    // Raise reads its target through a phase, which runs it whole.
     for (size_t r = 0; shaped && r < 3; ++r) {
-        shaped =
-            ChainPositionOf(R, movers[r]) == int(r) &&
-            R.chains[0].revisions[r].role == RigExecBakedRevisionRole::Range;
+        shaped = ChainPositionOf(R, movers[r]) == int(r) &&
+                 R.chains[0].revisions[r].role ==
+                     (r < 2 ? RigExecBakedRevisionRole::Range
+                            : RigExecBakedRevisionRole::Whole);
     }
     CHECK(shaped);
     if (!shaped) {
@@ -9960,6 +9966,7 @@ TestWholeReadersGatherAfterRangeRevisions()
     }
     const RigExecBakedProgramImpl::GeomChain &chain = R.chains[0];
     const SdfPath picked("/Asset/Rig/Channels.picked");
+    RigExecBakedProgramTesting::SetPoisonReleasedGathers(true);
     for (const double frame : {1.0, 2.0, 3.0, 2.0, 1.0, 3.0}) {
         RigExecRigPose rangedPose, wholePose;
         CHECK(ranged.program->Run(UsdTimeCode(frame), &rangedPose));
@@ -9978,8 +9985,12 @@ TestWholeReadersGatherAfterRangeRevisions()
         CHECK(EveryVersionAgrees(R, W));
         CHECK(rangedPose.movedProperties.count(picked) == 1);
         CHECK(rangedPose.movedProperties == wholePose.movedProperties);
+        if (rangedPose.movedProperties != wholePose.movedProperties) {
+            ReportMovedPropertyDifferences(frame, rangedPose, wholePose);
+        }
         CHECK(rangedPose.diagnostics == wholePose.diagnostics);
     }
+    RigExecBakedProgramTesting::SetPoisonReleasedGathers(false);
     CHECK(R.chainVersionMismatches == 0);
     std::printf("  whole readers gather after Range revisions\n");
 }
@@ -10254,8 +10265,10 @@ TestPruningKeepsEveryValue(const std::string &examplesDir)
     size_t kept = 0, unread = 0;
     for (const RigExecBakedStep &step : P.steps) {
         // A routed input is a root: its body may publish a diagnostic.
-        if (step.kind != RigExecBakedStepKind::SpaceExpression ||
-            step.part == 3) {
+        const RigExecBakedStepIdentity identity =
+            RigExecBakedIdentityOf(P, step);
+        if (identity.kind != RigExecBakedStepKind::SpaceExpression ||
+            identity.part == 3) {
             continue;
         }
         ++kept;
@@ -10412,7 +10425,6 @@ main(int argc, char **argv)
     TestFrozenSparseRawLayoutDigest();
     TestVerifierRestoresAdoptedLayoutsAndBlendCaches();
     TestVerifierRestoresInputsAndChecksSelectedWork();
-    TestProviderRefreshFailureBoundaries();
     TestTheValidatorRejectsAMalformedGraph();
     TestTheHeadValidatorRejectsAMalformedTier(biped);
     TestAPlacementReadNeedsItsVolumesStep();

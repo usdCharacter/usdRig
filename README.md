@@ -60,7 +60,7 @@ and [Matt Schiller](https://github.com/matthewschiller).
   experimental `.rigexec` export with a standalone binary runtime.
 - `usdview` tools for controls, curves, layers, picking, and node graphs.
 
-RigExec builds against an OpenUSD installation with OpenExec.
+RigExec builds against an OpenUSD installation.
 The [architecture guide](docs/specs/spec.md) explains the evaluation layers;
 the [node reference](docs/index.md) describes authoring and parameters.
 
@@ -88,7 +88,6 @@ The documentation is published at **[usdcharacter.github.io/usdRig](https://usdc
 - [Bake and inverse APIs](docs/specs/python-bake-inverse.md)
 - [Build and register external movers](docs/concepts/external-movers.md)
 - [Inspect the live evaluator graph and thread trace](docs/concepts/live-evaluator-inspection.md)
-- [Standalone runtime](docs/specs/standalone-runtime.md)
 - [Format and plugin API compatibility matrix](docs/compat-matrix.md)
 - [Public method references](docs/references.md)
 - [Agent and contributor guide](AGENTS.md)
@@ -96,7 +95,7 @@ The documentation is published at **[usdcharacter.github.io/usdRig](https://usdc
 
 ## Build and run
 
-Install OpenUSD **26.08** with OpenExec and `usdview`, CMake **3.26+**, Ninja,
+Install OpenUSD **26.08** with `usdview`, CMake **3.26+**, Ninja,
 and a C++17 compiler. Use the same Python version and architecture as your
 OpenUSD build. See the upstream [build instructions](https://github.com/PixarAnimationStudios/OpenUSD/blob/v26.08/BUILDING.md).
 
@@ -142,8 +141,10 @@ consumers. Python bindings and interactive viewer tests remain local checks.
 See [fixture checks](tests/fixtures/README.md) for floating-point reference
 configuration and cross-platform backend parity.
 
-CMake options: `RIGEXEC_BUILD_TESTS`, `RIGEXEC_BUILD_PYTHON` (on when pybind11
-is found), `RIGEXEC_BUILD_USDNOODLES`, `RIGEXEC_MOVER_PLUGIN_DIRS` (see
+CMake options: `RIGEXEC_WITH_USD` (on; off builds and installs only the
+USD-free engine and needs no OpenUSD), `RIGEXEC_BUILD_TESTS`,
+`RIGEXEC_BUILD_PYTHON` (on when pybind11 is found), `RIGEXEC_BUILD_USDNOODLES`,
+`RIGEXEC_MOVER_PLUGIN_DIRS` (see
 [external movers](docs/concepts/external-movers.md)), `RIGEXEC_GOLDEN_SUITE_DIR`
 and `RIGEXEC_TEST_USD_DIR`.
 
@@ -193,7 +194,7 @@ throw `std::runtime_error`.
 | `libs/rigExecGpu` | OpenGL compute path for per-vertex deformation and cloth |
 | `libs/rigExecBake`, `libs/rigExecBinary`, `libs/rigExecRuntime` | Binary export, format, and playback |
 | `libs/rigExecSampler` | Stage values copied into binary-runtime inputs |
-| `libs/rigExecStandalone` | Experimental stage-free scene runtime and rigpack backend |
+| `libs/rigExecPlayback` | Background scheduler that warms the frame cache |
 | `python` | Python bindings and authoring helpers |
 | `plugin` | Schema resources and optional viewer tools |
 | `tests`, `examples`, `docs` | Verification, sample stages, and documentation |
@@ -222,41 +223,19 @@ The documentation site is built with MkDocs from `docs/` and `mkdocs.yml`:
 `python -m pip install -r docs/requirements.txt`, then `python -m mkdocs serve`
 to preview it. `.github/workflows/docs.yml` publishes it to GitHub Pages.
 
-The standalone backends support a subset of the authoring/runtime surface.
-Check their guides before integration. Changes to OpenUSD versions or binary
-formats require explicit compatibility testing.
+The binary runtime supports a subset of the authoring surface. Changes to
+OpenUSD versions or binary formats require explicit compatibility testing.
 
-## OpenExec usage
+## Independent checks
 
-RigExec builds against [OpenExec](https://openusd.org/release/intro_to_openexec.html)
-from an unmodified OpenUSD 26.08 installation: the `rigExec` target links `exec`,
-`execUsd`, `ef` and `vdf` in [CMakeLists.txt](CMakeLists.txt). Native, frozen,
-`.rigexec` and standalone-scene evaluation run the shared operation graph, and the
-binary runtime links no USD or OpenExec library. No option selects OpenExec
-evaluation and no failure falls back to it.
-
-OpenExec runs in these places:
-
-- [libs/rigExec/types.cpp](libs/rigExec/types.cpp) registers the value types with
-  `ExecTypeRegistry`; [libs/rigExec/computations.cpp](libs/rigExec/computations.cpp)
-  and [libs/rigExec/moverKernels.cpp](libs/rigExec/moverKernels.cpp) register the
-  schema computations against the production kernels.
-- [libs/rigExec/tapSet.cpp](libs/rigExec/tapSet.cpp) owns the one `ExecUsdSystem`
-  per stage and builds its batched requests.
-- `rigExecPose --exec-crosscheck` compares each eligible native row, bit for bit,
-  with a one-key request fed that operation's captured inputs as overrides:
-  [tools/rigExecPose.cpp](tools/rigExecPose.cpp),
-  [libs/rigExecOracle/bakedExecCrossCheck.cpp](libs/rigExecOracle/bakedExecCrossCheck.cpp),
-  [libs/rigExecOracle/bakedExecCrossCheckRows.cpp](libs/rigExecOracle/bakedExecCrossCheckRows.cpp).
-  The registrations share the production kernels, so this checks input binding,
-  not arithmetic.
-- Tests ask the same registrations for reference values, for example
-  [tests/testRigExecArm.cpp](tests/testRigExecArm.cpp) and
-  [tests/testRigExecExecCrossCheck.cpp](tests/testRigExecExecCrossCheck.cpp).
-
-[OpenExec reference checks](docs/concepts/baked-vs-dynamic.md#openexec-reference-checks)
-lists what is judged and where the code is. Other upstream and published
-sources are listed in the [method references](docs/references.md).
+RigExec links no OpenExec library: native, frozen and `.rigexec` evaluation
+run the shared operation graph, and no failure falls back to another
+evaluator. The values each operation stores are pinned by the
+[exec-row goldens](docs/concepts/baked-vs-dynamic.md#exec-row-goldens), which
+OpenExec judged bit for bit when they were first recorded and which are
+re-recorded from the production evaluator after a deliberate change. Other
+upstream and published sources are listed in the
+[method references](docs/references.md).
 
 ## Integrations
 
@@ -274,7 +253,7 @@ RigExec's evaluation and playback layers are consumed outside this repository.
 Godot, Unreal and the Maya plug-in play baked rigs with the USD-free runtime in
 `libs/rigExecRuntime`, the same operation graph the viewport runs; see
 [evaluation and checks](docs/concepts/baked-vs-dynamic.md) and
-[the standalone runtime](docs/specs/standalone-runtime.md). The Blender and
+[the Godot tutorial](docs/concepts/tutorial-godot-baked-rig.md). The Blender and
 Maya ASCII file formats work on the other side of that bake: they translate
 source files into native USD rigs that RigExec compiles in this repository.
 The mobile rows carry the Hydra path in `libs/rigExecImaging` and the

@@ -68,8 +68,8 @@ An explicit whole-version consumer still waits for the corresponding summary.
 DQ skin checks acceptance in `InfluenceFold`, using weights and joint transforms
 without reading entering points. A conservative weight certificate handles ordinary
 normalized weights; other weights use the kernel's exact blend predicates. A
-refused blend passes through every group. Native, frozen, and format-30 binary
-runtime evaluation share this behavior; older binary formats remain readable.
+refused blend passes through every group. Native, frozen, and binary
+runtime evaluation share this behavior.
 
 Verification: `testRigExecLiveDebug_serial` and `_parallel` exercise active-session
 routing, incremental snapshots, timestamps and phases, recording shutdown,

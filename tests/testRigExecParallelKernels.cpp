@@ -13,10 +13,10 @@
 // The meshes here are deliberately larger than RigExecGeometryParallelThreshold
 // (and the small one deliberately smaller), because a threshold that is never
 // crossed in a test is a threshold that is never tested.
-#include "rigExec/moverGraph.h"
+#include "rigExec/internal/moverGraph.h"
 #include "rigExecRevisionProgramTest.h"
-#include "rigExec/parallel.h"
-#include "rigExec/types.h"
+#include "rigExec/internal/parallel.h"
+#include "rigExec/api/types.h"
 
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/simdKernels.h"
@@ -37,8 +37,13 @@ PXR_NAMESPACE_USING_DIRECTIVE
 using namespace rigExec;
 
 static int failures = 0;
-#define CHECK(condition) do { if (!(condition)) { ++failures; \
-    std::printf("FAIL %d: %s\n", __LINE__, #condition); } } while (0)
+#define CHECK(condition)                                                       \
+    do {                                                                       \
+        if (!(condition)) {                                                    \
+            ++failures;                                                        \
+            std::printf("FAIL %d: %s\n", __LINE__, #condition);                \
+        }                                                                      \
+    } while (0)
 
 namespace {
 
@@ -145,9 +150,10 @@ ReferenceSkin(const VtVec3fArray &base, const RigExecMoverParameters &params)
 // Held to a tolerance rather than to equality, because that is the
 // relationship the SIMD kernel is parity-gated on in the first place.
 void
-CheckAgreesWithScalarReference(
-    const VtVec3fArray &result, const VtVec3fArray &base,
-    const RigExecMoverParameters &params, const char *what)
+CheckAgreesWithScalarReference(const VtVec3fArray &result,
+                               const VtVec3fArray &base,
+                               const RigExecMoverParameters &params,
+                               const char *what)
 {
     const RigExecSkinLayout layout = LayoutOf(base, params);
     for (size_t i = 0; i < base.size(); ++i) {
@@ -156,9 +162,9 @@ CheckAgreesWithScalarReference(
         if ((GfVec3d(result[i]) - expected).GetLength() > 1e-3) {
             ++failures;
             std::printf("FAIL %s: point %zu is (%g %g %g), scalar reference "
-                        "says (%g %g %g)\n", what, i, result[i][0],
-                        result[i][1], result[i][2], expected[0], expected[1],
-                        expected[2]);
+                        "says (%g %g %g)\n",
+                        what, i, result[i][0], result[i][1], result[i][2],
+                        expected[0], expected[1], expected[2]);
             return;
         }
     }
@@ -178,8 +184,9 @@ Identical(const VtVec3fArray &a, const VtVec3fArray &b, const char *what)
         if (a[i][0] != b[i][0] || a[i][1] != b[i][1] || a[i][2] != b[i][2]) {
             ++failures;
             std::printf("FAIL %s: point %zu is (%.9g %.9g %.9g), expected "
-                        "(%.9g %.9g %.9g)\n", what, i, a[i][0], a[i][1],
-                        a[i][2], b[i][0], b[i][1], b[i][2]);
+                        "(%.9g %.9g %.9g)\n",
+                        what, i, a[i][0], a[i][1], a[i][2], b[i][0], b[i][1],
+                        b[i][2]);
             return false;
         }
     }
@@ -190,9 +197,10 @@ VtVec3fArray
 RunSkin(const VtVec3fArray &base, const RigExecMoverParameters &params)
 {
     rigExecTest::RevisionProgram graph;
-    const rigExecTest::RevisionValue source = graph.AddPointSource(kTarget, base);
-    const rigExecTest::RevisionValue head = graph.AddRevision(
-        RigExecRevisionOp::Skin, source, params, OkStatus());
+    const rigExecTest::RevisionValue source =
+        graph.AddPointSource(kTarget, base);
+    const rigExecTest::RevisionValue head =
+        graph.AddRevision(RigExecRevisionOp::Skin, source, params, OkStatus());
     const VtVec3fArray out = graph.Evaluate(head);
     CHECK(graph.GetRevisionStatus(head).state == "ok");
     return out;
@@ -239,8 +247,8 @@ TestEnvelopeMatchesTheScalarReference(size_t count)
     const VtVec3fArray full = ReferenceSkin(base, params);
     VtVec3fArray expected(count);
     for (size_t i = 0; i < count; ++i) {
-        expected[i] = RigExecBlendEnvelope(base[i], full[i],
-                                           params.weights.values[i]);
+        expected[i] =
+            RigExecBlendEnvelope(base[i], full[i], params.weights.values[i]);
     }
     Identical(RunSkin(base, params), expected, "envelope blend");
 }
@@ -249,7 +257,7 @@ TestEnvelopeMatchesTheScalarReference(size_t count)
 void
 TestSerialAndParallelAgree()
 {
-    constexpr size_t count = 20011;  // prime, so the last task is a short one
+    constexpr size_t count = 20011; // prime, so the last task is a short one
     const VtVec3fArray base = MakeBase(count);
     RigExecMoverParameters skin = MakeSkinParams(count, 4, MakeInfluences());
     RigExecMoverParameters blended = skin;
@@ -269,22 +277,24 @@ TestSerialAndParallelAgree()
     Identical(parallelBlend, serialBlend, "envelope, one thread vs many");
     // And neither of them is the input, which is what a kernel that silently
     // did nothing would also satisfy the equality above with.
-    CHECK(parallelSkin.size() == count && parallelSkin[count / 2] != base[count / 2]);
-    CHECK(parallelBlend.size() == count && parallelBlend[count / 2] != base[count / 2]);
+    CHECK(parallelSkin.size() == count &&
+          parallelSkin[count / 2] != base[count / 2]);
+    CHECK(parallelBlend.size() == count &&
+          parallelBlend[count / 2] != base[count / 2]);
     CHECK(parallelBlend[count / 2] != parallelSkin[count / 2]);
 }
 
-}  // namespace
+} // namespace
 
 int
 main()
 {
 
     // Below the threshold, just above it, and far above it.
-    TestSkinMatchesTheScalarReference(
-        RigExecGeometryParallelThreshold / 2, 4, "skin, serial size");
-    TestSkinMatchesTheScalarReference(
-        RigExecGeometryParallelThreshold + 1, 4, "skin, just over threshold");
+    TestSkinMatchesTheScalarReference(RigExecGeometryParallelThreshold / 2, 4,
+                                      "skin, serial size");
+    TestSkinMatchesTheScalarReference(RigExecGeometryParallelThreshold + 1, 4,
+                                      "skin, just over threshold");
     TestSkinMatchesTheScalarReference(26003, 4, "skin, biped-sized");
     // One slot per point exercises the split arithmetic at its tightest.
     TestSkinMatchesTheScalarReference(26003, 1, "skin, one influence slot");

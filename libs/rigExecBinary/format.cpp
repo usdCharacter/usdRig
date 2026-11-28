@@ -3,8 +3,10 @@
 // validates; Write validates and packs; the validator holds every rule a
 // file must satisfy that the file alone can decide.
 #include "rigExecBinary/format.h"
+#include "rigExecBinary/manifest.h"
 
 #include "rigExecBinary/stepGraph.h"
+#include "rigExecGraph/providerInputs.h"
 #include "rigExecGraph/providerRecords.h"
 #include "rigExecMath/affineFrameKernel.h"
 #include "rigExecMath/conditionalTableKernel.h"
@@ -510,9 +512,8 @@ _Has(const Table &table, int64_t index)
 
 // The step rules, the step labels and the step graph's domain names cover
 // every kind and domain up to these; an appended one needs its own.
-static_assert(fb::StepKind::MAX == fb::StepKind::ProviderRefresh &&
-                  fb::SlotDomain::MAX ==
-                      fb::SlotDomain::RequiredStageFramesAdmission,
+static_assert(fb::StepKind::MAX == fb::StepKind::OpChainRange &&
+                  fb::SlotDomain::MAX == fb::SlotDomain::OpGroupValue,
               "a step kind or slot domain was appended: give it its rules");
 // The array tags and sources are frozen; the runtime mirrors the numbers.
 static_assert(uint8_t(fb::InputTag::IntArray) == 8 &&
@@ -528,10 +529,198 @@ static_assert(uint8_t(fb::ArraySource::Pool) == 0 &&
                   fb::ArraySource::MAX == fb::ArraySource::SkinWeights,
               "the array sources are frozen");
 
+/// Per op node: the property chain and part (1 to its revision count) it
+/// runs, found from the chain version above the base its value is stored
+/// in, or SIZE_MAX for a node that runs no property revision.
+struct _PropertyNodeParts {
+    std::vector<size_t> chain, part;
+
+    explicit _PropertyNodeParts(const RigExecWireFile &file)
+    {
+        const size_t nodes = file.opGraph ? file.opGraph->nodes.size() : 0;
+        chain.assign(nodes, SIZE_MAX);
+        part.assign(nodes, SIZE_MAX);
+        if (!nodes)
+            return;
+        std::vector<std::pair<uint64_t, size_t>> firstVersion;
+        for (size_t c = 0; c < file.propertyChains.size(); ++c)
+            firstVersion.emplace_back(
+                uint64_t(file.propertyChains[c].versionBase) + 1, c);
+        std::sort(firstVersion.begin(), firstVersion.end());
+        for (const auto &output : file.opGraph->hostOutputs) {
+            if (!output || output->node >= nodes || output->target != 0)
+                continue;
+            auto at = std::upper_bound(
+                firstVersion.begin(), firstVersion.end(),
+                std::make_pair(uint64_t(output->object), SIZE_MAX));
+            if (at == firstVersion.begin())
+                continue;
+            --at;
+            const size_t c = at->second;
+            const uint64_t k = uint64_t(output->object) - at->first + 1;
+            if (k > file.propertyChains[c].revisions.size() ||
+                chain[output->node] != SIZE_MAX)
+                continue;
+            chain[output->node] = c;
+            part[output->node] = size_t(k);
+        }
+    }
+
+    bool Of(int64_t node, size_t *c, size_t *k) const
+    {
+        if (node < 0 || size_t(node) >= chain.size() ||
+            chain[size_t(node)] == SIZE_MAX)
+            return false;
+        if (c)
+            *c = chain[size_t(node)];
+        if (k)
+            *k = part[size_t(node)];
+        return true;
+    }
+};
+
 class _Validator {
 public:
     explicit _Validator(const RigExecWireFile &file) : _f(file)
     {
+        _PropertyNodeParts parts(file);
+        _propertyChainOf = std::move(parts.chain);
+        _propertyPartOf = std::move(parts.part);
+        const size_t nodes = file.opGraph ? file.opGraph->nodes.size() : 0;
+        _placementSlot.assign(nodes, -1);
+        _placementBase.assign(nodes, 0);
+        _placementLookup.assign(nodes, -1);
+        _packetObject.assign(nodes, -1);
+        _fieldNode.assign(nodes, -1);
+        _fieldStored.assign(nodes, -1);
+        _frameRecordOf.assign(nodes, -1);
+        _providerSlotOf.assign(nodes, -1);
+        _commitNode.assign(nodes, -1);
+        _avarNode.assign(nodes, -1);
+        _checkpointNode.assign(nodes, -1);
+        _interpolatorNode.assign(nodes, -1);
+        _solveNode.assign(nodes, -1);
+        _solverOf.assign(nodes, -1);
+        _restNode.assign(nodes, -1);
+        _ladderNode.assign(nodes, -1);
+        _composeNode.assign(nodes, -1);
+        _refreshOf.assign(nodes, -1);
+        _providerOpOf.assign(nodes, -1);
+        _constraintNode.assign(nodes, -1);
+        _constraintSolve.assign(nodes, -1);
+        _answerOf.assign(nodes, -1);
+        if (!nodes)
+            return;
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 52 &&
+                _answerOf[output->node] < 0)
+                _answerOf[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes &&
+                (output->target == 28 || output->target == 29) &&
+                _providerOpOf[output->node] < 0)
+                _providerOpOf[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 24 &&
+                _refreshOf[output->node] < 0)
+                _refreshOf[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes &&
+                (output->target == 20 || output->target == 21) &&
+                _providerSlotOf[output->node] < 0)
+                _providerSlotOf[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 22 &&
+                _frameRecordOf[output->node] < 0)
+                _frameRecordOf[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 30 &&
+                _commitNode[output->node] < 0)
+                _commitNode[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes &&
+                _ConstraintTarget(output->target) &&
+                _constraintNode[output->node] < 0) {
+                _constraintNode[output->node] = int64_t(output->object);
+                if (output->target == 35 || output->target == 70)
+                    _constraintSolve[output->node] = int64_t(output->object);
+            }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 40 &&
+                _avarNode[output->node] < 0)
+                _avarNode[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 41 &&
+                _checkpointNode[output->node] < 0)
+                _checkpointNode[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 42 &&
+                _interpolatorNode[output->node] < 0)
+                _interpolatorNode[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 60 &&
+                _solveNode[output->node] < 0)
+                _solveNode[output->node] = _solverOf[output->node] =
+                    int64_t(output->object);
+        for (size_t n = 0; n < nodes; ++n)
+            if (_solveNode[n] >= 0 && file.opGraph->nodes[n])
+                for (const auto &input : file.opGraph->nodes[n]->inputs)
+                    if (input && input->node >= 0 &&
+                        size_t(input->node) < nodes &&
+                        _solverOf[size_t(input->node)] < 0)
+                        _solverOf[size_t(input->node)] = _solveNode[n];
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 43 &&
+                _restNode[output->node] < 0)
+                _restNode[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 44 &&
+                _ladderNode[output->node] < 0)
+                _ladderNode[output->node] = int64_t(output->object);
+        if (file.pose && file.slotMeta) {
+            std::vector<int64_t> groupOf(file.slotMeta->parent.size(), -1);
+            for (size_t g = 0; g < file.pose->composeGroups.size(); ++g) {
+                const int32_t begin = file.pose->composeGroups[g].begin;
+                if (begin >= 0 && size_t(begin) < groupOf.size())
+                    groupOf[size_t(begin)] = int64_t(g);
+            }
+            for (const auto &output : file.opGraph->hostOutputs)
+                if (output && output->node < nodes && output->target == 46 &&
+                    output->object < groupOf.size())
+                    _composeNode[output->node] = groupOf[output->object];
+        }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 5 &&
+                _fieldStored[output->node] < 0)
+                _fieldStored[output->node] = int64_t(output->object);
+        for (size_t n = 0; n < nodes; ++n)
+            if (file.opGraph->nodes[n])
+                for (const auto &input : file.opGraph->nodes[n]->inputs)
+                    if (input && input->host == 4 &&
+                        input->object < file.opGraph->lookups.size() &&
+                        file.opGraph->lookups[input->object] &&
+                        file.opGraph->lookups[input->object]->source == 4)
+                        _fieldNode[n] = int64_t(
+                            file.opGraph->lookups[input->object]->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes && output->target == 3 &&
+                _packetObject[output->node] < 0)
+                _packetObject[output->node] = int64_t(output->object);
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node < nodes &&
+                (output->target == 1 || output->target == 2) &&
+                _placementSlot[output->node] < 0) {
+                _placementSlot[output->node] = int64_t(output->object);
+                _placementBase[output->node] = output->target == 2;
+            }
+        for (size_t n = 0; n < nodes; ++n)
+            if (file.opGraph->nodes[n])
+                for (const auto &input : file.opGraph->nodes[n]->inputs)
+                    if (input && input->host == 4 &&
+                        input->object < file.opGraph->lookups.size() &&
+                        file.opGraph->lookups[input->object] &&
+                        file.opGraph->lookups[input->object]->source == 1)
+                        _placementLookup[n] = int64_t(input->object);
     }
 
     bool Run(std::string *error)
@@ -543,17 +732,1276 @@ public:
     }
 
 private:
+    static constexpr size_t kNoProperty = SIZE_MAX;
+    /// The most vertex groups a range chain runs in: a neighbourhood input
+    /// binds one table of every group per group.
+    static constexpr size_t kMaxOpChainGroups = 1024;
+
+    /// The property chain and part (1 to its revision count) op step
+    /// \p step runs; false for any other step.
+    bool _PropertyPart(const RigExecWireStep &step, size_t *chain,
+                       size_t *part) const
+    {
+        if (step.kind != fb::StepKind::OpNode || step.object < 0 ||
+            size_t(step.object) >= _propertyChainOf.size() ||
+            _propertyChainOf[size_t(step.object)] == kNoProperty)
+            return false;
+        if (chain)
+            *chain = _propertyChainOf[size_t(step.object)];
+        if (part)
+            *part = _propertyPartOf[size_t(step.object)];
+        return true;
+    }
+
+    /// Every revision of every property chain runs as exactly one op node,
+    /// whose step is a head; the first stores the base as well.
+    bool _PropertyNodes()
+    {
+        size_t versions = 0;
+        for (size_t c = 0; c < _f.propertyChains.size(); ++c) {
+            if (_f.propertyChains[c].versionBase != versions)
+                return _Bad("PropertyRevision chain " + _N(c) +
+                            ": noncanonical version_base");
+            versions += _f.propertyChains[c].revisions.size() + 1;
+        }
+        std::vector<std::vector<size_t>> nodes(_f.propertyChains.size());
+        for (size_t c = 0; c < nodes.size(); ++c)
+            nodes[c].assign(_f.propertyChains[c].revisions.size(), kNoProperty);
+        for (size_t n = 0; n < _propertyChainOf.size(); ++n) {
+            if (_propertyChainOf[n] == kNoProperty)
+                continue;
+            size_t &at = nodes[_propertyChainOf[n]][_propertyPartOf[n] - 1];
+            if (at != kNoProperty)
+                return _Bad("op node " + _N(n) +
+                            ": a property revision runs twice");
+            at = n;
+        }
+        for (size_t c = 0; c < nodes.size(); ++c)
+            for (size_t r = 0; r < nodes[c].size(); ++r)
+                if (nodes[c][r] == kNoProperty)
+                    return _Bad("property chain " + _N(c) + " revision " +
+                                _N(r + 1) + ": runs as no op node");
+        if (!_f.opGraph)
+            return true;
+        std::vector<uint8_t> stored, packets, fields, groupsStored,
+            enabledStored;
+        std::set<std::pair<uint64_t, uint8_t>> providerStored, answerStored;
+        std::set<uint64_t> avarsStored, checkpointsStored, weightsStored,
+            solversStored, planarStored;
+        std::set<std::pair<uint64_t, uint32_t>> restsStored;
+        std::set<uint64_t> statusStored;
+        std::set<std::pair<uint8_t, uint64_t>> composeStored;
+        std::set<std::pair<uint64_t, uint32_t>> laddersStored;
+        std::vector<uint8_t> spaceStored(
+            4 * std::max<size_t>(_slots, _f.pose->frameRecords.size()), 0);
+        for (const auto &output : _f.opGraph->hostOutputs) {
+            if (!output)
+                return _Bad("op_graph.host_outputs: an entry is missing");
+            const bool commit = output->target >= 30 && output->target <= 34;
+            const bool constraint = _ConstraintTarget(output->target);
+            if ((output->target > 6 && output->target < 20) ||
+                (output->target > 34 && !constraint && output->target != 40 &&
+                 output->target != 41 && output->target != 42 &&
+                 output->target != 43 && output->target != 44 &&
+                 output->target != 45 && output->target != 50 &&
+                 (output->target < 46 || output->target > 49) &&
+                 output->target != 51 && output->target != 60 &&
+                 output->target != 61 &&
+                 (output->target < 52 || output->target > 54)))
+                return _Bad("op_graph.host_outputs: unknown target " +
+                            _N(output->target));
+            if (output->node >= _f.opGraph->nodes.size())
+                return _Bad("op_graph.host_outputs: no node " +
+                            _N(output->node));
+            const size_t node = size_t(output->node);
+            if (constraint) {
+                if (!_ConstraintCommit(int64_t(output->object)) ||
+                    _constraintNode[node] != int64_t(output->object) ||
+                    ((output->target == 36 || output->target == 37) &&
+                     _ConstraintAt(int64_t(output->object)).deltaBase < 0) ||
+                    (output->target == 70 &&
+                     !_ConstraintAt(int64_t(output->object)).harmonics &&
+                     !_ConstraintAt(int64_t(output->object)).singleChainIk &&
+                     !_ConstraintAt(int64_t(output->object)).ikFkMatch) ||
+                    (output->target == 71 &&
+                     !_ConstraintAt(int64_t(output->object)).singleChainIk) ||
+                    (output->target >= 72 && output->target <= 74 &&
+                     !_ConstraintAt(int64_t(output->object)).ikFkMatch))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores into constraint " +
+                                _N(output->object) +
+                                ", which it does not solve");
+                continue;
+            }
+            if (output->target == 41) {
+                bool reads = false;
+                if (_f.opGraph->nodes[node])
+                    for (const auto &input : _f.opGraph->nodes[node]->inputs)
+                        reads =
+                            reads ||
+                            (input && input->host == 4 &&
+                             input->object < _f.opGraph->lookups.size() &&
+                             _f.opGraph->lookups[input->object] &&
+                             _f.opGraph->lookups[input->object]->source == 41 &&
+                             _f.opGraph->lookups[input->object]->object ==
+                                 output->object);
+                if (!_f.pose ||
+                    output->object >= _f.pose->spaceCheckpoints.size() ||
+                    !reads || _checkpointNode[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the switch frame of checkpoint " +
+                                _N(output->object) +
+                                ", whose inputs it does not read");
+                if (!checkpointsStored.insert(output->object).second)
+                    return _Bad("op_graph.host_outputs: the switch frame of "
+                                "checkpoint " +
+                                _N(output->object) + " is stored twice");
+                continue;
+            }
+            if (output->target == 43) {
+                bool reads = false;
+                if (_f.opGraph->nodes[node])
+                    for (const auto &input : _f.opGraph->nodes[node]->inputs)
+                        reads =
+                            reads ||
+                            (input && input->host == 4 &&
+                             input->object < _f.opGraph->lookups.size() &&
+                             _f.opGraph->lookups[input->object] &&
+                             _f.opGraph->lookups[input->object]->source == 43 &&
+                             _f.opGraph->lookups[input->object]->object ==
+                                 output->object);
+                if (!_f.pose ||
+                    output->object >= _f.pose->composeGroups.size() ||
+                    output->port < 4 || output->port > 6 || !reads ||
+                    _restNode[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the rest of compose group " +
+                                _N(output->object) +
+                                ", whose inputs it does not read");
+                if (!restsStored.emplace(output->object, output->port).second)
+                    return _Bad("op_graph.host_outputs: rest port " +
+                                _N(output->port) + " of compose group " +
+                                _N(output->object) + " is stored twice");
+                continue;
+            }
+            if (output->target == 44) {
+                bool reads = false;
+                if (_f.opGraph->nodes[node])
+                    for (const auto &input : _f.opGraph->nodes[node]->inputs)
+                        reads =
+                            reads ||
+                            (input && input->host == 4 &&
+                             input->object < _f.opGraph->lookups.size() &&
+                             _f.opGraph->lookups[input->object] &&
+                             _f.opGraph->lookups[input->object]->source == 44 &&
+                             _f.opGraph->lookups[input->object]->object ==
+                                 output->object);
+                if (!_f.pose ||
+                    output->object >= _f.pose->composeGroups.size() ||
+                    output->port < 8 || output->port > 16 || !reads ||
+                    _ladderNode[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the ladder of compose group " +
+                                _N(output->object) +
+                                ", whose inputs it does not read");
+                if (!laddersStored.emplace(output->object, output->port).second)
+                    return _Bad("op_graph.host_outputs: ladder port " +
+                                _N(output->port) + " of compose group " +
+                                _N(output->object) + " is stored twice");
+                continue;
+            }
+            if (output->target >= 46 && output->target <= 49) {
+                const bool match = output->target >= 48;
+                if (!_f.pose ||
+                    output->object >= (match ? _f.pose->spaceSwitches.size()
+                                             : _f.slotMeta->parent.size()))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores a first pose of no slot or switch " +
+                                _N(output->object));
+                if (!composeStored.emplace(output->target, output->object)
+                         .second)
+                    return _Bad("op_graph.host_outputs: target " +
+                                _N(output->target) + " of " +
+                                _N(output->object) + " is stored twice");
+                continue;
+            }
+            if (output->target == 45) {
+                if (!_f.pose ||
+                    output->object >= _f.pose->poseInterpolators.size() ||
+                    _interpolatorNode[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the status of pose interpolator " +
+                                _N(output->object) +
+                                ", whose weights it does not store");
+                if (!statusStored.insert(output->object).second)
+                    return _Bad("op_graph.host_outputs: the status of pose "
+                                "interpolator " +
+                                _N(output->object) + " is stored twice");
+                continue;
+            }
+            if (output->target == 42) {
+                bool reads = false;
+                if (_f.opGraph->nodes[node])
+                    for (const auto &input : _f.opGraph->nodes[node]->inputs)
+                        reads =
+                            reads ||
+                            (input && input->host == 4 &&
+                             input->object < _f.opGraph->lookups.size() &&
+                             _f.opGraph->lookups[input->object] &&
+                             _f.opGraph->lookups[input->object]->source == 42 &&
+                             _f.opGraph->lookups[input->object]->object ==
+                                 output->object);
+                if (!_f.pose ||
+                    output->object >= _f.pose->poseInterpolators.size() ||
+                    !reads ||
+                    _interpolatorNode[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the weights of pose interpolator " +
+                                _N(output->object) +
+                                ", whose inputs it does not read");
+                if (!weightsStored.insert(output->object).second)
+                    return _Bad("op_graph.host_outputs: the weights of pose "
+                                "interpolator " +
+                                _N(output->object) + " are stored twice");
+                continue;
+            }
+            if (output->target == 40) {
+                bool reads = false;
+                if (_f.opGraph->nodes[node])
+                    for (const auto &input : _f.opGraph->nodes[node]->inputs)
+                        reads =
+                            reads ||
+                            (input && input->host == 4 &&
+                             input->object < _f.opGraph->lookups.size() &&
+                             _f.opGraph->lookups[input->object] &&
+                             _f.opGraph->lookups[input->object]->source == 40 &&
+                             _f.opGraph->lookups[input->object]->object ==
+                                 output->object);
+                if (output->object >= _slots || !reads ||
+                    _avarNode[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the avars of slot " +
+                                _N(output->object) +
+                                ", whose bindings it does not read");
+                if (!avarsStored.insert(output->object).second)
+                    return _Bad("op_graph.host_outputs: the avars of slot " +
+                                _N(output->object) + " are stored twice");
+                continue;
+            }
+            if (output->target == 60) {
+                if (!_f.pose ||
+                    !_Has(_f.pose->solvers, int64_t(output->object)) ||
+                    _solveNode[node] != int64_t(output->object) ||
+                    !solversStored.insert(output->object).second)
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the frames of solver " +
+                                _N(output->object) +
+                                ", which it does not solve or another node "
+                                "stores");
+                continue;
+            }
+            if (output->target == 61) {
+                if (!_f.pose ||
+                    !_Has(_f.pose->solvers, int64_t(output->object)) ||
+                    !_f.pose->solvers[size_t(output->object)].skeleton2d ||
+                    _solveNode[node] != int64_t(output->object) ||
+                    !planarStored.insert(output->object).second)
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores whether solver " + _N(output->object) +
+                                " solved in its plane, which is no 2D "
+                                "skeleton it solves or another node stores");
+                continue;
+            }
+            if (commit) {
+                if (!_f.pose ||
+                    !_Has(_f.pose->commits, int64_t(output->object)) ||
+                    _commitNode[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores into commit " + _N(output->object) +
+                                ", which it does not write back");
+                continue;
+            }
+            if (output->target >= 52) {
+                if (!_f.providerProgram ||
+                    output->object >= _Producers().Count() ||
+                    _answerOf[node] != int64_t(output->object) ||
+                    _providerOpOf[node] >= 0 ||
+                    _propertyChainOf[node] != kNoProperty ||
+                    _placementSlot[node] >= 0 || _packetObject[node] >= 0 ||
+                    _fieldStored[node] >= 0 || _refreshOf[node] >= 0 ||
+                    _frameRecordOf[node] >= 0 || _commitNode[node] >= 0 ||
+                    _constraintNode[node] >= 0)
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the answer of no provider value it "
+                                "answers");
+                if (!answerStored
+                         .emplace(output->object, uint8_t(output->target))
+                         .second)
+                    return _Bad("op_graph.host_outputs: target " +
+                                _N(output->target) +
+                                " of provider value "
+                                "producer " +
+                                _N(output->object) + " is stored twice");
+                continue;
+            }
+            if (output->target >= 28) {
+                if (!_f.providerProgram ||
+                    !_Has(_f.providerProgram->ops, output->object) ||
+                    _f.providerProgram->ops[output->object].kind ==
+                        uint32_t(RigExecProviderOpKind::Attribute) ||
+                    _providerOpOf[node] != int64_t(output->object) ||
+                    _propertyChainOf[node] != kNoProperty ||
+                    _placementSlot[node] >= 0 || _packetObject[node] >= 0 ||
+                    _fieldStored[node] >= 0 || _refreshOf[node] >= 0 ||
+                    _frameRecordOf[node] >= 0 || _commitNode[node] >= 0)
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the result of no provider operation "
+                                "it runs");
+                if (!providerStored
+                         .emplace(output->object, uint8_t(output->target))
+                         .second)
+                    return _Bad("op_graph.host_outputs: target " +
+                                _N(output->target) + " of provider operation " +
+                                _N(output->object) + " is stored twice");
+                continue;
+            }
+            if (output->target >= 24) {
+                if (!_f.pose ||
+                    !_Has(_f.pose->providerRefreshes, output->object) ||
+                    _refreshOf[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores frames of no provider refresh it "
+                                "runs");
+                continue;
+            }
+            if (output->target >= 20) {
+                const bool record = output->target >= 22;
+                if (record ? !_Has(_f.pose->frameRecords, output->object)
+                           : output->object >= _slots)
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores a matrix of no " +
+                                (record ? "frame record " : "slot ") +
+                                _N(output->object));
+                if (_propertyChainOf[node] != kNoProperty ||
+                    _placementSlot[node] >= 0 || _packetObject[node] >= 0 ||
+                    _fieldStored[node] >= 0 ||
+                    (record && _frameRecordOf[node] != int64_t(output->object)))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores a matrix beside another value");
+                uint8_t &seen = spaceStored[4 * size_t(output->object) +
+                                            size_t(output->target - 20)];
+                if (seen++)
+                    return _Bad("op_graph.host_outputs: target " +
+                                _N(output->target) + " of " +
+                                _N(output->object) + " is stored twice");
+                continue;
+            }
+            if (output->target == 6) {
+                bool stores = false;
+                for (const auto &other : _f.opGraph->hostOutputs)
+                    stores = stores || (other && other->target == 4 &&
+                                        other->node == output->node &&
+                                        other->object == output->object);
+                if (!stores)
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores whether revision " +
+                                _N(output->object) +
+                                " is enabled, but not its groups");
+                if (enabledStored.size() <= output->object)
+                    enabledStored.resize(size_t(output->object) + 1, 0);
+                if (enabledStored[size_t(output->object)]++)
+                    return _Bad("op_graph.host_outputs: whether revision " +
+                                _N(output->object) +
+                                " is enabled is stored twice");
+                continue;
+            }
+            if (output->target == 4) {
+                bool member = false;
+                for (const auto &chain : _f.opGraph->chains)
+                    member =
+                        member ||
+                        (chain &&
+                         std::find(chain->members.begin(), chain->members.end(),
+                                   output->node) != chain->members.end());
+                if (!member || !_f.geometry ||
+                    output->object >= _f.geometry->revisionIndex.size())
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the groups of revision " +
+                                _N(output->object) + " outside a range chain");
+                if (groupsStored.size() <= output->object)
+                    groupsStored.resize(size_t(output->object) + 1, 0);
+                if (groupsStored[size_t(output->object)]++)
+                    return _Bad(
+                        "op_graph.host_outputs: the groups of revision " +
+                        _N(output->object) + " are stored twice");
+                continue;
+            }
+            if (output->target == 5) {
+                if (!_f.geometry ||
+                    !_Has(_f.geometry->weightFields, int64_t(output->object)) ||
+                    _fieldNode[node] != int64_t(output->object) ||
+                    _fieldStored[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the weights of a field it does not "
+                                "weigh");
+                if (fields.size() <= output->object)
+                    fields.resize(size_t(output->object) + 1, 0);
+                if (fields[size_t(output->object)]++)
+                    return _Bad("op_graph.host_outputs: the weights of field " +
+                                _N(output->object) + " are stored twice");
+                continue;
+            }
+            if (output->target == 3) {
+                if (_propertyChainOf[node] != kNoProperty ||
+                    _placementSlot[node] >= 0 ||
+                    _packetObject[node] != int64_t(output->object))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores more than one weight packet");
+                if (output->object >= _stepBacked)
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores the packet of weight object " +
+                                _N(output->object) + ", which no step builds");
+                if (packets.size() <= output->object)
+                    packets.resize(size_t(output->object) + 1, 0);
+                if (packets[size_t(output->object)]++)
+                    return _Bad("op_graph.host_outputs: the packet of weight "
+                                "object " +
+                                _N(output->object) + " is stored twice");
+                continue;
+            }
+            if (output->target != 0) {
+                const std::vector<uint8_t> &volumes =
+                    _f.constants->noScaleAvars;
+                if (_propertyChainOf[node] != kNoProperty ||
+                    _placementSlot[node] != int64_t(output->object) ||
+                    _placementBase[node] != (output->target == 2))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " places more than one volume");
+                if (!_Has(volumes, output->object) || !volumes[output->object])
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " places slot " + _N(output->object) +
+                                ", which is no volume slot");
+                continue;
+            }
+            if (_propertyChainOf[node] == kNoProperty)
+                return _Bad("op_graph.host_outputs: node " + _N(node) +
+                            " stores no property version");
+            const auto &chain = _f.propertyChains[_propertyChainOf[node]];
+            const size_t part = _propertyPartOf[node];
+            if (output->object != chain.versionBase + part &&
+                !(part == 1 && output->object == chain.versionBase))
+                return _Bad("op_graph.host_outputs: node " + _N(node) +
+                            " stores version " + _N(output->object) +
+                            ", which is no property version it writes");
+            const size_t v = output->object;
+            if (stored.size() <= v)
+                stored.resize(v + 1, 0);
+            if (stored[v]++)
+                return _Bad("op_graph.host_outputs: version " + _N(v) +
+                            " is stored twice");
+        }
+        for (const auto &chain : _f.propertyChains)
+            for (size_t v = chain.versionBase;
+                 v <= chain.versionBase + chain.revisions.size(); ++v)
+                if (v >= stored.size() || !stored[v])
+                    return _Bad("op_graph.host_outputs: property version " +
+                                _N(v) + " is never stored");
+        for (const auto &lookup : _f.opGraph->lookups) {
+            if (lookup && _ConstraintLookup(lookup->source)) {
+                const uint8_t s = lookup->source;
+                const int32_t part = lookup->part;
+                const uint8_t read = lookup->read;
+                const bool shaped =
+                    s == 38
+                        ? part == -1 && read <= 5 &&
+                              _ConstraintCommit(int64_t(lookup->object)) &&
+                              _ConstraintAt(int64_t(lookup->object)).harmonics
+                    : s == 70
+                        ? part == -1 && read <= 5 &&
+                              _ConstraintCommit(int64_t(lookup->object)) &&
+                              _ConstraintAt(int64_t(lookup->object))
+                                  .singleChainIk
+                    : s == 71
+                        ? part == -1 && read <= 24 &&
+                              _ConstraintCommit(int64_t(lookup->object)) &&
+                              _ConstraintAt(int64_t(lookup->object)).ikFkMatch
+                    : s == 32 ? (part < 0 ? read == 0 : read <= 1)
+                    : s == 33 ? part == -1 && read >= 20 && read <= 22
+                    : s == 34 ? part == -1 && read <= 16
+                    : s == 35 ? part == -1 && read >= 30 && read <= 32
+                    : s == 36 ? part == -1 && read == 0
+                    : s == 37 ? part >= 1 && part <= 4 && read == 0
+                              : part == -1 && read <= 1;
+                if (!_ConstraintCommit(int64_t(lookup->object)) || !shaped)
+                    return _Bad("op_graph.lookups: a constraint lookup reads "
+                                "nothing constraint " +
+                                _N(lookup->object) + " holds");
+                continue;
+            }
+            if (lookup && lookup->source == 60) {
+                if (!_f.pose ||
+                    !_Has(_f.pose->solvers, int64_t(lookup->object)) ||
+                    lookup->part < 0 || lookup->part > 37 || lookup->read)
+                    return _Bad("op_graph.lookups: a solver lookup reads "
+                                "nothing solver " +
+                                _N(lookup->object) + " holds");
+                continue;
+            }
+            if (lookup && lookup->source == 31)
+                return _Bad("op_graph.lookups: the retired commit candidates "
+                            "lookup");
+            if (lookup && lookup->source == 30) {
+                if (!_f.pose ||
+                    !_Has(_f.pose->commits, int64_t(lookup->object)) ||
+                    lookup->part < 0 || lookup->part > 6 || lookup->read)
+                    return _Bad("op_graph.lookups: a commit lookup reads "
+                                "nothing commit " +
+                                _N(lookup->object) + " holds");
+                continue;
+            }
+            if (lookup && lookup->source >= 45 && lookup->source <= 47) {
+                const size_t count =
+                    !_f.pose               ? 0
+                    : lookup->source == 45 ? _f.slotMeta->parent.size()
+                    : lookup->source == 46 ? _f.pose->spaceSwitches.size()
+                                           : _f.pose->autoClavicles.size();
+                const uint8_t last = lookup->source == 45   ? 10
+                                     : lookup->source == 46 ? 8
+                                                            : 23;
+                if (lookup->object >= count || lookup->part != -1 ||
+                    lookup->read > last)
+                    return _Bad("op_graph.lookups: a compose lookup reads "
+                                "nothing slot, switch or clavicle " +
+                                _N(lookup->object) + " holds");
+                continue;
+            }
+            if (lookup && lookup->source == 44) {
+                if (!_f.pose ||
+                    lookup->object >= _f.pose->composeGroups.size() ||
+                    lookup->part != -1 || lookup->read > 7 ||
+                    !_Has(_f.slotMeta->parent,
+                          int64_t(
+                              _f.pose->composeGroups[lookup->object].begin)) ||
+                    (lookup->read >= 6 &&
+                     _f.slotMeta->parent[size_t(
+                         _f.pose->composeGroups[lookup->object].begin)] < 0))
+                    return _Bad("op_graph.lookups: a ladder inputs lookup "
+                                "reads no ladder input of a compose group");
+                continue;
+            }
+            if (lookup && lookup->source == 43) {
+                if (!_f.pose ||
+                    lookup->object >= _f.pose->composeGroups.size() ||
+                    lookup->part != -1 || lookup->read > 3 ||
+                    !_Has(_f.slotMeta->parent,
+                          int64_t(
+                              _f.pose->composeGroups[lookup->object].begin)) ||
+                    (lookup->read == 3 &&
+                     _f.slotMeta->parent[size_t(
+                         _f.pose->composeGroups[lookup->object].begin)] < 0))
+                    return _Bad("op_graph.lookups: a rest inputs lookup "
+                                "reads no rest input of a compose group");
+                continue;
+            }
+            if (lookup && lookup->source == 42) {
+                if (!_f.pose ||
+                    lookup->object >= _f.pose->poseInterpolators.size() ||
+                    lookup->part != -1 || lookup->read > 10)
+                    return _Bad("op_graph.lookups: an interpolator inputs "
+                                "lookup reads no input of a pose interpolator");
+                continue;
+            }
+            if (lookup && lookup->source == 41) {
+                if (!_f.pose ||
+                    lookup->object >= _f.pose->spaceCheckpoints.size() ||
+                    lookup->part != -1 || lookup->read > 9 ||
+                    (lookup->read == 9 &&
+                     _f.pose->spaceCheckpoints[lookup->object].anchor < 0))
+                    return _Bad("op_graph.lookups: a checkpoint inputs lookup "
+                                "reads no input of a space checkpoint");
+                continue;
+            }
+            if (lookup && lookup->source == 40) {
+                if (lookup->object >= _slots || lookup->part != -1 ||
+                    lookup->read)
+                    return _Bad("op_graph.lookups: an avar bindings lookup "
+                                "reads no slot");
+                continue;
+            }
+            if (lookup && lookup->source == 1) {
+                if ((lookup->part != 0 && lookup->part != 1) || lookup->read)
+                    return _Bad("op_graph.lookups: a pose version lookup "
+                                "reads neither a fin nor a base frame");
+                continue;
+            }
+            if (lookup && lookup->source == 2) {
+                if (lookup->object >= _stepBacked || lookup->part != -1 ||
+                    lookup->read > 19)
+                    return _Bad("op_graph.lookups: a weight lookup reads no "
+                                "input of a weight object a step builds");
+                continue;
+            }
+            if (lookup && lookup->source == 3) {
+                if (!_f.geometry ||
+                    !_Has(_f.geometry->chains, lookup->object) ||
+                    lookup->part < 0 ||
+                    size_t(lookup->part) >
+                        _f.geometry->chains[lookup->object].revisions.size() ||
+                    lookup->read)
+                    return _Bad("op_graph.lookups: a chain version lookup "
+                                "reads no version of a point chain");
+                continue;
+            }
+            if (lookup && lookup->source == 4) {
+                if (!_f.geometry ||
+                    !_Has(_f.geometry->weightFields, lookup->object) ||
+                    !_Has(_f.geometry->weightObjects, lookup->part) ||
+                    lookup->read > 30)
+                    return _Bad("op_graph.lookups: a weight field lookup "
+                                "reads no input of a field's weight object");
+                continue;
+            }
+            if (lookup && lookup->source == 20) {
+                if (lookup->object >= _slots || lookup->part != -1 ||
+                    lookup->read)
+                    return _Bad("op_graph.lookups: a rest frame lookup reads "
+                                "no slot");
+                continue;
+            }
+            if (lookup && lookup->source == 21) {
+                if (!_Has(_f.pose->commits, lookup->object) ||
+                    (lookup->read == 3
+                         ? !_Has(_f.pose->commits[lookup->object].slots,
+                                 lookup->part)
+                         : lookup->part != -1 || lookup->read > 2))
+                    return _Bad("op_graph.lookups: a record gate lookup "
+                                "reads no gate of a commit");
+                continue;
+            }
+            if (lookup && lookup->source == 22) {
+                if (!_Has(_f.pose->providerRefreshes, lookup->object) ||
+                    lookup->part != -1 || lookup->read > 1)
+                    return _Bad("op_graph.lookups: a provider frame lookup "
+                                "reads no provider refresh");
+                continue;
+            }
+            if (lookup && lookup->source == 25) {
+                if (!_f.providerProgram ||
+                    lookup->object >= _Producers().Count() ||
+                    lookup->part != -1 || lookup->read > 2)
+                    return _Bad("op_graph.lookups: a provider candidates "
+                                "lookup reads no flag of a provider value "
+                                "producer");
+                continue;
+            }
+            if (lookup && lookup->source == 24) {
+                if (!_f.providerProgram ||
+                    !_Has(_f.providerProgram->ops, lookup->object) ||
+                    lookup->part != -1 || lookup->read > 19)
+                    return _Bad("op_graph.lookups: a provider inputs lookup "
+                                "reads no list of a provider operation");
+                continue;
+            }
+            if (lookup && lookup->source == 23) {
+                if (lookup->object >= _slots || lookup->part != -1 ||
+                    lookup->read)
+                    return _Bad("op_graph.lookups: a parent space lookup "
+                                "reads no slot");
+                continue;
+            }
+            if (lookup && lookup->source == 10) {
+                if (!_f.geometry ||
+                    lookup->object >= _f.geometry->revisionIndex.size() ||
+                    lookup->read > 63)
+                    return _Bad("op_graph.lookups: a revision lookup reads no "
+                                "input of a revision");
+                const auto &at = _f.geometry->revisionIndex[lookup->object];
+                const uint8_t op =
+                    _Has(_f.geometry->chains, at.first) &&
+                            _Has(
+                                _f.geometry->chains[size_t(at.first)].revisions,
+                                at.second)
+                        ? _f.geometry->chains[size_t(at.first)]
+                              .revisions[size_t(at.second)]
+                              .op
+                        : uint8_t(0xff);
+                const bool mush = op == uint8_t(fb::RevisionOp::DeltaMush);
+                const bool lattice = op == uint8_t(fb::RevisionOp::Lattice);
+                const bool external = op == uint8_t(fb::RevisionOp::External);
+                const bool smooth = op == uint8_t(fb::RevisionOp::Smooth);
+                const bool volume =
+                    op == uint8_t(fb::RevisionOp::VolumeCorrect);
+                const bool wrinkle = op == uint8_t(fb::RevisionOp::Wrinkle);
+                const bool guides =
+                    op == uint8_t(fb::RevisionOp::EmitGuidePoints);
+                const bool chunkBlend =
+                    op == uint8_t(fb::RevisionOp::BlendShape) &&
+                    RigExecFormatIsChunkBlend(
+                        _f.geometry->chains[size_t(at.first)]
+                            .revisions[size_t(at.second)]);
+                size_t samples = 0;
+                if (chunkBlend)
+                    for (const auto &channel :
+                         _f.geometry->chains[size_t(at.first)]
+                             .revisions[size_t(at.second)]
+                             .blendChannels)
+                        samples += channel.samples.size();
+                const bool blend =
+                    chunkBlend && _Has(_f.geometry->chains[size_t(at.first)]
+                                           .revisions[size_t(at.second)]
+                                           .blendChannels,
+                                       lookup->part);
+                const bool sample = chunkBlend && lookup->part >= 0 &&
+                                    size_t(lookup->part) < samples;
+                if ((lookup->read > 2 && lookup->read < 13 && !mush &&
+                     !(lookup->read == 3 && wrinkle)) ||
+                    (lookup->read == 13 && !mush && !lattice && !external &&
+                     !chunkBlend && !volume && !wrinkle) ||
+                    (lookup->read > 13 && lookup->read < 16 && !lattice) ||
+                    (lookup->read == 16 && !blend) ||
+                    ((lookup->read == 17 || lookup->read == 18) && !mush &&
+                     !smooth && !wrinkle) ||
+                    ((lookup->read == 19 || lookup->read == 20) && !mush) ||
+                    (lookup->read > 20 && lookup->read <= 30 && !lattice) ||
+                    (lookup->read > 30 && lookup->read < 60 && !sample) ||
+                    (lookup->read >= 60 && lookup->read <= 62 && !wrinkle) ||
+                    (lookup->read == 63 && !guides) || lookup->read > 63)
+                    return _Bad("op_graph.lookups: a revision input lookup "
+                                "reads a revision of another operation");
+                continue;
+            }
+            if (lookup && lookup->source == 80) {
+                const auto &geometry = _f.geometry;
+                bool holds = false;
+                if (geometry && _Has(geometry->revisionIndex, lookup->object)) {
+                    const auto &at = geometry->revisionIndex[lookup->object];
+                    if (_Has(geometry->chains, at.first) &&
+                        _Has(geometry->chains[size_t(at.first)].revisions,
+                             at.second)) {
+                        const auto &revision =
+                            geometry->chains[size_t(at.first)]
+                                .revisions[size_t(at.second)];
+                        holds =
+                            revision.op == uint8_t(fb::RevisionOp::External) &&
+                            revision.rangeRole && !lookup->read &&
+                            _Has(revision.leafSites, lookup->part);
+                    }
+                }
+                if (!holds)
+                    return _Bad("op_graph.lookups: an external input lookup "
+                                "reads no declared input of a plugin "
+                                "revision");
+                continue;
+            }
+            if (lookup && lookup->source == 11)
+                continue;
+            if (lookup && lookup->source == 81) {
+                if (lookup->part < 0 ||
+                    uint64_t(lookup->object) + uint64_t(lookup->part) >
+                        _f.opGraph->lookups.size())
+                    return _Bad("op_graph.lookups: a joined lookup reads "
+                                "nothing the file holds");
+                continue;
+            }
+            if (lookup && lookup->source >= 5 && lookup->source <= 9) {
+                using D = fb::SlotDomain;
+                const auto &lookups = _f.opGraph->lookups;
+                const bool listed = lookup->source == 5 || lookup->source == 9;
+                bool holds =
+                    listed ? lookup->part >= (lookup->source == 5 ? 0 : 1) &&
+                                 uint64_t(lookup->object) +
+                                         uint64_t(lookup->part) <=
+                                     lookups.size()
+                    : lookup->source == 6
+                        ? (lookup->part == 0 || lookup->part == 1) &&
+                              _GraphValueSlot(uint32_t(D::FinalMatrix),
+                                              lookup->object)
+                        : _GraphValueSlot(uint32_t(lookup->source == 7
+                                                       ? D::FrameMatrix
+                                                       : D::ConstraintDelta),
+                                          lookup->object);
+                for (int32_t e = 0;
+                     holds && lookup->source == 9 && e < lookup->part; ++e) {
+                    const auto &candidate = lookups[lookup->object + size_t(e)];
+                    holds =
+                        candidate &&
+                        ((candidate->source >= 6 && candidate->source <= 8) ||
+                         candidate->source == 11);
+                }
+                if (!holds)
+                    return _Bad("op_graph.lookups: a matrix or list lookup "
+                                "reads nothing the file holds");
+                continue;
+            }
+            if (!lookup || lookup->source != 0 ||
+                !_Has(_f.propertyChains, lookup->object) || lookup->read > 8 ||
+                (lookup->read != 0 &&
+                 !_Has(_f.propertyChains[lookup->object].revisions,
+                       lookup->part)))
+                return _Bad("op_graph.lookups: a lookup reads nothing the "
+                            "file holds");
+        }
+        return true;
+    }
+
     bool _Run()
     {
         return _Root() && _Paths() && _Values() && _Pools() && _Slots() &&
-               _SlotMeta() && _Constants() && _Steps() && _Cones() && _Pose() &&
-               _Geometry() && _LayoutValues() && _PhaseBindings() &&
-               _PropertyChains() && _CrossDomainTables() &&
+               _SlotMeta() && _Constants() && _PropertyNodes() && _Steps() &&
+               _Cones() && _Pose() && _Geometry() && _LayoutValues() &&
+               _PhaseBindings() && _PropertyChains() && _CrossDomainTables() &&
                _ConsumerLeafSites() && _WeightFieldTables() &&
                _ProviderTables() && _PoseBodyDeclarations() && _HeadChecks() &&
                _StepGraph() && _SolverSemanticRequirements() &&
                _RequiredStageFrames() && _External() && _Overrides() &&
-               _Presentation();
+               _Presentation() && _OpGraph();
+    }
+
+    /// File.op_graph: every index in range, each node input fed by exactly
+    /// one source (a node, a constant, or a rig value whose chain or joint
+    /// exists), outputs named once, the nodes acyclic, each
+    /// chain's bounds a cut of its point chain into groups, and op steps
+    /// only with op nodes. What only the op registry knows (ports, types,
+    /// payloads, the chains' membership) the runtime checks at Open.
+    bool _OpGraph()
+    {
+        const fb::RigExecWireOpGraph *graph = _f.opGraph.get();
+        const fb::RigExecWireManifest *manifest = _f.manifest.get();
+        const size_t coreOps = manifest ? manifest->coreOps.size() : 0;
+        const size_t coreTypes = manifest ? manifest->coreTypes.size() : 0;
+        for (size_t i = 0; i < _f.steps.size(); ++i) {
+            const fb::StepKind kind = _f.steps[i].kind;
+            if (kind == fb::StepKind::ReservedOpGraph)
+                return _Bad(_StepName(i) + ": the retired OpGraph step");
+            if (kind == fb::StepKind::ReservedPropertyRevision)
+                return _Bad(_StepName(i) +
+                            ": the retired PropertyRevision step");
+            if (kind == fb::StepKind::ReservedVolumePlacements)
+                return _Bad(_StepName(i) +
+                            ": the retired VolumePlacements step");
+            if (kind == fb::StepKind::ReservedWeightPacket)
+                return _Bad(_StepName(i) + ": the retired WeightPacket step");
+            if (kind == fb::StepKind::ReservedWeightField)
+                return _Bad(_StepName(i) + ": the retired WeightField step");
+            if (kind == fb::StepKind::ReservedProviderMatrix)
+                return _Bad(_StepName(i) + ": the retired ProviderMatrix step");
+            if (kind == fb::StepKind::ReservedFrameMatrix)
+                return _Bad(_StepName(i) + ": the retired FrameMatrix step");
+            if (kind == fb::StepKind::ReservedSolve)
+                return _Bad(_StepName(i) + ": the retired Solve step");
+            if (kind == fb::StepKind::ReservedSolverCommit)
+                return _Bad(_StepName(i) + ": the retired SolverCommit step");
+            if (kind == fb::StepKind::ReservedCommitDelta)
+                return _Bad(_StepName(i) + ": the retired CommitDelta step");
+            if (kind == fb::StepKind::ReservedPropagateChunk)
+                return _Bad(_StepName(i) + ": the retired PropagateChunk step");
+            if (kind == fb::StepKind::ReservedCommitApply)
+                return _Bad(_StepName(i) + ": the retired CommitApply step");
+            if (kind == fb::StepKind::ReservedProviderRefresh)
+                return _Bad(_StepName(i) +
+                            ": the retired ProviderRefresh step");
+            if (kind == fb::StepKind::ReservedSpaceExpression)
+                return _Bad(_StepName(i) +
+                            ": the retired SpaceExpression step");
+            if (kind == fb::StepKind::ReservedAvarInputs)
+                return _Bad(_StepName(i) + ": the retired AvarInputs step");
+            if (kind == fb::StepKind::ReservedSpaceCheckpoint)
+                return _Bad(_StepName(i) +
+                            ": the retired SpaceCheckpoint step");
+            if (kind == fb::StepKind::ReservedPoseInterpolator)
+                return _Bad(_StepName(i) +
+                            ": the retired PoseInterpolator step");
+            if (kind == fb::StepKind::ReservedRestCompose)
+                return _Bad(_StepName(i) + ": the retired RestCompose step");
+            if (kind == fb::StepKind::ReservedLadderCompose)
+                return _Bad(_StepName(i) + ": the retired LadderCompose step");
+            const bool op = kind == fb::StepKind::OpNode ||
+                            kind == fb::StepKind::OpChainHead ||
+                            kind == fb::StepKind::OpChainRange;
+            if (op && !graph)
+                return _Bad(_StepName(i) + ": an op step without op_graph");
+            if (!op)
+                continue;
+            if (_f.steps[i].object < 0)
+                return _Bad(_StepName(i) + ": an op step names no object");
+            const size_t object = size_t(_f.steps[i].object);
+            if (kind == fb::StepKind::OpNode ? object >= graph->nodes.size()
+                                             : object >= graph->chains.size())
+                return _Bad(_StepName(i) + ": object " + _N(object) +
+                            " out of range");
+        }
+        if (!graph) {
+            if (coreOps || coreTypes)
+                return _Bad("manifest core_ops or core_types without op_graph");
+            return true;
+        }
+        const size_t nodes = graph->nodes.size();
+        if (!nodes)
+            return _Bad("op_graph holds no nodes");
+        std::vector<std::vector<uint32_t>> after(nodes);
+        for (size_t n = 0; n < nodes; ++n) {
+            const std::string row = "op_graph.nodes[" + _N(n) + "]";
+            if (!graph->nodes[n])
+                return _Bad(row + " is missing");
+            const fb::RigExecWireOpNode &node = *graph->nodes[n];
+            if (node.op >= coreOps)
+                return _Bad(row + ": op " + _N(node.op) +
+                            " is past manifest core_ops");
+            for (size_t k = 0; k < node.inputs.size(); ++k) {
+                const std::string at = row + ".inputs[" + _N(k) + "]";
+                if (!node.inputs[k])
+                    return _Bad(at + " is missing");
+                const fb::RigExecWireOpNodeInput &input = *node.inputs[k];
+                if ((input.node >= 0) == (input.host >= 0))
+                    return _Bad(at + ": names other than one of a node and "
+                                     "a rig value or constant");
+                if (input.host != 3 && !input.constant.empty())
+                    return _Bad(at + ": holds a constant it does not read");
+                if (input.node >= 0) {
+                    if (size_t(input.node) >= nodes)
+                        return _Bad(at + ": node " + _N(size_t(input.node)) +
+                                    " out of range");
+                    after[size_t(input.node)].push_back(uint32_t(n));
+                } else if (input.host == 3) {
+                    continue;
+                } else if (input.host == 0) {
+                    if (input.object >= _chains)
+                        return _Bad(at + ": chain " + _N(input.object) +
+                                    " out of range");
+                } else if (input.host == 1 || input.host == 2) {
+                    if (input.object >= _slots)
+                        return _Bad(at + ": slot " + _N(input.object) +
+                                    " out of range");
+                } else if (input.host == 4) {
+                    if (input.object >= graph->lookups.size())
+                        return _Bad(at + ": lookup " + _N(input.object) +
+                                    " out of range");
+                } else {
+                    return _Bad(at + ": rig value " + _N(size_t(input.host)) +
+                                " is not a point chain, a matrix, a lookup "
+                                "or a constant");
+                }
+            }
+        }
+        for (size_t k = 0; k < graph->order.size(); ++k) {
+            const auto &pair = graph->order[k];
+            if (pair.first < 0 || size_t(pair.first) >= nodes ||
+                pair.second < 0 || size_t(pair.second) >= nodes ||
+                pair.first == pair.second)
+                return _Bad("op_graph.order[" + _N(k) +
+                            "] names no pair of distinct nodes");
+            after[size_t(pair.first)].push_back(uint32_t(pair.second));
+        }
+        std::vector<uint32_t> waiting(nodes, 0), ready;
+        for (const auto &next : after)
+            for (const uint32_t n : next)
+                ++waiting[n];
+        for (size_t n = 0; n < nodes; ++n)
+            if (!waiting[n])
+                ready.push_back(uint32_t(n));
+        for (size_t at = 0; at < ready.size(); ++at)
+            for (const uint32_t n : after[ready[at]])
+                if (--waiting[n] == 0)
+                    ready.push_back(n);
+        if (ready.size() != nodes)
+            return _Bad("op_graph: its nodes run in a cycle");
+        std::set<std::string> names;
+        for (size_t o = 0; o < graph->outputs.size(); ++o) {
+            const std::string row = "op_graph.outputs[" + _N(o) + "]";
+            if (!graph->outputs[o])
+                return _Bad(row + " is missing");
+            const fb::RigExecWireOpGraphOutput &output = *graph->outputs[o];
+            if (output.node >= nodes)
+                return _Bad(row + ": node " + _N(output.node) +
+                            " out of range");
+            if (output.type >= coreTypes)
+                return _Bad(row + ": type " + _N(output.type) +
+                            " is past manifest core_types");
+            if (output.name.empty() || !names.insert(output.name).second)
+                return _Bad(row + ": name is empty or repeated");
+        }
+        for (size_t c = 0; c < graph->chains.size(); ++c) {
+            const std::string row = "op_graph.chains[" + _N(c) + "]";
+            if (!graph->chains[c])
+                return _Bad(row + " is missing");
+            const fb::RigExecWireOpChain &chain = *graph->chains[c];
+            if (chain.pointChain >= _chains)
+                return _Bad(row + ": point chain " + _N(chain.pointChain) +
+                            " out of range");
+            std::vector<int> cut;
+            for (const auto &revision :
+                 _f.geometry->chains[chain.pointChain].revisions)
+                if (RigExecFormatIsRangeRevision(revision)) {
+                    for (const auto &chunk : revision.chunks)
+                        cut.push_back(chunk.begin);
+                    cut.push_back(revision.chunks.back().end);
+                    break;
+                }
+            if (chain.bounds != cut)
+                return _Bad(row +
+                            ": its bounds are not the vertex groups of "
+                            "point chain " +
+                            _N(chain.pointChain));
+            if (cut.size() - 1 > kMaxOpChainGroups)
+                return _Bad(row + ": " + _N(cut.size() - 1) +
+                            " vertex groups, past the " +
+                            _N(kMaxOpChainGroups) + " a range chain runs in");
+            for (const uint32_t node : chain.members)
+                if (node >= graph->nodes.size())
+                    return _Bad(row + ": member " + _N(node) + " out of range");
+            if (!chain.writes.empty() &&
+                chain.writes.size() !=
+                    chain.members.size() * (chain.bounds.size() - 1))
+                return _Bad(row + ": writes holds " + _N(chain.writes.size()) +
+                            " flags for " + _N(chain.members.size()) +
+                            " members");
+        }
+        return _OpLookupOwners();
+    }
+
+    /// Each node's lookups read only what the node runs for, which its
+    /// step's declared reads cover: a property node its own chain revision,
+    /// a packet node its own weight object and its provider's base frame, a
+    /// placement node one pose version, and a field node its own field and
+    /// its consumer's entering points, a provider matrix node its own
+    /// slot's rest frame, a frame record's node its record's rest frame,
+    /// pose version and commit gates, a provider refresh node its own
+    /// refresh's frames, prior constraint gates and blocking parents, a
+    /// revision lookup the revision its node stores, a commit node its own
+    /// commit's versions and candidates, and a provider operation's node its
+    /// own operation's inputs. A List lookup's elements are its node's
+    /// lookups. A ChainVersion lookup on any other node is a range chain
+    /// member's group read, which Open checks.
+    bool _OpLookupOwners()
+    {
+        const fb::RigExecWireOpGraph &graph = *_f.opGraph;
+        std::vector<int64_t> stores(graph.nodes.size(), -1);
+        for (const auto &output : graph.hostOutputs)
+            if (output && output->target == 4 &&
+                output->node < graph.nodes.size())
+                stores[output->node] = int64_t(output->object);
+        // A node feeding a storing node reads that node's revision too: a
+        // plugin mover's op feeds the MoverBlend that stores it.
+        for (size_t m = 0; m < graph.nodes.size(); ++m)
+            if (stores[m] >= 0)
+                for (const auto &input : graph.nodes[m]->inputs)
+                    if (input->node >= 0 &&
+                        size_t(input->node) < graph.nodes.size() &&
+                        stores[size_t(input->node)] < 0)
+                        stores[size_t(input->node)] = stores[m];
+        for (size_t n = 0; n < graph.nodes.size(); ++n) {
+            size_t poses = 0;
+            std::vector<uint32_t> owned;
+            for (const auto &input : graph.nodes[n]->inputs) {
+                if (input->host != 4)
+                    continue;
+                const fb::RigExecWireOpLookup &entry =
+                    *graph.lookups[input->object];
+                if (entry.source != 5) {
+                    owned.push_back(input->object);
+                    continue;
+                }
+                for (int32_t e = 0; e < entry.part; ++e)
+                    owned.push_back(entry.object + uint32_t(e));
+            }
+            for (const uint32_t at : owned) {
+                const fb::RigExecWireOpLookup &lookup = *graph.lookups[at];
+                const auto bad = [&](const char *why) {
+                    return _Bad("op_graph.nodes[" + _N(n) + "]: lookup " +
+                                _N(at) + why);
+                };
+                const int64_t refresh = _refreshOf[n];
+                if (refresh >= 0 && _f.pose &&
+                    _Has(_f.pose->providerRefreshes, refresh)) {
+                    const auto &r = _f.pose->providerRefreshes[size_t(refresh)];
+                    bool owns = false;
+                    if (lookup.source == 1) {
+                        owns = lookup.object ==
+                               (lookup.part ? r.baseRead : r.finRead);
+                        for (const auto &carry : r.carries)
+                            owns = owns || lookup.object ==
+                                               (lookup.part ? carry.baseRead
+                                                            : carry.finRead);
+                    } else if (lookup.source == 21) {
+                        for (const auto &prior : r.priorConstraints)
+                            owns =
+                                owns || (lookup.read == 3 &&
+                                         lookup.object == prior.first &&
+                                         lookup.part == int32_t(prior.second));
+                    } else if (lookup.source == 22) {
+                        owns = int64_t(lookup.object) == refresh;
+                    } else if (lookup.source == 23) {
+                        for (const auto &carry : r.carries)
+                            owns =
+                                owns || std::find(carry.blockingSlots.begin(),
+                                                  carry.blockingSlots.end(),
+                                                  int32_t(lookup.object)) !=
+                                            carry.blockingSlots.end();
+                    }
+                    if (!owns)
+                        return bad(" reads what its node's provider refresh "
+                                   "does not");
+                    continue;
+                }
+                if (lookup.source == 22 || lookup.source == 23)
+                    return bad(" reads a refresh input on a node that "
+                               "refreshes no provider");
+                if (lookup.source == 24) {
+                    if (_providerOpOf[n] != int64_t(lookup.object))
+                        return bad(" reads the inputs of a provider operation "
+                                   "its node does not run");
+                    continue;
+                }
+                if (lookup.source == 25) {
+                    if (_answerOf[n] != int64_t(lookup.object))
+                        return bad(" reads the candidates of a provider value "
+                                   "its node does not answer");
+                    continue;
+                }
+                const int64_t object = int64_t(lookup.object);
+                const int64_t record = _frameRecordOf[n];
+                const fb::FrameRecord *frame =
+                    record >= 0 && _f.pose &&
+                            _Has(_f.pose->frameRecords, record)
+                        ? &_f.pose->frameRecords[size_t(record)]
+                        : nullptr;
+                if (lookup.source == 20) {
+                    if (_providerSlotOf[n] >= 0
+                            ? object != _providerSlotOf[n]
+                            : !frame || lookup.object != frame->slot())
+                        return bad(" reads a rest frame of a slot its node "
+                                   "does not store");
+                    continue;
+                }
+                if (lookup.source == 21) {
+                    if (!frame || lookup.object != frame->commit())
+                        return bad(" reads the gates of a commit its node's "
+                                   "record does not name");
+                    continue;
+                }
+                if (lookup.source == 60) {
+                    if (_solverOf[n] != object)
+                        return bad(" reads a solver its node does not run");
+                    continue;
+                }
+                if (lookup.source == 1 && _solverOf[n] >= 0) {
+                    const auto &solver = _f.pose->solvers[size_t(_solverOf[n])];
+                    const auto reads = [&](int32_t slot, uint32_t version) {
+                        return slot >= 0 && lookup.object == version;
+                    };
+                    if (lookup.part != 0 ||
+                        !(reads(solver.start, solver.startRead) ||
+                          reads(solver.root, solver.rootRead) ||
+                          reads(solver.mid, solver.midRead) ||
+                          reads(solver.end, solver.endRead) ||
+                          reads(solver.pole, solver.poleRead)))
+                        return bad(" reads a pose frame its solver does "
+                                   "not read");
+                    continue;
+                }
+                if (lookup.source == 1 && _providerSlotOf[n] >= 0)
+                    continue;
+                if (lookup.source == 1 && _constraintSolve[n] >= 0) {
+                    if (lookup.part != 0 ||
+                        lookup.object !=
+                            _f.pose->commits[size_t(_constraintSolve[n])]
+                                .targetRead)
+                        return bad(" reads a pose frame other than its "
+                                   "constraint's target");
+                    continue;
+                }
+                if (_ConstraintLookup(lookup.source)) {
+                    const bool present = lookup.source == 35 &&
+                                         lookup.read == 32 &&
+                                         _commitNode[n] == object;
+                    if (_constraintNode[n] != object && !present)
+                        return bad(" reads a constraint its node does not "
+                                   "solve");
+                    continue;
+                }
+                if (lookup.source == 1 && record >= 0) {
+                    if (!frame || lookup.part != 0 ||
+                        lookup.object != frame->version())
+                        return bad(" reads a pose frame other than its "
+                                   "record's version");
+                    continue;
+                }
+                if (lookup.source == 0) {
+                    const size_t c = _propertyChainOf[n];
+                    if (c == kNoProperty || lookup.object != c ||
+                        (lookup.read == 0
+                             ? _propertyPartOf[n] != 1
+                             : lookup.part != int32_t(_propertyPartOf[n]) - 1))
+                        return bad(" reads a property revision its node does "
+                                   "not run");
+                } else if (lookup.source == 1) {
+                    ++poses;
+                    if (lookup.object >= (lookup.part ? _basePool : _finPool))
+                        return bad(" reads no pose frame of the program");
+                    if (_placementSlot[n] >= 0)
+                        continue;
+                    const int64_t w = _packetObject[n];
+                    const int32_t slot =
+                        w >= 0 && _f.geometry &&
+                                _Has(_f.geometry->weightObjects, w)
+                            ? _f.geometry->weightObjects[size_t(w)].providerSlot
+                            : -1;
+                    if (slot < 0 || size_t(slot) >= _bodyBaseLast.size() ||
+                        lookup.part != 1 ||
+                        lookup.object != _bodyBaseLast[size_t(slot)])
+                        return bad(" reads a pose frame its node's step does "
+                                   "not read");
+                } else if (lookup.source == 2) {
+                    if (_packetObject[n] != object)
+                        return bad(" reads a weight its node does not build");
+                } else if (lookup.source == 3) {
+                    if (_fieldNode[n] < 0)
+                        continue;
+                    const auto &field =
+                        _f.geometry->weightFields[size_t(_fieldNode[n])];
+                    if (field.form != fb::WeightFieldForm::Revision ||
+                        !_Has(_f.geometry->revisionIndex, field.consumer) ||
+                        _f.geometry->revisionIndex[size_t(field.consumer)]
+                                .first != int32_t(lookup.object) ||
+                        _f.geometry->revisionIndex[size_t(field.consumer)]
+                                .second != lookup.part)
+                        return bad(" reads points other than those entering "
+                                   "its field's consumer");
+                } else if (lookup.source == 4 && _fieldNode[n] != object) {
+                    return bad(" reads a field its node does not weigh");
+                } else if ((lookup.source == 10 || lookup.source == 80) &&
+                           stores[n] != object) {
+                    return bad(" reads the inputs of a revision its node does "
+                               "not store");
+                } else if (lookup.source == 30 && _commitNode[n] != object) {
+                    return bad(" reads a commit its node does not write "
+                               "back");
+                } else if (lookup.source == 40 && _avarNode[n] != object) {
+                    return bad(" reads the avar bindings of a slot its node "
+                               "does not store");
+                } else if (lookup.source == 41 &&
+                           _checkpointNode[n] != object) {
+                    return bad(" reads the inputs of a checkpoint its node "
+                               "does not store");
+                } else if (lookup.source == 42 &&
+                           _interpolatorNode[n] != object) {
+                    return bad(" reads the inputs of a pose interpolator its "
+                               "node does not store");
+                } else if (lookup.source == 43 && _restNode[n] != object) {
+                    return bad(" reads the rest inputs of a compose group its "
+                               "node does not store");
+                } else if (lookup.source == 44 && _ladderNode[n] != object) {
+                    return bad(" reads the ladder inputs of a compose group "
+                               "its node does not store");
+                }
+            }
+            if (_placementSlot[n] >= 0 && poses != 1)
+                return _Bad("op_graph.nodes[" + _N(n) +
+                            "]: places a volume "
+                            "from " +
+                            _N(poses) + " pose version lookups");
+        }
+        return true;
     }
 
     bool _Bad(std::string what)
@@ -770,30 +2218,34 @@ private:
                 if (found == sites.end())
                     continue;
                 bool eligible = false;
-                if (step.kind == fb::StepKind::RestCompose &&
-                    size_t(step.object) < _f.pose->composeGroups.size()) {
+                if (const int64_t restGroup = _RestGroupOf(step);
+                    restGroup >= 0 &&
+                    size_t(restGroup) < _f.pose->composeGroups.size()) {
                     const auto &group =
-                        _f.pose->composeGroups[size_t(step.object)];
+                        _f.pose->composeGroups[size_t(restGroup)];
                     if (group.begin >= 0 && group.end >= group.begin) {
                         const auto at = found->second.rests.lower_bound(
                             size_t(group.begin));
                         eligible = at != found->second.rests.end() &&
                                    *at < size_t(group.end);
                     }
-                } else if (step.kind == fb::StepKind::LadderCompose &&
-                           size_t(step.object) <
+                } else if (const int64_t ladderGroup = _LadderGroupOf(step);
+                           ladderGroup >= 0 &&
+                           size_t(ladderGroup) <
                                _f.pose->composeGroups.size()) {
                     const auto &group =
-                        _f.pose->composeGroups[size_t(step.object)];
+                        _f.pose->composeGroups[size_t(ladderGroup)];
                     if (group.begin >= 0 && group.end >= group.begin) {
                         const auto at = found->second.signs.lower_bound(
                             size_t(group.begin));
                         eligible = at != found->second.signs.end() &&
                                    *at < size_t(group.end);
                     }
-                } else if (step.kind == fb::StepKind::Constraint &&
-                           size_t(step.object) < _f.pose->walkSteps.size()) {
-                    const auto &walk = _f.pose->walkSteps[size_t(step.object)];
+                } else if (_ConstraintOf(step, true) >= 0 &&
+                           size_t(_ConstraintOf(step, true)) <
+                               _f.pose->walkSteps.size()) {
+                    const auto &walk =
+                        _f.pose->walkSteps[size_t(_ConstraintOf(step, true))];
                     eligible =
                         !walk.solverBatch && walk.index >= 0 &&
                         size_t(walk.index) < _f.pose->constraints.size() &&
@@ -1144,10 +2596,8 @@ private:
             ++_stepBacked;
         }
         _overrideCount = _f.pose->overrideCount;
-        // A windowed op names a step, and reads at most the longest window
-        // any windowed operation may ask for. Older formats hold none.
-        if (_f.formatVersion < 25 && !_f.windowedOps.empty())
-            return _Bad("windowed_ops in a format older than 25");
+        // A windowed op names a step, and reads at most the longest window any
+        // windowed operation may ask for.
         for (size_t w = 0; w < _f.windowedOps.size(); ++w) {
             const auto &op = _f.windowedOps[w];
             if (op.step < 0 || size_t(op.step) >= _steps)
@@ -1157,10 +2607,8 @@ private:
                 return _Bad(_At("windowed_ops", "frames", long(w)) +
                             ": out of range");
         }
-        // Format 31 adds published scalar primvars: they name distinct float
-        // or double property chains; older formats hold none.
-        if (_f.formatVersion < 31 && !_f.scalarPrimvarChains.empty())
-            return _Bad("scalar_primvar_chains in a format older than 31");
+        // Published scalar primvars name distinct float or double property
+        // chains.
         {
             std::vector<char> seen(_f.propertyChains.size(), 0);
             for (size_t k = 0; k < _f.scalarPrimvarChains.size(); ++k) {
@@ -1652,29 +3100,215 @@ private:
                ")";
     }
 
-    /// One VolumePlacements step places one volume: part 1, its object a
-    /// volume slot (no_scale_avars), its one write that slot of
-    /// WeightFrames, and no other step placing the same slot. \p placer
-    /// maps each slot to the step that places it, or -1.
+    /// The volume slot the VolumePlacement node op step \p step runs
+    /// places, or -1 for any other step.
+    int64_t _PlacementSlotOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _placementSlot.size()
+                   ? _placementSlot[size_t(step.object)]
+                   : -1;
+    }
+
+    /// The weight object whose packet the op step \p step builds, or -1 for
+    /// any other step.
+    int64_t _FieldStoredBy(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _fieldStored.size()
+                   ? _fieldStored[size_t(step.object)]
+                   : -1;
+    }
+
+    /// The weight field the op step \p step weighs part of, or -1 for any
+    /// other step.
+    int64_t _FieldOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _fieldNode.size()
+                   ? _fieldNode[size_t(step.object)]
+                   : -1;
+    }
+
+    /// The frame record whose matrix the op step \p step stores, or -1 for
+    /// any other step.
+    int64_t _FrameRecordOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _frameRecordOf.size()
+                   ? _frameRecordOf[size_t(step.object)]
+                   : -1;
+    }
+
+    /// The provider refresh the op step \p step runs, or -1 for any other
+    /// step.
+    int64_t _RefreshOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _refreshOf.size()
+                   ? _refreshOf[size_t(step.object)]
+                   : -1;
+    }
+
+    /// The compose group whose rest the op step \p step stores, or -1 for
+    /// any other step.
+    int64_t _RestGroupOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _restNode.size()
+                   ? _restNode[size_t(step.object)]
+                   : -1;
+    }
+
+    /// The compose group whose first pose the op step \p step stores, or -1
+    /// for any other step.
+    int64_t _ComposeGroupOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _composeNode.size()
+                   ? _composeNode[size_t(step.object)]
+                   : -1;
+    }
+
+    /// The compose group whose ladder the op step \p step stores, or -1 for
+    /// any other step.
+    int64_t _LadderGroupOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _ladderNode.size()
+                   ? _ladderNode[size_t(step.object)]
+                   : -1;
+    }
+
+    /// The pose interpolator whose weights the op step \p step stores, or -1
+    /// for any other step.
+    int64_t _InterpolatorOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _interpolatorNode.size()
+                   ? _interpolatorNode[size_t(step.object)]
+                   : -1;
+    }
+
+    /// The space checkpoint whose switch frame the op step \p step stores,
+    /// or -1 for any other step.
+    int64_t _CheckpointOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _checkpointNode.size()
+                   ? _checkpointNode[size_t(step.object)]
+                   : -1;
+    }
+
+    /// The slot whose avars the op step \p step stores, or -1 for any
+    /// other step.
+    int64_t _AvarSlotOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _avarNode.size()
+                   ? _avarNode[size_t(step.object)]
+                   : -1;
+    }
+
+    /// The provider op whose result the op step \p step stores, or -1 for
+    /// any other step.
+    /// The provider value producer whose answer the op step \p step stores,
+    /// or -1 for any other step.
+    int64_t _AnswerOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _answerOf.size()
+                   ? _answerOf[size_t(step.object)]
+                   : -1;
+    }
+
+    /// The provider program's producers, as ProviderCandidates lookups and
+    /// ProviderAnswer outputs number them.
+    eval::spaces::ProviderProducers _Producers() const
+    {
+        eval::spaces::ProviderProducers producers;
+        if (_f.providerProgram) {
+            producers.operations = _f.providerProgram->ops.size();
+            producers.sampled = _f.providerProgram->sampled.size();
+            producers.external = _f.providerProgram->externalInputs.size();
+            producers.routed = _f.providerProgram->routedInputs.size();
+        }
+        if (_f.pose)
+            producers.frames = _f.pose->providerFrameInputs.size();
+        return producers;
+    }
+
+    /// The provider value producer \p index names, or UINT64_MAX.
+    uint64_t _AnsweredValue(uint64_t index) const
+    {
+        using Producer = eval::spaces::ProviderProducer;
+        Producer part = Producer::Operation;
+        size_t row = 0;
+        if (!_Producers().Of(index, &part, &row))
+            return UINT64_MAX;
+        const auto &p = *_f.providerProgram;
+        switch (part) {
+        case Producer::Operation:
+            return p.ops[row].output;
+        case Producer::Sampled:
+            return p.sampled[row].value;
+        case Producer::External:
+            return p.externalInputs[row].value;
+        case Producer::Routed:
+            return p.routedInputs[row].value;
+        case Producer::PoseFrame:
+            return _f.pose->providerFrameInputs[row].value;
+        }
+        return UINT64_MAX;
+    }
+
+    int64_t _ProviderOpOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _providerOpOf.size()
+                   ? _providerOpOf[size_t(step.object)]
+                   : -1;
+    }
+
+    int64_t _PacketObjectOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _packetObject.size()
+                   ? _packetObject[size_t(step.object)]
+                   : -1;
+    }
+
+    /// One VolumePlacement op step places one volume: its one write that
+    /// slot of WeightFrames (WeightFramesBase for the base placement), and no
+    /// other step placing the same slot. \p placer maps each slot to the
+    /// step that places it, or -1.
     bool _VolumePlacement(size_t i, std::vector<int64_t> *placer)
     {
         const fb::RigExecWireStep &step = _f.steps[i];
-        if (step.part != 1 && step.part != 2) {
-            return _Bad(_StepName(i) +
-                        (step.part == -1
-                             ? " is the retired whole-map placement (part -1)"
-                             : " has part " + std::to_string(step.part) +
-                                   ", which is no VolumePlacements form"));
+        const uint32_t slot = uint32_t(_PlacementSlotOf(step));
+        const auto domain = _placementBase[size_t(step.object)]
+                                ? fb::SlotDomain::WeightFramesBase
+                                : fb::SlotDomain::WeightFrames;
+        const int64_t lookup = _placementLookup[size_t(step.object)];
+        if (lookup < 0 || size_t(lookup) >= _f.opGraph->lookups.size() ||
+            !_f.opGraph->lookups[size_t(lookup)] ||
+            _f.opGraph->lookups[size_t(lookup)]->source != 1) {
+            return _Bad(_StepName(i) + " places from no pose version lookup");
         }
-        const std::vector<uint8_t> &volumes = _f.constants->noScaleAvars;
-        if (!_Has(volumes, step.object) || !volumes[size_t(step.object)]) {
-            return _Bad(_StepName(i) + " places slot " +
-                        std::to_string(step.object) +
-                        ", which is no volume slot");
+        const fb::RigExecWireOpLookup &version =
+            *_f.opGraph->lookups[size_t(lookup)];
+        const auto frames =
+            version.part ? fb::SlotDomain::PoseBase : fb::SlotDomain::PoseFin;
+        if (std::none_of(step.reads.begin(), step.reads.end(),
+                         [&](const fb::SlotRange &range) {
+                             return range.domain() == frames &&
+                                    range.begin() <= version.object &&
+                                    version.object < range.end();
+                         })) {
+            return _Bad(_StepName(i) + " looks up " +
+                        fb::EnumNameSlotDomain(frames) + "[" +
+                        _N(version.object) + "], which it does not read");
         }
-        const uint32_t slot = uint32_t(step.object);
-        const auto domain = step.part == 2 ? fb::SlotDomain::WeightFramesBase
-                                           : fb::SlotDomain::WeightFrames;
         if (step.writes.size() != 1 || step.writes[0].domain() != domain ||
             step.writes[0].begin() != slot ||
             step.writes[0].end() != slot + 1) {
@@ -1688,6 +3322,111 @@ private:
                         " already does");
         }
         (*placer)[slot] = int64_t(i);
+        return true;
+    }
+
+    /// An op step storing a provider's or a frame record's matrix writes
+    /// exactly the slots it stores, and declares the pose versions and
+    /// commit tables its lookups read.
+    bool _SpaceOp(size_t i)
+    {
+        const fb::RigExecWireStep &step = _f.steps[i];
+        if (step.kind != fb::StepKind::OpNode || !_f.opGraph ||
+            !_Has(_f.opGraph->nodes, step.object) ||
+            !_f.opGraph->nodes[size_t(step.object)])
+            return true;
+        const uint64_t node = uint64_t(step.object);
+        if (const int64_t answer = _AnswerOf(step); answer >= 0) {
+            const uint64_t value = _AnsweredValue(uint64_t(answer));
+            if (step.writes.size() != 1 ||
+                step.writes[0].domain() != fb::SlotDomain::SpaceValue ||
+                step.writes[0].begin() != value ||
+                step.writes[0].end() != value + 1)
+                return _Bad(_StepName(i) + " writes other than SpaceValue[" +
+                            _N(value) + "]");
+            return true;
+        }
+        if (const int64_t op = _ProviderOpOf(step); op >= 0) {
+            const auto &provider = _f.providerProgram->ops[size_t(op)];
+            if (step.writes.size() != 1 ||
+                step.writes[0].domain() != fb::SlotDomain::SpaceValue ||
+                step.writes[0].begin() != provider.output ||
+                step.writes[0].end() != provider.output + 1)
+                return _Bad(_StepName(i) + " writes other than SpaceValue[" +
+                            _N(provider.output) + "]");
+            for (const uint64_t input : provider.inputs)
+                if (input != UINT64_MAX &&
+                    !_Declares(i, fb::SlotDomain::SpaceValue, input))
+                    return _Bad(_StepName(i) + " looks up SpaceValue[" +
+                                _N(input) + "], which it does not read");
+            return true;
+        }
+        const bool refresh = _RefreshOf(step) >= 0;
+        std::set<std::pair<fb::SlotDomain, uint32_t>> stores;
+        for (const auto &output : _f.opGraph->hostOutputs)
+            if (output && output->node == node && output->target >= 20 &&
+                output->target <= 23)
+                stores.emplace(
+                    output->target == 20   ? fb::SlotDomain::FinalMatrix
+                    : output->target == 21 ? fb::SlotDomain::BaseMatrix
+                                           : fb::SlotDomain::FrameMatrix,
+                    output->object);
+        if (stores.empty() && !refresh)
+            return true;
+        if (!refresh) {
+            uint64_t written = 0;
+            for (const fb::SlotRange &range : step.writes)
+                written += uint64_t(range.end()) - range.begin();
+            std::set<std::pair<fb::SlotDomain, uint32_t>> writes;
+            if (written == stores.size())
+                for (const fb::SlotRange &range : step.writes)
+                    for (uint32_t slot = range.begin(); slot < range.end();
+                         ++slot)
+                        writes.emplace(range.domain(), slot);
+            if (writes != stores)
+                return _Bad(_StepName(i) + " writes other than the matrices "
+                                           "it stores");
+        }
+        const auto declared = [&](const fb::RigExecWireOpLookup &lookup) {
+            uint64_t object = lookup.object;
+            if (lookup.source == 22) {
+                if (!_Has(_f.pose->providerRefreshes, lookup.object))
+                    return true;
+                const auto &refresh = _f.pose->providerRefreshes[lookup.object];
+                object = lookup.read ? refresh.currentValue : refresh.baseValue;
+            }
+            const auto domain =
+                lookup.source == 21   ? fb::SlotDomain::CommitTable
+                : lookup.source == 22 ? fb::SlotDomain::SpaceValue
+                : lookup.part         ? fb::SlotDomain::PoseBase
+                                      : fb::SlotDomain::PoseFin;
+            return !(lookup.source == 1 || lookup.source == 21 ||
+                     lookup.source == 22) ||
+                   _Declares(i, domain, object) ||
+                   _Bad(_StepName(i) + " looks up " +
+                        fb::EnumNameSlotDomain(domain) + "[" + _N(object) +
+                        "], which it does not read");
+        };
+        for (const auto &input : _f.opGraph->nodes[size_t(node)]->inputs) {
+            if (!input || input->host != 4 ||
+                !_Has(_f.opGraph->lookups, input->object) ||
+                !_f.opGraph->lookups[size_t(input->object)])
+                continue;
+            const fb::RigExecWireOpLookup &lookup =
+                *_f.opGraph->lookups[size_t(input->object)];
+            if (lookup.source != 5) {
+                if (!declared(lookup))
+                    return false;
+                continue;
+            }
+            for (int32_t e = 0; e < lookup.part; ++e) {
+                const uint64_t at = uint64_t(lookup.object) + uint64_t(e);
+                if (at < _f.opGraph->lookups.size() &&
+                    _f.opGraph->lookups[size_t(at)] &&
+                    !declared(*_f.opGraph->lookups[size_t(at)]))
+                    return false;
+            }
+        }
         return true;
     }
 
@@ -1727,15 +3466,70 @@ private:
         }
         for (size_t i = 0; i < _f.steps.size(); ++i) {
             const fb::RigExecWireStep &step = _f.steps[i];
-            if (step.kind == fb::StepKind::WeightPacket &&
-                (step.object < 0 || size_t(step.object) >= _stepBacked)) {
-                return _Bad("steps[" + _N(i) +
-                            "]: a WeightPacket step names no step-backed "
-                            "weight object");
+            if (step.kind == fb::StepKind::ReservedWeightPacket)
+                return _Bad(_StepName(i) + ": the retired WeightPacket step");
+            if (step.kind == fb::StepKind::ReservedProviderMatrix)
+                return _Bad(_StepName(i) + ": the retired ProviderMatrix step");
+            if (step.kind == fb::StepKind::ReservedFrameMatrix)
+                return _Bad(_StepName(i) + ": the retired FrameMatrix step");
+            if (step.kind == fb::StepKind::ReservedSolve)
+                return _Bad(_StepName(i) + ": the retired Solve step");
+            if (step.kind == fb::StepKind::ReservedSolverCommit)
+                return _Bad(_StepName(i) + ": the retired SolverCommit step");
+            if (step.kind == fb::StepKind::ReservedCommitDelta)
+                return _Bad(_StepName(i) + ": the retired CommitDelta step");
+            if (step.kind == fb::StepKind::ReservedPropagateChunk)
+                return _Bad(_StepName(i) + ": the retired PropagateChunk step");
+            if (step.kind == fb::StepKind::ReservedCommitApply)
+                return _Bad(_StepName(i) + ": the retired CommitApply step");
+            if (step.kind == fb::StepKind::ReservedProviderRefresh)
+                return _Bad(_StepName(i) +
+                            ": the retired ProviderRefresh step");
+            if (step.kind == fb::StepKind::ReservedConstraint)
+                return _Bad(_StepName(i) + ": the retired Constraint step");
+            if (step.kind == fb::StepKind::ReservedSpaceExpression)
+                return _Bad(_StepName(i) +
+                            ": the retired SpaceExpression step");
+            if (step.kind == fb::StepKind::ReservedAvarInputs)
+                return _Bad(_StepName(i) + ": the retired AvarInputs step");
+            if (step.kind == fb::StepKind::ReservedSpaceCheckpoint)
+                return _Bad(_StepName(i) +
+                            ": the retired SpaceCheckpoint step");
+            if (step.kind == fb::StepKind::ReservedPoseInterpolator)
+                return _Bad(_StepName(i) +
+                            ": the retired PoseInterpolator step");
+            if (step.kind == fb::StepKind::ReservedRestCompose)
+                return _Bad(_StepName(i) + ": the retired RestCompose step");
+            if (step.kind == fb::StepKind::ReservedLadderCompose)
+                return _Bad(_StepName(i) + ": the retired LadderCompose step");
+            if (!_SpaceOp(i))
+                return false;
+            if (const int64_t object = _PacketObjectOf(step); object >= 0) {
+                size_t packets = 0;
+                bool others = false;
+                for (const fb::SlotRange &write : step.writes) {
+                    if (write.domain() == fb::SlotDomain::WeightPacket &&
+                        write.begin() == uint32_t(object) &&
+                        write.end() == uint32_t(object) + 1)
+                        ++packets;
+                    else
+                        others =
+                            others || write.domain() != fb::SlotDomain::OpValue;
+                }
+                if (packets != 1 || others)
+                    return _Bad(_StepName(i) +
+                                " writes other than the WeightPacket of "
+                                "weight object " +
+                                _N(object));
+                continue;
             }
-            if (step.kind == fb::StepKind::VolumePlacements) {
-                if (!_VolumePlacement(i,
-                                      step.part == 2 ? &basePlacer : &placer)) {
+            if (step.kind == fb::StepKind::ReservedVolumePlacements)
+                return _Bad(_StepName(i) +
+                            ": the retired VolumePlacements step");
+            if (_PlacementSlotOf(step) >= 0) {
+                if (!_VolumePlacement(i, _placementBase[size_t(step.object)]
+                                             ? &basePlacer
+                                             : &placer)) {
                     return false;
                 }
                 continue;
@@ -1745,7 +3539,7 @@ private:
                     range.domain() == fb::SlotDomain::WeightFramesBase) {
                     return _Bad(_StepName(i) +
                                 " writes WeightFrames, which only a "
-                                "VolumePlacements step writes");
+                                "VolumePlacement op step writes");
                 }
             }
         }
@@ -1761,7 +3555,7 @@ private:
                 return _Bad(
                     "volume slot " + _N(slot) + " (" +
                     RigExecFormatPathText(_f, _f.slotMeta->paths[slot]) +
-                    ") has no VolumePlacements step");
+                    ") has no VolumePlacement op step");
             }
         }
         return true;
@@ -2017,9 +3811,8 @@ private:
             const auto &solver = solvers[i];
             if (!solver.solveDescriptorKey.empty()) {
                 const std::string prefix =
-                    RigExecFormatPathText(_f, solver.path) +
-                    "/category:" + std::to_string(int(fb::StepKind::Solve)) +
-                    "/";
+                    RigExecFormatPathText(_f, solver.path) + "/category:" +
+                    std::to_string(int(fb::StepKind::ReservedSolve)) + "/";
                 if (solver.solveDescriptorKey.compare(0, prefix.size(),
                                                       prefix) != 0 ||
                     !solverKeys.emplace(solver.solveDescriptorKey, i).second)
@@ -2029,15 +3822,16 @@ private:
         }
         for (size_t step = 0; step < _f.steps.size(); ++step) {
             const auto &body = _f.steps[step];
-            if (body.kind != fb::StepKind::Solve) {
+            const int64_t solve = _SolveOf(body);
+            if (solve < 0) {
                 if (!body.semanticPredecessorKeys.empty())
                     return _Bad(_StepName(step) +
                                 ": semantic prerequisites on a non-Solve body");
                 continue;
             }
-            if (!_Has(solvers, body.object))
+            if (!_Has(solvers, solve))
                 return _Bad(_StepName(step) + ": invalid semantic Solve owner");
-            const size_t owner = size_t(body.object);
+            const size_t owner = size_t(solve);
             if (active[owner] >= 0)
                 return _Bad(_StepName(step) +
                             ": duplicate semantic Solve owner");
@@ -2425,32 +4219,6 @@ private:
                         if (!validate(site, row + ".leaf_sites[" + _N(k) + "]"))
                             return false;
                         std::vector<size_t> siteOwners = owners;
-                        if (!isLayout && !derived &&
-                            RigExecFormatIsChunkBlend(rev)) {
-                            for (size_t ch = 0; ch < rev.blendChannels.size();
-                                 ++ch) {
-                                if (site.path !=
-                                    rev.blendChannels[ch].weightPath)
-                                    continue;
-                                siteOwners.clear();
-                                for (size_t step = 0; step < _f.steps.size();
-                                     ++step) {
-                                    const auto &body = _f.steps[step];
-                                    if (body.kind !=
-                                            fb::StepKind::RevisionChunk ||
-                                        body.object != ordinary ||
-                                        !_Has(rev.chunks, body.part))
-                                        continue;
-                                    const auto &key =
-                                        rev.chunks[size_t(body.part)].key;
-                                    if (std::binary_search(key.begin(),
-                                                           key.end(),
-                                                           int32_t(ch)))
-                                        siteOwners.push_back(step);
-                                }
-                                break;
-                            }
-                        }
                         std::vector<int32_t> versions;
                         if (site.exactVersion >= 0)
                             versions.push_back(site.exactVersion);
@@ -2541,26 +4309,6 @@ private:
                                     row +
                                     ": sparse blend source requires raw "
                                     "Default head or missing-source fallback");
-                            if (RigExecFormatIsChunkBlend(rev)) {
-                                if (source &&
-                                    !_PrivateConstant(read.walk.front()))
-                                    return _Bad(row +
-                                                ": chunk blend layout requires "
-                                                "private, unanimated inputs");
-                                if (tag == InputTag::IntArray) {
-                                    const auto &value =
-                                        _f.values
-                                            [source
-                                                 ? _f.inputs[read.walk.front()]
-                                                       .value()
-                                                 : read.constant];
-                                    if (_f.intArrays[value.array].v !=
-                                        sample.indices)
-                                        return _Bad(
-                                            row + ": chunk blend indices "
-                                                  "differ from pinned source");
-                                }
-                            }
                             if (missing) {
                                 const auto &fallback = _f.values[read.constant];
                                 const bool empty =
@@ -2649,12 +4397,6 @@ private:
             width = _f.pose->commits.size();
             break;
         case D::CommitStaging:
-            for (const auto &commit : _f.pose->commits)
-                if (commit.stagingBase >= 0 &&
-                    slot >= uint32_t(commit.stagingBase) &&
-                    uint64_t(slot) - uint32_t(commit.stagingBase) <
-                        commit.propagate.size())
-                    return true;
             return false;
         case D::ConstraintDelta:
             width = _f.geometry->deltaBasePaths.size();
@@ -2684,6 +4426,9 @@ private:
                         uint64_t(_f.geometry->revisionChunkCount[i]))
                     return true;
             return false;
+        case D::OpValue:
+        case D::OpGroupValue:
+            return _f.opGraph != nullptr;
         case D::DerivedOut:
         case D::DerivedBase:
             width = _derived;
@@ -2808,20 +4553,23 @@ private:
         std::vector<int64_t> producers(_f.geometry->weightFields.size(), -1);
         for (size_t i = 0; i < _f.steps.size(); ++i) {
             const auto &step = _f.steps[i];
-            if (step.kind == fb::StepKind::WeightField) {
-                if (!_Has(_f.geometry->weightFields, step.object) ||
-                    step.part != -1)
+            if (const int64_t stored = _FieldStoredBy(step); stored >= 0) {
+                if (!_Has(_f.geometry->weightFields, stored))
                     return _Bad(_StepName(i) +
                                 ": invalid WeightField descriptor");
-                const size_t field = size_t(step.object);
+                const size_t field = size_t(stored);
                 if (producers[field] >= 0)
                     return _Bad(_StepName(i) +
                                 ": duplicate WeightField producer");
                 producers[field] = int64_t(i);
-                if (step.writes.size() != 1 ||
-                    step.writes[0].domain() != fb::SlotDomain::WeightField ||
-                    step.writes[0].begin() != uint32_t(field) ||
-                    step.writes[0].end() != uint32_t(field + 1))
+                size_t own = 0;
+                for (const auto &range : step.writes)
+                    if (range.domain() == fb::SlotDomain::WeightField &&
+                        (range.begin() != uint32_t(field) ||
+                         range.end() != uint32_t(field + 1) || own++))
+                        return _Bad(_StepName(i) +
+                                    ": WeightField output ownership differs");
+                if (!own)
                     return _Bad(_StepName(i) +
                                 ": WeightField output ownership differs");
             } else {
@@ -2933,8 +4681,9 @@ private:
                     return _Bad(who + ": invalid or duplicate scalar member");
                 if (field.scalarReads[r].tag != InputTag::Float ||
                     field.scalarReads[r].mode != ReadMode::Resolved)
-                    return _Bad(who + ": scalar read has a non-oracle origin");
-                _oracleScalarContexts.emplace(&field.scalarReads[r],
+                    return _Bad(who +
+                                ": scalar read is not a resolved float read");
+                _weightScalarContexts.emplace(&field.scalarReads[r],
                                               &field.availableChains);
                 if (!_Read(&field.scalarReads[r], -1, _Resolved, who,
                            "scalar_reads", long(r)))
@@ -2962,8 +4711,9 @@ private:
                                         fb::SlotDomain::PropertyResult,
                                         chain.versionBase +
                                             uint32_t(chain.revisions.size())))
-                                    return _Bad(who + ": missing contextual "
-                                                      "oracle chain read");
+                                    return _Bad(who +
+                                                ": missing contextual "
+                                                "weight field chain read");
                                 for (const auto &record : _f.phasedConsumers)
                                     if (record.chain == available &&
                                         _f.inputs[record.consumer].name() ==
@@ -2974,7 +4724,7 @@ private:
                                             record.version))
                                         return _Bad(who +
                                                     ": missing contextual "
-                                                    "oracle record read");
+                                                    "weight field record read");
                             }
             }
             for (int32_t slot : field.volumes)
@@ -3062,7 +4812,7 @@ private:
     {
         if (!_f.providerProgram) {
             for (size_t i = 0; i < _f.steps.size(); ++i)
-                if (_f.steps[i].kind == fb::StepKind::SpaceExpression)
+                if (_AnswerOf(_f.steps[i]) >= 0)
                     return _Bad(_StepName(i) + ": missing provider program");
             return true;
         }
@@ -3152,15 +4902,10 @@ private:
                 op.output >= n || op.owner.empty())
                 return _Bad("provider op " + _N(i) +
                             ": invalid kind/output/owner");
-            // An affine frame expression (format 21) names its expression
-            // and its inputs match that expression's layout; every other
-            // kind names none.
+            // An affine frame expression names its expression and its inputs
+            // match that expression's layout; every other kind names none.
             const bool affine =
                 op.kind == uint32_t(RigExecProviderOpKind::AffineFrame);
-            if (affine && _f.formatVersion < RigExecFormatAffineFramesVersion)
-                return _Bad("provider op " + _N(i) + ": format " +
-                            _N(_f.formatVersion) +
-                            " holds no affine frame expressions");
             if (affine ? !RigExecAffineFrameInputsMatch(
                              op.affineKind, op.inputs.size(), op.affineTargets)
                        : (op.affineKind != 0 || op.affineTargets != 0))
@@ -3240,31 +4985,50 @@ private:
             bodyExternal(p.externalInputs.size()),
             bodyRouted(p.routedInputs.size()),
             bodyFrames(_f.pose->providerFrameInputs.size());
+        const eval::spaces::ProviderProducers producers = _Producers();
         for (size_t i = 0; i < _f.steps.size(); ++i) {
             const auto &step = _f.steps[i];
-            if (step.kind != fb::StepKind::SpaceExpression)
+            if (const int64_t op = _ProviderOpOf(step); op >= 0) {
+                if (size_t(op) >= p.ops.size() || bodyOps[size_t(op)]++)
+                    return _Bad(_StepName(i) +
+                                ": missing or duplicate provider op body");
+                for (uint64_t input : p.ops[size_t(op)].inputs)
+                    if (input != UINT64_MAX &&
+                        !_BodyRead(i, fb::SlotDomain::SpaceValue, input))
+                        return _Bad(_StepName(i) +
+                                    ": missing SpaceValue operand read");
                 continue;
+            }
+            const int64_t answer = _AnswerOf(step);
+            if (answer < 0)
+                continue;
+            eval::spaces::ProviderProducer producer;
+            size_t row = 0;
             const auto contains = [&](const auto &, fb::SlotDomain domain,
                                       uint64_t slot) {
                 return _BodyRead(i, domain, slot);
             };
             uint64_t output = UINT64_MAX;
             const std::string who = _StepName(i);
-            if (step.object < 0)
-                return _Bad(who + ": negative provider body index");
-            const size_t object = size_t(step.object);
-            if (step.part == 0) {
+            if (!producers.Of(uint64_t(answer), &producer, &row))
+                return _Bad(who + ": answers no provider value producer");
+            const size_t object = row;
+            const int part = int(producer);
+            if (part == 0) {
                 if (object >= p.ops.size() || bodyOps[object]++)
                     return _Bad(who +
                                 ": missing or duplicate provider op body");
                 const auto &op = p.ops[object];
+                if (op.kind != uint32_t(RigExecProviderOpKind::Attribute))
+                    return _Bad(who + ": provider operation " + _N(object) +
+                                " runs as an op node");
                 output = op.output;
                 for (uint64_t input : op.inputs)
                     if (input != UINT64_MAX &&
                         !contains(step.reads, fb::SlotDomain::SpaceValue,
                                   input))
                         return _Bad(who + ": missing SpaceValue operand read");
-            } else if (step.part == 2) {
+            } else if (part == 2) {
                 if (object >= p.sampled.size() || bodySampled[object]++)
                     return _Bad(who +
                                 ": missing or duplicate provider sampled body");
@@ -3275,7 +5039,7 @@ private:
                 if (leaf.propertyVersion != -1)
                     return _Bad(who + ": raw provider source cannot select a "
                                       "property version");
-            } else if (step.part == 1) {
+            } else if (part == 1) {
                 if (object >= p.externalInputs.size() || bodyExternal[object]++)
                     return _Bad(
                         who + ": missing or duplicate provider external body");
@@ -3359,7 +5123,7 @@ private:
                                                         "pose frame read");
                             }
                 }
-            } else if (step.part == 3) {
+            } else if (part == 3) {
                 if (object >= p.routedInputs.size() || bodyRouted[object]++)
                     return _Bad(who +
                                 ": missing or duplicate provider routed body");
@@ -3411,7 +5175,7 @@ private:
                                     ": missing routed point-version read");
                         }
                     }
-            } else if (step.part == 4) {
+            } else if (part == 4) {
                 if (object >= _f.pose->providerFrameInputs.size() ||
                     bodyFrames[object]++)
                     return _Bad(who +
@@ -3531,13 +5295,15 @@ private:
         for (const auto &step : _f.steps) {
             if (step.object < 0)
                 continue;
-            if (step.kind == K::SpaceCheckpoint &&
-                size_t(step.object) < checkpointProducers.size())
-                ++checkpointProducers[size_t(step.object)];
-            else if (step.kind == K::ProviderRefresh &&
-                     size_t(step.object) < refreshProducers.size())
-                ++refreshProducers[size_t(step.object)];
+            if (const int64_t checkpoint = _CheckpointOf(step);
+                checkpoint >= 0 &&
+                size_t(checkpoint) < checkpointProducers.size())
+                ++checkpointProducers[size_t(checkpoint)];
         }
+        for (const auto &step : _f.steps)
+            if (const int64_t refresh = _RefreshOf(step);
+                refresh >= 0 && size_t(refresh) < refreshProducers.size())
+                ++refreshProducers[size_t(refresh)];
         std::vector<uint32_t> finLast(_slots), baseLast(_slots);
         for (size_t slot = 0; slot < _slots; ++slot)
             finLast[slot] = baseLast[slot] = uint32_t(slot);
@@ -3613,28 +5379,29 @@ private:
                 for (auto value : values)
                     writes.emplace(domain, uint32_t(value));
             };
-            if (step.kind == K::RestCompose || step.kind == K::LadderCompose) {
-                if (!_Has(pose.composeGroups, step.object))
+            if (const int64_t restGroup = _RestGroupOf(step),
+                ladderGroup = _LadderGroupOf(step);
+                restGroup >= 0 || ladderGroup >= 0) {
+                const bool restBody = restGroup >= 0;
+                const int64_t object = restBody ? restGroup : ladderGroup;
+                if (!_Has(pose.composeGroups, object))
                     return _Bad(_StepName(owner) + ": invalid compose group");
-                const auto &group = pose.composeGroups[size_t(step.object)];
+                const auto &group = pose.composeGroups[size_t(object)];
                 for (int32_t slot = group.begin; slot < group.end; ++slot) {
                     if (_f.slotMeta->slotKind[size_t(slot)] !=
                         fb::SlotKind::FirstFramePose)
                         continue;
                     const auto &values = pose.ladders[size_t(slot)].spaceValues;
                     for (size_t channel = 0; channel < values.size(); ++channel)
-                        if ((step.kind == K::RestCompose ? channel == 0
-                                                         : channel != 0) &&
+                        if ((restBody ? channel == 0 : channel != 0) &&
                             values[channel] >= 0)
                             read(D::SpaceValue, uint32_t(values[channel]));
                 }
-            } else if (step.kind == K::SpaceCheckpoint) {
-                if (step.object < 0 ||
-                    size_t(step.object) >= pose.spaceCheckpoints.size() ||
-                    step.part != -1)
+            } else if (const int64_t object = _CheckpointOf(step);
+                       object >= 0) {
+                if (size_t(object) >= pose.spaceCheckpoints.size())
                     return _Bad(_StepName(owner) + ": invalid checkpoint body");
-                const auto &checkpoint =
-                    pose.spaceCheckpoints[size_t(step.object)];
+                const auto &checkpoint = pose.spaceCheckpoints[size_t(object)];
                 if (checkpoint.key.empty() ||
                     !_Index(checkpoint.anchor, _slots, true, _StepName(owner),
                             "anchor") ||
@@ -3652,14 +5419,12 @@ private:
                     read(D::Avars, uint32_t(slot));
                     read(D::Ladder, uint32_t(slot));
                 }
-                writes.emplace(D::SwitchFrame, uint32_t(step.object));
-            } else if (step.kind == K::ProviderRefresh) {
-                if (step.part != 0 || step.object < 0 ||
-                    size_t(step.object) >= pose.providerRefreshes.size())
+                writes.emplace(D::SwitchFrame, uint32_t(object));
+            } else if (const int64_t index = _RefreshOf(step); index >= 0) {
+                if (size_t(index) >= pose.providerRefreshes.size())
                     return _Bad(_StepName(owner) +
                                 ": invalid provider refresh body");
-                const auto &refresh =
-                    pose.providerRefreshes[size_t(step.object)];
+                const auto &refresh = pose.providerRefreshes[size_t(index)];
                 if (!_f.providerProgram ||
                     refresh.baseValue >= _f.providerProgram->valueKeys.size() ||
                     refresh.currentValue >=
@@ -3755,11 +5520,11 @@ private:
                 if (declared != writes)
                     return _Bad(_StepName(owner) +
                                 ": provider refresh write ownership differs");
-            } else if (step.kind == K::ComposeSubtree) {
-                if (step.object < 0 ||
-                    size_t(step.object) >= pose.composeGroups.size())
+            } else if (const int64_t composeGroup = _ComposeGroupOf(step);
+                       composeGroup >= 0) {
+                if (!_Has(pose.composeGroups, composeGroup))
                     return _Bad(_StepName(owner) + ": invalid compose group");
-                const auto &group = pose.composeGroups[size_t(step.object)];
+                const auto &group = pose.composeGroups[size_t(composeGroup)];
                 for (const auto &sw : pose.spaceSwitches)
                     if (sw.slot >= int32_t(group.begin) &&
                         sw.slot < int32_t(group.end)) {
@@ -3796,11 +5561,11 @@ private:
                         if (!_RequireCandidateReads(owner, input))
                             return false;
                 }
-            } else if (step.kind == K::Solve) {
-                if (!_Has(pose.solvers, step.object))
+            } else if (const int64_t si = _SolverOf(step); si >= 0) {
+                if (!_Has(pose.solvers, si))
                     return _Bad(_StepName(owner) +
                                 ": solver body object out of range");
-                const auto &solver = pose.solvers[size_t(step.object)];
+                const auto &solver = pose.solvers[size_t(si)];
                 readAll(D::PoseFin, solver.controlReads);
                 for (const auto binding :
                      {std::make_pair(solver.start, solver.startRead),
@@ -3815,26 +5580,11 @@ private:
                 for (size_t k = 0; k < solver.restReads.size(); ++k)
                     if (k < solver.restIsLive.size() && solver.restIsLive[k])
                         read(D::PoseFin, solver.restReads[k]);
-            } else if (step.kind == K::FrameMatrix) {
-                if (!_Has(pose.frameRecords, step.object))
-                    return _Bad(_StepName(owner) +
-                                ": frame body object out of range");
-                read(D::PoseFin,
-                     pose.frameRecords[size_t(step.object)].version());
-            } else if (step.kind == K::ProviderMatrix) {
-                if (step.object < 0 || size_t(step.object) >= _slots)
-                    return _Bad(_StepName(owner) +
-                                ": provider body object out of range");
-                const size_t slot = size_t(step.object);
-                if (step.part)
-                    read(D::PoseFin, finLast[slot]);
-                read(D::PoseBase, baseLast[slot]);
-            } else if (step.kind == K::PoseInterpolator) {
-                if (!_Has(pose.poseInterpolators, step.object))
+            } else if (const int64_t ip = _InterpolatorOf(step); ip >= 0) {
+                if (!_Has(pose.poseInterpolators, ip))
                     return _Bad(_StepName(owner) +
                                 ": interpolator body object out of range");
-                const auto &interp =
-                    pose.poseInterpolators[size_t(step.object)];
+                const auto &interp = pose.poseInterpolators[size_t(ip)];
                 if (interp.driverSlot >= 0)
                     read(D::PoseFin, finLast[size_t(interp.driverSlot)]);
                 if (interp.parentSlot >= 0)
@@ -3848,24 +5598,20 @@ private:
                         read(D::PoseFin,
                              finLast[size_t(interp.extraParentSlots[e])]);
                 }
-            } else if (step.kind == K::Constraint ||
-                       step.kind == K::SolverCommit ||
-                       step.kind == K::CommitDelta ||
-                       step.kind == K::PropagateChunk ||
-                       step.kind == K::CommitApply) {
-                if (!_Has(pose.commits, step.object))
+            } else if (_CommitOf(step) >= 0) {
+                if (!_Has(pose.commits, _CommitOf(step)))
                     return _Bad(_StepName(owner) +
                                 ": commit body object out of range");
-                const auto &commit = pose.commits[size_t(step.object)];
-                if (step.kind == K::Constraint) {
-                    if (!_Has(pose.walkSteps, step.object) ||
-                        pose.walkSteps[size_t(step.object)].solverBatch ||
+                const auto &commit = pose.commits[size_t(_CommitOf(step))];
+                if (const int64_t cw = _ConstraintOf(step); cw >= 0) {
+                    if (!_Has(pose.walkSteps, cw) ||
+                        pose.walkSteps[size_t(cw)].solverBatch ||
                         !_Has(pose.constraints,
-                              pose.walkSteps[size_t(step.object)].index))
+                              pose.walkSteps[size_t(cw)].index))
                         return _Bad(_StepName(owner) +
                                     ": constraint body object out of range");
                     const auto &c = pose.constraints[size_t(
-                        pose.walkSteps[size_t(step.object)].index)];
+                        pose.walkSteps[size_t(cw)].index)];
                     if (commit.sourceReads.size() < c.sources.size() ||
                         commit.poleReads.size() < c.poleObjects.size())
                         return _Bad(
@@ -3905,27 +5651,16 @@ private:
                         read(D::PoseBase, baseLast[size_t(c.sources[6])]);
                     }
                 }
-                const bool apply =
-                    step.kind == K::CommitApply ||
-                    (!commit.split && (step.kind == K::Constraint ||
-                                       step.kind == K::SolverCommit));
-                if (step.kind == K::CommitDelta || (apply && !commit.split))
+                const bool apply = _ConstraintOf(step) < 0;
+                if (apply) {
                     readAll(D::PoseFin, commit.slotReads);
-                if (step.kind == K::PropagateChunk ||
-                    (apply && !commit.split)) {
-                    const size_t begin = step.kind == K::PropagateChunk
-                                             ? size_t(step.part) * 64
-                                             : 0;
-                    const size_t end =
-                        step.kind == K::PropagateChunk
-                            ? std::min(begin + 64, commit.propagate.size())
-                            : commit.propagate.size();
+                    const size_t end = commit.propagate.size();
                     if (commit.descendantReads.size() < end ||
                         commit.closestReads.size() < end)
                         return _Bad(
                             _StepName(owner) +
                             ": incomplete propagation body SSA bindings");
-                    for (size_t k = begin; k < end; ++k) {
+                    for (size_t k = 0; k < end; ++k) {
                         read(D::PoseFin, commit.descendantReads[k]);
                         read(D::PoseFin, commit.closestReads[k]);
                     }
@@ -3989,9 +5724,10 @@ private:
                     read(D::ChainDirty, revision);
                 }
             };
-            if (step.kind == K::WeightPacket &&
-                _Has(g.weightObjects, step.object)) {
-                const auto &weight = g.weightObjects[size_t(step.object)];
+            if (_PacketObjectOf(step) >= 0 &&
+                _Has(g.weightObjects, _PacketObjectOf(step))) {
+                const auto &weight =
+                    g.weightObjects[size_t(_PacketObjectOf(step))];
                 if (weight.base >= 0)
                     read(D::WeightPacket, uint32_t(weight.base));
                 for (int32_t input : weight.inputs)
@@ -4002,9 +5738,9 @@ private:
                          _bodyBaseLast[size_t(weight.providerSlot)]);
                 continue;
             }
-            if (step.kind == K::WeightField &&
-                _Has(g.weightFields, step.object)) {
-                const auto &field = g.weightFields[size_t(step.object)];
+            if (const int64_t f = _FieldOf(step);
+                f >= 0 && _Has(g.weightFields, f)) {
+                const auto &field = g.weightFields[size_t(f)];
                 if (field.form == fb::WeightFieldForm::Revision &&
                     _Has(g.revisionIndex, field.consumer)) {
                     const auto &index = g.revisionIndex[size_t(field.consumer)];
@@ -4027,17 +5763,22 @@ private:
                          uint32_t(slot));
                 continue;
             }
-            if (step.kind == K::VolumePlacements && step.object >= 0) {
-                if (size_t(step.object) < _bodyFinLast.size() && step.part == 1)
-                    read(D::PoseFin, _bodyFinLast[size_t(step.object)]);
-                else if (size_t(step.object) < _bodyBaseLast.size() &&
-                         step.part == 2)
-                    read(D::PoseBase, _bodyBaseLast[size_t(step.object)]);
+            if (_PlacementSlotOf(step) >= 0) {
+                const size_t node = size_t(step.object);
+                const int64_t lookup = _placementLookup[node];
+                if (lookup >= 0 &&
+                    size_t(lookup) < _f.opGraph->lookups.size() &&
+                    _f.opGraph->lookups[size_t(lookup)] &&
+                    _f.opGraph->lookups[size_t(lookup)]->source == 1) {
+                    const auto &version = *_f.opGraph->lookups[size_t(lookup)];
+                    read(version.part ? D::PoseBase : D::PoseFin,
+                         version.object);
+                }
                 continue;
             }
-            if (step.kind == K::Constraint &&
-                _Has(_f.pose->walkSteps, step.object)) {
-                const auto &walk = _f.pose->walkSteps[size_t(step.object)];
+            if (const int64_t cw = _ConstraintOf(step, true);
+                cw >= 0 && _Has(_f.pose->walkSteps, cw)) {
+                const auto &walk = _f.pose->walkSteps[size_t(cw)];
                 if (!walk.solverBatch &&
                     _Has(_f.pose->constraints, walk.index)) {
                     const auto &constraint =
@@ -4113,10 +5854,9 @@ private:
                     read(D::WeightField, uint32_t(revision.weightField));
                 if (revision.driverFramesSolver >= 0)
                     read(D::Aggregate, uint32_t(revision.driverFramesSolver));
-                if (!RigExecFormatIsChunkBlend(revision))
-                    for (const auto &channel : revision.blendChannels)
-                        if (channel.poseWeight >= 0)
-                            read(D::PoseWeight, uint32_t(channel.poseWeight));
+                for (const auto &channel : revision.blendChannels)
+                    if (channel.poseWeight >= 0)
+                        read(D::PoseWeight, uint32_t(channel.poseWeight));
             } else if (!_groupWritten[c].empty()) {
                 // A chain with groups (format 20), as _RangeSteps holds the
                 // declarations: a group step reads group `part` of the
@@ -4140,16 +5880,6 @@ private:
                 if (step.kind == K::RevisionChunk) {
                     if (!_Has(revision.chunks, step.part))
                         continue;
-                    if (RigExecFormatIsChunkBlend(revision))
-                        for (int channel :
-                             revision.chunks[size_t(step.part)].key)
-                            if (_Has(revision.blendChannels, channel) &&
-                                revision.blendChannels[size_t(channel)]
-                                        .poseWeight >= 0)
-                                read(D::PoseWeight,
-                                     uint32_t(
-                                         revision.blendChannels[size_t(channel)]
-                                             .poseWeight));
                     if (!range && !keyed) {
                         point(c, uint32_t(r));
                         if (skin)
@@ -4196,7 +5926,15 @@ private:
                     }
                     continue;
                 }
-                read(D::RevisionTransforms, id);
+                // A Range smooth, delta mush, lattice or sparse blend shape
+                // runs as an op node and folds no transform.
+                if (!range ||
+                    (revision.op != uint8_t(fb::RevisionOp::Smooth) &&
+                     revision.op != uint8_t(fb::RevisionOp::DeltaMush) &&
+                     revision.op != uint8_t(fb::RevisionOp::Lattice) &&
+                     !RigExecFormatIsChunkBlend(revision) &&
+                     !revision.wholeRole))
+                    read(D::RevisionTransforms, id);
                 point(c, uint32_t(r));
                 if (revision.weightObject >= 0)
                     read(D::WeightPacket, uint32_t(revision.weightObject));
@@ -4262,9 +6000,10 @@ private:
                     uint32_t(D::RequiredStageFramesAdmission))
                 return _Bad("common_graph.excluded_values: required "
                             "stage-frame admission cannot be excluded");
-        const auto prep = [](K kind) {
-            return kind == K::PropertyRevision || kind == K::RestCompose ||
-                   kind == K::LadderCompose || kind == K::SkinTopology;
+        const auto prep = [this](const RigExecWireStep &step) {
+            return _PropertyPart(step, nullptr, nullptr) ||
+                   _RestGroupOf(step) >= 0 || _LadderGroupOf(step) >= 0 ||
+                   step.kind == K::SkinTopology;
         };
         std::map<std::pair<D, uint32_t>, std::vector<size_t>> producers;
         std::vector<size_t> pending;
@@ -4276,14 +6015,16 @@ private:
                         _StepName(i) +
                         ": required stage-frame admission is source-only");
             }
-            if (!prep(step.kind))
+            if (!prep(step))
                 continue;
             pending.push_back(i);
-            if (step.kind == K::PropertyRevision && step.part > 0) {
-                const auto &chain = _f.propertyChains[size_t(step.object)];
-                const auto &revision = chain.revisions[size_t(step.part - 1)];
-                if (!_BodyRead(i, D::PropertyResult,
-                               chain.versionBase + uint32_t(step.part) - 1))
+            size_t propertyChain = 0, propertyPart = 0;
+            if (_PropertyPart(step, &propertyChain, &propertyPart)) {
+                const auto &chain = _f.propertyChains[propertyChain];
+                const auto &revision = chain.revisions[propertyPart - 1];
+                if (propertyPart > 1 &&
+                    !_BodyRead(i, D::PropertyResult,
+                               chain.versionBase + uint32_t(propertyPart) - 1))
                     return false;
                 if (revision.weightField >= 0 &&
                     !_BodyRead(i, D::WeightField,
@@ -4335,11 +6076,11 @@ private:
         }
         for (size_t i = 0; i < _f.steps.size(); ++i) {
             const auto &step = _f.steps[i];
-            const bool helper =
-                step.kind == K::WeightField || step.kind == K::SpaceExpression;
-            const bool required =
-                step.kind != K::SnapshotFinals && !prep(step.kind) &&
-                step.kind != K::AvarInputs && !(helper && ancestors.count(i));
+            const bool helper = _FieldOf(step) >= 0 || _AnswerOf(step) >= 0 ||
+                                _ProviderOpOf(step) >= 0;
+            const bool required = step.kind != K::SnapshotFinals &&
+                                  !prep(step) && _AvarSlotOf(step) < 0 &&
+                                  !(helper && ancestors.count(i));
             size_t count = 0;
             for (const auto &range : step.reads)
                 if (range.domain() == D::RequiredStageFramesAdmission) {
@@ -4364,11 +6105,7 @@ private:
                                _f.geometry->derivedIndex.size();
         size_t versions = 0;
         for (size_t c = 0; c < _f.propertyChains.size(); ++c) {
-            const auto &chain = _f.propertyChains[c];
-            if (chain.versionBase != versions)
-                return _Bad("PropertyRevision chain " + _N(c) +
-                            ": noncanonical version_base");
-            versions += chain.revisions.size() + 1;
+            versions += _f.propertyChains[c].revisions.size() + 1;
         }
         for (size_t r = 0; r < _f.phasedConsumers.size(); ++r)
             if (_f.phasedConsumers[r].version != versions++)
@@ -4385,12 +6122,17 @@ private:
         };
         for (size_t i = 0; i < _f.steps.size(); ++i) {
             const auto &step = _f.steps[i];
+            size_t propertyChain = 0, propertyPart = 0;
+            const bool property =
+                _PropertyPart(step, &propertyChain, &propertyPart);
+            const int64_t restGroup = _RestGroupOf(step);
+            const int64_t ladderGroup = _LadderGroupOf(step);
             const bool kindHead =
-                (step.kind >= fb::StepKind::PropertyRevision &&
-                 step.kind <= fb::StepKind::SkinTopology) ||
-                (step.kind == fb::StepKind::WeightField && step.object >= 0 &&
-                 size_t(step.object) < _f.geometry->weightFields.size() &&
-                 _f.geometry->weightFields[size_t(step.object)].form !=
+                property || restGroup >= 0 || ladderGroup >= 0 ||
+                step.kind == fb::StepKind::SkinTopology ||
+                (_FieldOf(step) >= 0 &&
+                 _Has(_f.geometry->weightFields, _FieldOf(step)) &&
+                 _f.geometry->weightFields[size_t(_FieldOf(step))].form !=
                      fb::WeightFieldForm::Revision);
             if (step.isHead != kindHead)
                 return _Bad(_StepName(i) +
@@ -4411,14 +6153,15 @@ private:
                 if (range.end() > table->size())
                     return _Bad(_StepName(i) + ": head write out of range");
                 const auto required =
-                    range.domain() == fb::SlotDomain::PropertyResult
-                        ? fb::StepKind::PropertyRevision
-                    : range.domain() == fb::SlotDomain::Rest
-                        ? fb::StepKind::RestCompose
-                    : range.domain() == fb::SlotDomain::Ladder
-                        ? fb::StepKind::LadderCompose
-                        : fb::StepKind::SkinTopology;
-                if (step.kind != required)
+                    range.domain() == fb::SlotDomain::SkinTopology
+                        ? fb::StepKind::SkinTopology
+                        : fb::StepKind::OpNode;
+                if (step.kind != required ||
+                    (range.domain() == fb::SlotDomain::PropertyResult &&
+                     !property) ||
+                    (range.domain() == fb::SlotDomain::Rest && restGroup < 0) ||
+                    (range.domain() == fb::SlotDomain::Ladder &&
+                     ladderGroup < 0))
                     return _Bad(_StepName(i) +
                                 ": wrong head domain writer kind");
                 for (uint32_t v = range.begin(); v < range.end(); ++v) {
@@ -4428,17 +6171,16 @@ private:
                     (*table)[v] = int64_t(i);
                 }
             }
-            if (step.kind == fb::StepKind::PropertyRevision) {
-                if (!_Has(_f.propertyChains, step.object))
-                    return _Bad(_StepName(i) + ": invalid chain object");
-                const auto &chain = _f.propertyChains[size_t(step.object)];
-                if (step.part < 0 || size_t(step.part) > chain.revisions.size())
-                    return _Bad(_StepName(i) + ": invalid property part");
+            if (property) {
+                const auto &chain = _f.propertyChains[propertyChain];
                 std::set<uint32_t> expected{chain.versionBase +
-                                            uint32_t(step.part)};
+                                            uint32_t(propertyPart)};
+                if (propertyPart == 1)
+                    expected.insert(chain.versionBase);
                 for (const auto &record : _f.phasedConsumers)
-                    if (record.chain == uint32_t(step.object) &&
-                        record.applied == uint32_t(step.part))
+                    if (record.chain == uint32_t(propertyChain) &&
+                        (record.applied == uint32_t(propertyPart) ||
+                         (propertyPart == 1 && record.applied == 0)))
                         expected.insert(record.version);
                 std::set<uint32_t> actual;
                 for (const auto &range : step.writes) {
@@ -4451,22 +6193,19 @@ private:
                 if (actual != expected)
                     return _Bad(_StepName(i) +
                                 ": property version/record ownership differs");
-                if (step.part &&
+                if (propertyPart > 1 &&
                     !_Declares(i, fb::SlotDomain::PropertyResult,
-                               chain.versionBase + uint32_t(step.part) - 1))
+                               chain.versionBase + uint32_t(propertyPart) - 1))
                     return _Bad(_StepName(i) +
                                 ": part does not declare predecessor version");
-            } else if (step.kind == fb::StepKind::RestCompose ||
-                       step.kind == fb::StepKind::LadderCompose) {
-                if (!_Has(_f.pose->composeGroups, step.object))
+            } else if (restGroup >= 0 || ladderGroup >= 0) {
+                const int64_t object = restGroup >= 0 ? restGroup : ladderGroup;
+                if (!_Has(_f.pose->composeGroups, object))
                     return _Bad(_StepName(i) + ": invalid compose group");
-                const auto &group = _f.pose->composeGroups[size_t(step.object)];
-                const auto domain = step.kind == fb::StepKind::RestCompose
-                                        ? fb::SlotDomain::Rest
-                                        : fb::SlotDomain::Ladder;
-                if (step.part !=
-                        (step.kind == fb::StepKind::RestCompose ? 0 : 1) ||
-                    step.writes.size() != 1 ||
+                const auto &group = _f.pose->composeGroups[size_t(object)];
+                const auto domain = restGroup >= 0 ? fb::SlotDomain::Rest
+                                                   : fb::SlotDomain::Ladder;
+                if (step.part != -1 || step.writes.size() != 1 ||
                     step.writes[0].domain() != domain ||
                     step.writes[0].begin() != uint32_t(group.begin) ||
                     step.writes[0].end() != uint32_t(group.end))
@@ -4491,15 +6230,14 @@ private:
                     step.headInputSlots.end())
                 return _Bad(_StepName(i) +
                             ": memo slots are not sorted unique");
-            if (step.kind == fb::StepKind::PropertyRevision) {
-                const auto &chain = _f.propertyChains[size_t(step.object)];
+            if (property) {
+                const auto &chain = _f.propertyChains[propertyChain];
                 std::set<uint32_t> expectedSlots;
                 bool volatileBody = false;
-                if (step.part == 0)
+                if (propertyPart == 1)
                     expectedSlots.insert(chain.target);
-                else {
-                    const auto &revision =
-                        chain.revisions[size_t(step.part - 1)];
+                {
+                    const auto &revision = chain.revisions[propertyPart - 1];
                     volatileBody = false;
 
                     for (const auto *input :
@@ -4565,17 +6303,18 @@ private:
                     return _Bad(_StepName(i) + ": topology memo does not cover "
                                                "exactly its layout leaves");
             }
-            if (step.kind == fb::StepKind::PropertyRevision ||
-                step.kind == fb::StepKind::SkinTopology) {
+            if (property || step.kind == fb::StepKind::SkinTopology) {
                 if (step.headVaryingLeaves)
                     return _Bad(_StepName(i) +
                                 ": raw head carries binding-varying flag");
             }
-            if (step.kind == fb::StepKind::RestCompose ||
-                step.kind == fb::StepKind::LadderCompose) {
-                const auto &group = _f.pose->composeGroups[size_t(step.object)];
+            if (const int64_t restGroup = _RestGroupOf(step),
+                ladderGroup = _LadderGroupOf(step);
+                restGroup >= 0 || ladderGroup >= 0) {
+                const bool restBody = restGroup >= 0;
+                const auto &group = _f.pose->composeGroups[size_t(
+                    restBody ? restGroup : ladderGroup)];
                 std::vector<const RigExecWireInput *> expected;
-                const bool restBody = step.kind == fb::StepKind::RestCompose;
                 for (int slot = group.begin; slot < group.end; ++slot) {
                     if (_f.slotMeta->slotKind[size_t(slot)] !=
                         fb::SlotKind::FirstFramePose)
@@ -4650,10 +6389,11 @@ private:
             const auto &step = _f.steps[i];
             for (const auto &read : step.headInputReads)
                 owners.emplace(&read, i);
-            if (step.kind != fb::StepKind::PropertyRevision || step.part == 0)
+            size_t propertyChain = 0, propertyPart = 0;
+            if (!_PropertyPart(step, &propertyChain, &propertyPart))
                 continue;
-            const auto &revision = _f.propertyChains[size_t(step.object)]
-                                       .revisions[size_t(step.part - 1)];
+            const auto &revision =
+                _f.propertyChains[propertyChain].revisions[propertyPart - 1];
             for (const auto *read :
                  {revision.enabled.get(), revision.defaultWeight.get(),
                   revision.value.get(), revision.min.get(), revision.max.get()})
@@ -4665,21 +6405,22 @@ private:
             const auto owner = owners.find(input);
             // Bound property reads use per-consumer typed phase authority;
             // producer chain discovery order does not constrain visibility.
+            size_t ownerChain = 0;
             const int readerChain =
-                owner != owners.end() && _f.steps[owner->second].kind ==
-                                             fb::StepKind::PropertyRevision
-                    ? _f.steps[owner->second].object
+                owner != owners.end() && _PropertyPart(_f.steps[owner->second],
+                                                       &ownerChain, nullptr)
+                    ? int(ownerChain)
                     : -1;
             // Property revisions own entering phases and suppress later target overlays.
             // Ordinary readers retain conditional Final fallbacks after typed records.
-            const auto oracle = _oracleScalarContexts.find(input);
-            const auto oracleKind = [&](uint32_t slot) {
+            const auto scalar = _weightScalarContexts.find(input);
+            const auto fieldKind = [&](uint32_t slot) {
                 auto kind = fb::PropertyCandidateKind::SlotOnly;
-                if (oracle == _oracleScalarContexts.end())
+                if (scalar == _weightScalarContexts.end())
                     return kind;
-                // Oracle overlays are per-consumer publication contexts, in
+                // Weight-field overlays are per-consumer publication contexts, in
                 // chain target/record order, distinct from ordinary bindings.
-                for (int32_t c : *oracle->second) {
+                for (int32_t c : *scalar->second) {
                     if (_f.propertyChains[size_t(c)].target == slot)
                         kind = fb::PropertyCandidateKind::ChainFinal;
                     for (const auto &record : _f.phasedConsumers)
@@ -4689,7 +6430,7 @@ private:
                 }
                 return kind;
             };
-            // Resolved oracle/path reads consult the publication overlay at
+            // Resolved weight-field/path reads consult the publication overlay at
             // every hop; their target Final remains a valid later fallback.
             using CandidateKind = fb::PropertyCandidateKind;
             std::map<uint32_t, CandidateKind> expectedProperty, expectedDouble;
@@ -4711,8 +6452,8 @@ private:
                 const bool record =
                     slot.phased() >= 0 &&
                     (!boundWalk || input->mode != ReadMode::Pinned);
-                const auto kind = oracle != _oracleScalarContexts.end()
-                                      ? oracleKind(slotId)
+                const auto kind = scalar != _weightScalarContexts.end()
+                                      ? fieldKind(slotId)
                                   : sourceOnly ? CandidateKind::SlotOnly
                                   : chain      ? CandidateKind::ChainFinal
                                   : record     ? CandidateKind::PhasedRecord
@@ -4905,11 +6646,12 @@ private:
                            rigExecStepGraphDetail::DomainName(uint8_t(domain)) +
                            "[" + _N(size_t(slot)) + "] read");
             };
-            if (step.kind == fb::StepKind::RestCompose ||
-                step.kind == fb::StepKind::LadderCompose) {
-                const auto &group = _f.pose->composeGroups[size_t(step.object)];
-                const bool ladderBody =
-                    step.kind == fb::StepKind::LadderCompose;
+            if (const int64_t restGroup = _RestGroupOf(step),
+                ladderGroup = _LadderGroupOf(step);
+                restGroup >= 0 || ladderGroup >= 0) {
+                const auto &group = _f.pose->composeGroups[size_t(
+                    restGroup >= 0 ? restGroup : ladderGroup)];
+                const bool ladderBody = ladderGroup >= 0;
                 for (int slot = group.begin; slot < group.end; ++slot) {
                     if (ladderBody && !require(fb::SlotDomain::Rest, slot))
                         return false;
@@ -4996,24 +6738,30 @@ private:
                 !_Declares(i, fb::SlotDomain::SkinTopology, uint32_t(layoutId)))
                 return _Bad(_StepName(i) + ": missing SkinTopology[" +
                             _N(layoutId) + "] read");
-            if (step.kind == fb::StepKind::ProviderMatrix &&
-                !require(fb::SlotDomain::Rest, step.object))
-                return false;
-            if (step.kind == fb::StepKind::FrameMatrix &&
-                _Has(_f.pose->frameRecords, step.object) &&
-                !require(
-                    fb::SlotDomain::Rest,
-                    int(_f.pose->frameRecords[size_t(step.object)].slot())))
-                return false;
-            if (step.kind == fb::StepKind::Solve &&
-                _Has(_f.pose->solvers, step.object))
-                for (const auto slot :
-                     _f.pose->solvers[size_t(step.object)].restSlots)
+            if (step.kind == fb::StepKind::OpNode && _f.opGraph &&
+                _Has(_f.opGraph->nodes, step.object) &&
+                _f.opGraph->nodes[size_t(step.object)])
+                for (const auto &input :
+                     _f.opGraph->nodes[size_t(step.object)]->inputs)
+                    if (input && input->host == 4 &&
+                        _Has(_f.opGraph->lookups, input->object) &&
+                        _f.opGraph->lookups[size_t(input->object)] &&
+                        _f.opGraph->lookups[size_t(input->object)]->source ==
+                            20 &&
+                        !require(fb::SlotDomain::Rest,
+                                 int(_f.opGraph->lookups[size_t(input->object)]
+                                         ->object)))
+                        return false;
+            if (const int64_t si = _SolverOf(step);
+                si >= 0 && _Has(_f.pose->solvers, si))
+                for (const auto slot : _f.pose->solvers[size_t(si)].restSlots)
                     if (!require(fb::SlotDomain::Rest, slot))
                         return false;
-            if (step.kind == fb::StepKind::ComposeSubtree &&
-                _Has(_f.pose->composeGroups, step.object)) {
-                const auto &group = _f.pose->composeGroups[size_t(step.object)];
+            if (const int64_t composeGroup = _ComposeGroupOf(step);
+                composeGroup >= 0 &&
+                _Has(_f.pose->composeGroups, composeGroup)) {
+                const auto &group =
+                    _f.pose->composeGroups[size_t(composeGroup)];
                 for (int slot = group.begin; slot < group.end; ++slot)
                     if (!require(fb::SlotDomain::Ladder, slot))
                         return false;
@@ -5042,10 +6790,9 @@ private:
                                 return false;
                 }
             }
-            if (step.kind == fb::StepKind::PoseInterpolator &&
-                _Has(_f.pose->poseInterpolators, step.object)) {
-                const auto &interp =
-                    _f.pose->poseInterpolators[size_t(step.object)];
+            if (const int64_t ip = _InterpolatorOf(step);
+                ip >= 0 && _Has(_f.pose->poseInterpolators, ip)) {
+                const auto &interp = _f.pose->poseInterpolators[size_t(ip)];
                 if (interp.valueInputs.empty() &&
                     (!require(fb::SlotDomain::Rest, interp.driverSlot) ||
                      !require(fb::SlotDomain::Rest, interp.parentSlot)))
@@ -5060,9 +6807,9 @@ private:
                         return false;
                 }
             }
-            if (step.kind == fb::StepKind::Constraint &&
-                _Has(_f.pose->walkSteps, step.object)) {
-                const auto &walk = _f.pose->walkSteps[size_t(step.object)];
+            if (const int64_t cw = _ConstraintOf(step, true);
+                cw >= 0 && _Has(_f.pose->walkSteps, cw)) {
+                const auto &walk = _f.pose->walkSteps[size_t(cw)];
                 if (walk.solverBatch || !_Has(_f.pose->constraints, walk.index))
                     continue;
                 const auto &constraint =
@@ -5454,19 +7201,20 @@ private:
                       "enabled")) {
             return false;
         }
+        const bool method = interp.solve == 1, network = interp.solve == 2,
+                   maps = interp.solve == 3;
+        if (interp.solve > 3)
+            return _Bad(row + ": solve out of range");
         // An ML mover reads frames and any number of dials together.
-        if (!interp.network && !interp.maps &&
+        if (!network && !maps &&
             (interp.valueInputs.size() > 3 ||
              (!interp.valueInputs.empty() && interp.driverSlot >= 0))) {
             return _Bad(row + ": value_inputs hold at most three dials of "
                               "a numeric driver");
         }
-        if (bool(interp.network) != bool(interp.mask) ||
-            (interp.network && interp.method) ||
-            (interp.maps &&
-             (interp.network || interp.method || interp.driverSlot >= 0))) {
-            return _Bad(row + ": an ML network needs its mask and no RBF "
-                              "method");
+        if (network != bool(interp.mask) || (maps && interp.driverSlot >= 0)) {
+            return _Bad(row + ": an ML network needs its mask and animated "
+                              "maps read no frame");
         }
         if (interp.mask &&
             !_ReadPtr(interp.mask, int(InputTag::Float), _Baked, row, "mask")) {
@@ -5482,30 +7230,8 @@ private:
                 return false;
             }
         }
-        if (!interp.solver) {
-            return _Bad(row + ".solver: missing");
-        }
-        const fb::RigExecWireRbf &rbf = *interp.solver;
-        if (rbf.kernel > uint8_t(fb::RbfKernel::MAX) ||
-            (!rbf.poseTypes.empty() &&
-             rbf.poseTypes.size() != rbf.poses.size())) {
-            return _Bad(row + ".solver: kernel or pose_types malformed");
-        }
-        for (size_t k = 0; k < rbf.poseTypes.size(); ++k) {
-            if (rbf.poseTypes[k] > uint8_t(fb::RbfPoseType::MAX)) {
-                return _Bad(_At(row + ".solver", "pose_types", long(k)) +
-                            ": out of range");
-            }
-        }
-        for (size_t k = 0; k < rbf.weights.size(); ++k) {
-            if (rbf.weights[k].v.size() != rbf.poses.size()) {
-                return _Bad(_At(row + ".solver", "weights", long(k)) +
-                            ": one weight per pose expected");
-            }
-        }
         if (interp.extraDriverSlots.size() != interp.extraParentSlots.size() ||
-            (!interp.method && !interp.network &&
-             !interp.extraDriverSlots.empty())) {
+            (!method && !network && !interp.extraDriverSlots.empty())) {
             return _Bad(row + ": extra driver and parent slots must be "
                               "parallel and belong to a RigLogic solve");
         }
@@ -5519,35 +7245,20 @@ private:
                             ": out of range");
             }
         }
-        if (interp.method) {
-            const fb::RigExecWireRbfMethod &m = *interp.method;
-            const size_t raw = m.rawCount, count = m.targetCount;
-            const bool twist =
-                m.distanceMethod == uint8_t(fb::RbfDistanceMethod::TwistAngle);
-            const bool frames = interp.valueInputs.empty();
-            if (m.solverType > uint8_t(fb::RbfSolverType::MAX) ||
-                m.distanceMethod > uint8_t(fb::RbfDistanceMethod::MAX) ||
-                m.weightFunction > uint8_t(fb::RbfWeightFunction::MAX) ||
-                m.normalizeMethod > uint8_t(fb::RbfNormalizeMethod::MAX) ||
-                m.twistAxis > 2 || raw == 0 ||
-                count != interp.poseSlots.size() ||
-                m.targets.size() != raw * count ||
-                m.distanceTargets.size() != (twist ? raw * count : 0) ||
-                m.targetScales.size() != count ||
-                m.coefficients.size() !=
-                    (m.solverType == uint8_t(fb::RbfSolverType::Interpolative)
-                         ? count * count
-                         : 0) ||
-                (frames && raw != 4 * (1 + interp.extraDriverSlots.size())) ||
-                (!frames && raw != interp.valueInputs.size()) ||
-                (m.distanceMethod !=
-                     uint8_t(fb::RbfDistanceMethod::Euclidean) &&
-                 raw % 4 != 0)) {
-                return _Bad(row + ".method: malformed RigLogic solve");
-            }
+        const auto inRange = [&](int slot) {
+            return slot >= interp.weightBegin && slot < interp.weightEnd;
+        };
+        if (interp.weightBegin < 0 || interp.weightBegin > interp.weightEnd ||
+            size_t(interp.weightEnd) > _f.pose->poseWeightPaths.size() ||
+            !std::all_of(interp.poseSlots.begin(), interp.poseSlots.end(),
+                         inRange) ||
+            !std::all_of(interp.disabledSlots.begin(),
+                         interp.disabledSlots.end(), inRange)) {
+            return _Bad(row + ": pose and disabled slots must lie in its "
+                              "weight range");
         }
         if (interp.primvarSlots.size() != interp.primvarSources.size() ||
-            (!interp.maps && !interp.primvarSlots.empty())) {
+            (!maps && !interp.primvarSlots.empty())) {
             return _Bad(row + ": primvar slots and sources must be parallel "
                               "and belong to animated maps");
         }
@@ -5558,67 +7269,6 @@ private:
                 size_t(interp.primvarSources[k]) >= interp.poseSlots.size()) {
                 return _Bad(_At(row, "primvar_slots", long(k)) +
                             ": out of range");
-            }
-        }
-        if (interp.maps) {
-            const fb::RigExecWireAnimatedMaps &m = *interp.maps;
-            const size_t rows = m.rowInputs.size();
-            bool ok = m.inputCount == interp.valueInputs.size() &&
-                      m.rowFrom.size() == rows && m.rowTo.size() == rows &&
-                      m.rowSlope.size() == rows && m.rowCut.size() == rows &&
-                      m.mapBegin.size() == interp.poseSlots.size() + 1 &&
-                      !m.mapBegin.empty() && m.mapBegin.front() == 0 &&
-                      m.mapBegin.back() == rows;
-            // Format 31: map_unclamped is absent (every map clamped) or one
-            // 0/1 byte per map.
-            ok = ok && (m.mapUnclamped.empty() ||
-                        (_f.formatVersion >= 31 &&
-                         m.mapUnclamped.size() + 1 == m.mapBegin.size()));
-            for (size_t map = 0; ok && map < m.mapUnclamped.size(); ++map) {
-                ok = m.mapUnclamped[map] <= 1;
-            }
-            RigExecAnimatedMapsTable table;
-            table.inputCount = m.inputCount;
-            for (size_t map = 0; ok && map + 1 < m.mapBegin.size(); ++map) {
-                const size_t begin = m.mapBegin[map], end = m.mapBegin[map + 1];
-                ok = begin <= end && end <= rows;
-                std::vector<RigExecConditionalRow> mapRows;
-                for (size_t r = begin; ok && r < end; ++r) {
-                    mapRows.push_back({m.rowInputs[r], m.rowFrom[r], m.rowTo[r],
-                                       m.rowSlope[r], m.rowCut[r]});
-                }
-                const bool clamp =
-                    !(map < m.mapUnclamped.size() && m.mapUnclamped[map] != 0);
-                ok = ok && table.AddMap(std::move(mapRows), clamp);
-            }
-            if (!ok) {
-                return _Bad(row + ".maps: malformed animated maps");
-            }
-        }
-        if (interp.network) {
-            const fb::RigExecWireMlNetwork &n = *interp.network;
-            std::vector<int> activations(n.layerActivations.begin(),
-                                         n.layerActivations.end());
-            std::vector<float> alphas;
-            for (double alpha : n.layerAlphas)
-                alphas.push_back(float(alpha));
-            RigExecMlNetwork network;
-            std::string why;
-            const size_t frames =
-                interp.driverSlot >= 0 ? 1 + interp.extraDriverSlots.size() : 0;
-            if ((interp.driverSlot < 0 && !interp.extraDriverSlots.empty()) ||
-                n.inputCount != 4 * frames + interp.valueInputs.size() ||
-                !RigExecMlBuildNetwork(n.inputCount, n.layerSizes, activations,
-                                       alphas, n.weights, n.biases, &network,
-                                       &why) ||
-                (!n.inputMean.empty() && n.inputMean.size() != n.inputCount) ||
-                (!n.inputScale.empty() &&
-                 n.inputScale.size() != n.inputCount) ||
-                (!n.outputDefaults.empty() &&
-                 n.outputDefaults.size() != network.OutputCount()) ||
-                network.OutputCount() != interp.poseSlots.size()) {
-                return _Bad(row + ".network: malformed ML network" +
-                            (why.empty() ? std::string() : ": " + why));
             }
         }
         return true;
@@ -5633,9 +7283,6 @@ private:
     bool _Skeleton2d(const fb::RigExecWireSolver &s, const std::string &row)
     {
         const fb::RigExecWireSkeleton2d &k = *s.skeleton2d;
-        if (_f.formatVersion < 31) {
-            return _Bad(row + ".skeleton2d: in a format older than 31");
-        }
         const size_t perBone = kRigExecBone2dChannelCount;
         const size_t n = k.solveOrder.size();
         const size_t outside = s.controls.size();
@@ -5644,9 +7291,7 @@ private:
                   k.squashFactor.size() == n && k.maxStretch.size() == n &&
                   k.tipBone.size() == n && k.tip.size() == 2 * n &&
                   k.channels.size() == n * perBone &&
-                  s.jointRests.size() == n &&
-                  s.controlRests.size() == outside &&
-                  s.controlReads.size() == outside;
+                  s.jointRests.size() == n && s.controlReads.size() == outside;
         ok = ok && k.spaceBegin.size() == n && k.spaceCount.size() == n &&
              k.spaceSelector.size() == n && k.targetBegin.size() == n &&
              k.targetCount.size() == n && k.angleController.size() == n &&
@@ -5731,9 +7376,6 @@ private:
             s.jointGroupSelectors.empty() && s.jointGroupParents.empty()) {
             return true;
         }
-        if (_f.formatVersion < 31) {
-            return _Bad(row + ".joint_groups: in a format older than 31");
-        }
         const size_t n = s.skeleton2d ? s.skeleton2d->solveOrder.size()
                                       : s.jointGroupParents.size();
         bool ok = s.jointGroupSelectors.size() == s.jointGroups.size() &&
@@ -5789,19 +7431,14 @@ private:
             !_PathId(s.ribbonPointsPath, _AnyPath, row, "ribbon_points_path")) {
             return false;
         }
-        if (s.splineRestMode > uint8_t(fb::SplineIkRestLength::MAX) ||
-            s.scaleMode > uint8_t(fb::ScaleBlend::MAX)) {
-            return _Bad(row + ": spline_rest_mode or scale_mode out of "
-                              "range");
+        if (s.scaleMode > uint8_t(fb::ScaleBlend::MAX)) {
+            return _Bad(row + ": scale_mode out of range");
         }
         for (size_t k = 0; k < s.outputs.size(); ++k) {
             if (!_Index(s.outputs[k].first, _slots, false, row, "outputs",
                         long(k))) {
                 return false;
             }
-        }
-        if (!s.splineRest) {
-            return _Bad(row + ".spline_rest: missing");
         }
         if (s.skeleton2d && !_Skeleton2d(s, row)) {
             return false;
@@ -5865,6 +7502,11 @@ private:
             (c.flags & ~uint8_t(fb::ConstraintFlags::ANY)) != 0) {
             return _Bad(row + ": order, ik_mode or flags out of range");
         }
+        if ((c.flags & RigExecWireConstraintPreserveJointOrientation) &&
+            !c.singleChainIk) {
+            return _Bad(row + ": preserve joint orientation outside a "
+                              "SingleChainIK constraint");
+        }
         const bool envelope = c.weightObject != 0 && c.pointsTarget == 0;
         if ((c.weightObjectIndex >= 0) != envelope ||
             (envelope &&
@@ -5904,7 +7546,7 @@ private:
     }
 
     // A harmonics constraint's fields: absent on every other constraint. Its
-    // window names a windowed op whose step is a Constraint step.
+    // window names a windowed op.
     bool _Harmonics(const fb::RigExecWireConstraint &c, const std::string &row)
     {
         if (!c.harmonics) {
@@ -6589,10 +8231,17 @@ private:
                 continue;
             }
             // The fuse: a Range revision's join, or a Whole revision's.
-            if (!need(D::RevisionTransforms, id) ||
+            if (((!range ||
+                  (revision.op != uint8_t(fb::RevisionOp::Smooth) &&
+                   revision.op != uint8_t(fb::RevisionOp::DeltaMush) &&
+                   revision.op != uint8_t(fb::RevisionOp::Lattice) &&
+                   revision.op != uint8_t(fb::RevisionOp::External) &&
+                   !RigExecFormatIsChunkBlend(revision) &&
+                   !revision.wholeRole)) &&
+                 !need(D::RevisionTransforms, id)) ||
                 (revision.weightObject >= 0 &&
                  !need(D::WeightPacket, uint64_t(revision.weightObject))) ||
-                ((!range || _f.formatVersion < 30) && !needVersion())) {
+                (!range && !needVersion())) {
                 return false;
             }
             const uint64_t base = uint64_t(int64_t(revision.chunkBase));
@@ -6602,8 +8251,7 @@ private:
                         return false;
                     }
                     uint64_t aliased = 0;
-                    if (!written[r][k] && _f.formatVersion >= 30 &&
-                        enteringSlot(k, &aliased) &&
+                    if (!written[r][k] && enteringSlot(k, &aliased) &&
                         !need(D::RevisionOut, aliased)) {
                         return false;
                     }
@@ -6730,6 +8378,7 @@ private:
                     return false;
                 }
                 if (revision.op == uint8_t(fb::RevisionOp::Lattice) &&
+                    !revision.wholeRole &&
                     !_RangeLatticeConstants(revision, row)) {
                     return false;
                 }
@@ -6844,7 +8493,7 @@ private:
                                : std::string();
                 }
                 if (method && text != "classicLinear" &&
-                    !(_f.formatVersion >= 30 && text == "dualQuaternion")) {
+                    text != "dualQuaternion") {
                     return _Bad(row + ": unsupported Range Skin method '" +
                                 text + "'");
                 }
@@ -7060,11 +8709,9 @@ private:
             return false;
         }
         if ((r.binding->normalsPerCorner || r.binding->normalsLeftHanded) &&
-            (r.op != uint8_t(fb::RevisionOp::RecomputeNormals) ||
-             _f.formatVersion < RigExecFormatNormalsLayoutVersion)) {
-            return _Bad(row + ".binding: a normals layout outside a format " +
-                        _N(RigExecFormatNormalsLayoutVersion) +
-                        " RecomputeNormals revision");
+            r.op != uint8_t(fb::RevisionOp::RecomputeNormals)) {
+            return _Bad(row + ".binding: a normals layout outside a "
+                              "RecomputeNormals revision");
         }
         for (size_t ch = 0; ch < r.blendChannels.size(); ++ch) {
             if (!_BlendChannel(r.blendChannels[ch],
@@ -7087,85 +8734,17 @@ private:
         return derived || _Chunks(r, row);
     }
 
-    /// Whether path id \p path is one of the \p count properties \p names
-    /// of prim \p prim.
-    bool _IsPropertyOf(uint32_t path, uint32_t prim, const char *const *names,
-                       size_t count) const
-    {
-        if (path == 0 || path >= _f.paths.size()) {
-            return false;
-        }
-        const fb::PathNode &node = _f.paths[path];
-        if (node.kind() != PathKind::Property || node.parent() != prim ||
-            node.name() >= _f.names.size()) {
-            return false;
-        }
-        const std::string &name = _f.names[node.name()];
-        for (size_t k = 0; k < count; ++k) {
-            if (name == names[k]) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /// The format-21 settings of a Delta Mush, lattice or surface revision
-    /// \p r. Format 21: its frame providers, as many as the op takes.
-    /// Format 20: none of them -- no influence, no path read and no leaf
-    /// site of a settings attribute of its mover -- so the file plays the
-    /// legacy deformer.
+    /// The frame providers of a Delta Mush, lattice or surface revision
+    /// \p r, as many as the op takes.
     bool _ExtendedSettings(const fb::RigExecWireRevision &r,
                            const std::string &row)
     {
-        size_t count = 0;
-        const char *const *names =
-            RigExecFormatExtendedSettingNames(r.op, &count);
-        if (!names) {
-            return true;
-        }
-        const char *op = fb::EnumNameRevisionOp(fb::RevisionOp(r.op));
-        if (_f.formatVersion >= RigExecFormatExtendedSettingsVersion) {
-            if (!RigExecFormatExtendedInfluencesValid(
-                    r.op, r.influenceSlots.size())) {
-                return _Bad(_At(row, "influence_slots") + ": " +
-                            _N(r.influenceSlots.size()) +
-                            " frame providers on a " + op + " revision");
-            }
-            return true;
-        }
-        if (!r.influenceSlots.empty()) {
-            return _Bad(_At(row, "influence_slots") + ": format " +
-                        _N(_f.formatVersion) +
-                        " holds no frame providers "
-                        "on a " +
-                        op + " revision");
-        }
-        if (r.moverPrim == 0) {
-            return true;
-        }
-        const auto refuse = [&](uint32_t path, const std::string &where) {
-            return _Bad(where + ": format " + _N(_f.formatVersion) +
-                        " holds no " + op + " setting " +
-                        RigExecFormatPathText(_f, path));
-        };
-        for (const auto *sites : {&r.leafSites, &r.layoutLeafSites}) {
-            for (size_t k = 0; k < sites->size(); ++k) {
-                const uint32_t path = (*sites)[k].path;
-                if (_IsPropertyOf(path, r.moverPrim, names, count)) {
-                    return refuse(path, row +
-                                            (sites == &r.leafSites
-                                                 ? ".leaf_sites["
-                                                 : ".layout_leaf_sites[") +
-                                            _N(k) + "]");
-                }
-            }
-        }
-        const auto &reads = _f.geometry->pathReads;
-        for (size_t i = 0; i < reads.size(); ++i) {
-            if (_IsPropertyOf(reads[i].path, r.moverPrim, names, count)) {
-                return refuse(reads[i].path,
-                              "geometry.path_reads[" + _N(i) + "]");
-            }
+        if (!RigExecFormatExtendedInfluencesValid(r.op,
+                                                  r.influenceSlots.size())) {
+            return _Bad(_At(row, "influence_slots") + ": " +
+                        _N(r.influenceSlots.size()) + " frame providers on a " +
+                        fb::EnumNameRevisionOp(fb::RevisionOp(r.op)) +
+                        " revision");
         }
         return true;
     }
@@ -7308,14 +8887,14 @@ private:
         }
         const bool ranges = RigExecFormatIsRangeRevision(r);
         const bool blendGroups = RigExecFormatIsChunkBlend(r);
-        if (blendGroups && _f.formatVersion < 29)
-            return _Bad(row + ": blend channel keys require format 29");
+        if (r.wholeRole &&
+            (!ranges || r.op == uint8_t(fb::RevisionOp::Matrix) ||
+             !RigExecFormatRunsAsOps(r))) {
+            return _Bad(row + ": whole_role on no whole op member");
+        }
         if (!keyed) {
-            if (ranges &&
-                (!RigExecFormatIsRangeOp(r.op) ||
-                 ((r.op == uint8_t(fb::RevisionOp::Smooth) ||
-                   r.op == uint8_t(fb::RevisionOp::DeltaMush)) &&
-                  _f.formatVersion < RigExecFormatRangeSmoothVersion))) {
+            if (ranges && !RigExecFormatIsRangeOp(r.op) &&
+                !RigExecFormatRunsAsOps(r)) {
                 return _Bad(row + ": " + _N(r.chunks.size()) +
                             " chunks, but not chunked");
             }
@@ -7331,11 +8910,8 @@ private:
                     for (size_t c = 0; c < r.blendChannels.size(); ++c) {
                         bool touches = false;
                         for (const auto &sample : r.blendChannels[c].samples) {
-                            if (!sample.blendShape || !sample.hasLayout)
-                                return _Bad(row +
-                                            ": blend channel keys require "
-                                            "compiled sparse samples");
-                            if (sample.indices.empty())
+                            if (!sample.blendShape || !sample.hasLayout ||
+                                sample.indices.empty())
                                 touches = true;
                             for (int i : sample.indices)
                                 touches = touches || (i >= r.chunks[k].begin &&
@@ -7362,7 +8938,8 @@ private:
             int64_t at = 0;
             for (size_t k = 0; k < r.chunks.size(); ++k) {
                 const fb::RigExecWireChunk &chunk = r.chunks[k];
-                if (chunk.begin != at || chunk.end <= chunk.begin) {
+                if (chunk.begin != at || chunk.end < chunk.begin ||
+                    (chunk.end == chunk.begin && r.chunks.size() > 1)) {
                     return _Bad(_At(row, "chunks", long(k)) +
                                 ": point range [" +
                                 std::to_string(chunk.begin) + ", " +
@@ -7375,7 +8952,7 @@ private:
             }
             return true;
         }
-        if (r.chunks.size() < 2) {
+        if (r.chunks.size() < (ranges ? 1u : 2u)) {
             return _Bad(row + ": chunked with " + _N(r.chunks.size()) +
                         " chunk(s)");
         }
@@ -7763,10 +9340,10 @@ private:
                 !_PathId(w.combineMode, _TokenOrZero, row, "combine_mode") ||
                 !_PathId(w.planeAxis, _TokenOrZero, row, "plane_axis") ||
                 !_PathId(w.planeBounds, _TokenOrZero, row, "plane_bounds") ||
-                !_PathId(w.oraclePlaneAxis, _TokenOrZero, row,
-                         "oracle_plane_axis") ||
-                !_PathId(w.oraclePlaneBounds, _TokenOrZero, row,
-                         "oracle_plane_bounds") ||
+                !_PathId(w.fieldPlaneAxis, _TokenOrZero, row,
+                         "field_plane_axis") ||
+                !_PathId(w.fieldPlaneBounds, _TokenOrZero, row,
+                         "field_plane_bounds") ||
                 !_PathIds(w.combineTargetPoints, _AnyPath, row,
                           "combine_target_points") ||
                 !_PathIds(w.targetPoints, _AnyPath, row, "target_points") ||
@@ -7788,19 +9365,19 @@ private:
                 !_Index(w.providerSlot, _slots, true, row, "provider_slot")) {
                 return false;
             }
-            // The painted arrays and the oracle's points, as input slots:
+            // The painted arrays and the weight field's points, as input slots:
             // typed, with pool defaults; the painted ones are the object's
-            // own attributes. The oracle's attribute is the one the stage
+            // own attributes. The field's attribute is the one the stage
             // resolves its relationship to, which the file does not hold.
             const std::tuple<int32_t, InputTag, const char *, const char *>
                 slots[] = {{w.valuesSlot, InputTag::FloatArray, "values_slot",
                             SchemaAttrText::rigExecValues},
                            {w.indicesSlot, InputTag::IntArray, "indices_slot",
                             SchemaAttrText::rigExecIndices},
-                           {w.oracleSamplesSlot, InputTag::Vec3fArray,
-                            "oracle_samples_slot", nullptr},
-                           {w.oracleCurveSlot, InputTag::Vec3fArray,
-                            "oracle_curve_slot", nullptr}};
+                           {w.fieldSamplesSlot, InputTag::Vec3fArray,
+                            "field_samples_slot", nullptr},
+                           {w.fieldCurveSlot, InputTag::Vec3fArray,
+                            "field_curve_slot", nullptr}};
             for (const auto &[slot, tag, field, attribute] : slots) {
                 if (!_InputSlotOf(slot, tag, row, field)) {
                     return false;
@@ -7817,9 +9394,9 @@ private:
                 }
             }
             for (const auto &entry :
-                 {std::make_pair(w.oraclePlaneAxisSlot,
+                 {std::make_pair(w.fieldPlaneAxisSlot,
                                  SchemaAttrText::rigExecPlaneAxis),
-                  std::make_pair(w.oraclePlaneBoundsSlot,
+                  std::make_pair(w.fieldPlaneBoundsSlot,
                                  SchemaAttrText::rigExecPlaneBounds)}) {
                 const int32_t slot = entry.first;
                 if (!_InputSlotOf(slot, InputTag::Token, row, entry.second))
@@ -7827,10 +9404,11 @@ private:
                 if (slot >= 0 && (!_SlotIs(slot, w.path, entry.second) ||
                                   (_f.inputs[size_t(slot)].flags() &
                                    uint8_t(fb::InputSlotFlags::Listed))))
-                    return _Bad(row + ": oracle token must be its private raw "
-                                      "attribute slot");
+                    return _Bad(row +
+                                ": weight field token must be its private raw "
+                                "attribute slot");
             }
-            // Dependency order bounds the oracle's recursion.
+            // Dependency order bounds the weight field's recursion.
             if (!_Index(w.base, _weights, true, row, "base") ||
                 !_Indices(w.inputs, _weights, false, row, "inputs")) {
                 return false;
@@ -8109,15 +9687,12 @@ private:
         _derivedStep.assign(_derived, -1);
         for (const size_t i : _played) {
             const fb::RigExecWireStep &step = _f.steps[i];
-            if (step.kind == fb::StepKind::FrameMatrix) {
-                // A FrameMatrix step has no "no record" object: a negative
-                // one is out of range like a too-large one.
-                if (!_Has(p.frameRecords, step.object)) {
+            if (const int64_t record = _FrameRecordOf(step); record >= 0) {
+                if (!_Has(p.frameRecords, record)) {
                     return _Bad(_StepName(i) + " names frame record " +
-                                std::to_string(step.object) + " of " +
-                                _N(records));
+                                std::to_string(record) + " of " + _N(records));
                 }
-                const size_t o = size_t(step.object);
+                const size_t o = size_t(record);
                 if (_recordStep[o] >= 0) {
                     return _Bad(_StepName(i) +
                                 " evaluates the same frame record as " +
@@ -8148,17 +9723,12 @@ private:
                     (*table)[size_t(object)] = int64_t(i);
                 }
             };
+            if (const int64_t w = _CommitOf(step);
+                w >= 0 && _Has(_commitLast, w)) {
+                first(&_commitFirst, int32_t(w));
+                _commitLast[size_t(w)] = int64_t(i);
+            }
             switch (step.kind) {
-            case fb::StepKind::SolverCommit:
-            case fb::StepKind::Constraint:
-            case fb::StepKind::CommitDelta:
-            case fb::StepKind::PropagateChunk:
-            case fb::StepKind::CommitApply:
-                if (_Has(_commitLast, step.object)) {
-                    first(&_commitFirst, step.object);
-                    _commitLast[size_t(step.object)] = int64_t(i);
-                }
-                break;
             case fb::StepKind::InfluenceFold:
                 first(&_foldStep, step.object);
                 break;
@@ -8171,6 +9741,23 @@ private:
             default:
                 break;
             }
+        }
+        // An op chain's head reads its member revisions' phased points.
+        const fb::RigExecWireOpGraph *graph = _f.opGraph.get();
+        for (const size_t i : _played) {
+            const fb::RigExecWireStep &step = _f.steps[i];
+            if (!graph || step.kind != fb::StepKind::OpChainHead ||
+                !_Has(graph->chains, step.object) ||
+                !graph->chains[size_t(step.object)])
+                continue;
+            const auto &members = graph->chains[size_t(step.object)]->members;
+            for (const auto &output : graph->hostOutputs)
+                if (output && output->target == 4 &&
+                    std::find(members.begin(), members.end(), output->node) !=
+                        members.end() &&
+                    _Has(_staticStep, output->object) &&
+                    _staticStep[size_t(output->object)] < 0)
+                    _staticStep[size_t(output->object)] = int64_t(i);
         }
         return true;
     }
@@ -8267,12 +9854,12 @@ private:
         };
         for (const size_t i : _played) {
             const fb::RigExecWireStep &step = _f.steps[i];
-            if (step.kind != fb::StepKind::ComposeSubtree ||
-                !_Has(p.composeGroups, step.object)) {
+            const int64_t composeGroup = _ComposeGroupOf(step);
+            if (composeGroup < 0 || !_Has(p.composeGroups, composeGroup)) {
                 continue;
             }
             const fb::RigExecWireComposeGroup &group =
-                p.composeGroups[size_t(step.object)];
+                p.composeGroups[size_t(composeGroup)];
             for (int32_t slot = group.begin; slot < group.end; ++slot) {
                 if (!write(uint64_t(slot), i, slot)) {
                     return false;
@@ -8478,7 +10065,7 @@ private:
                 }
             }
         }
-        if (records && fold < 0) {
+        if (records && fold < 0 && !RigExecFormatRunsAsOps(r)) {
             return _Bad(_RowText(row) + ": frame records with no " +
                         std::string(foldKind) + " step to read them");
         }
@@ -8909,7 +10496,7 @@ private:
             for (size_t r = 0; r < chains[c].revisions.size(); ++r) {
                 if (chains[c].revisions[r].op ==
                         uint8_t(fb::RevisionOp::External) &&
-                    !claimed[c][r]) {
+                    !chains[c].revisions[r].rangeRole && !claimed[c][r]) {
                     return _Bad("geometry.chains[" + _N(c) + "].revisions[" +
                                 _N(r) +
                                 "]: a plugin mover without its "
@@ -8969,6 +10556,118 @@ private:
     std::vector<std::vector<std::vector<char>>> _groupWritten;
     std::vector<std::vector<std::vector<int>>> _groupEntering;
     const RigExecWireFile &_f;
+    std::vector<size_t> _propertyChainOf, _propertyPartOf;
+    /// Per op node: the volume slot it places (-1 for none), whether its
+    /// base placement, and the lookup its frame input reads (-1 for none).
+    std::vector<int64_t> _placementSlot, _placementLookup;
+    /// Per op node: the weight object whose packet it stores, or -1.
+    std::vector<int64_t> _packetObject;
+    /// Per op node: the weight field it weighs part of, and the field whose
+    /// weights it stores; -1 for none.
+    std::vector<int64_t> _fieldNode, _fieldStored;
+    /// Per op node: the frame record whose matrix it stores, or -1.
+    std::vector<int64_t> _frameRecordOf, _providerSlotOf;
+    /// Per op node: the commit whose PoseCommit it runs, or -1.
+    std::vector<int64_t> _commitNode;
+    /// Per op node: the constraint commit whose mover it solves or whose
+    /// delta it measures, or -1; and the commit whose mover it solves.
+    std::vector<int64_t> _constraintNode, _constraintSolve;
+
+    /// Whether \p w is a walk step committing a constraint.
+    bool _ConstraintCommit(int64_t w) const
+    {
+        return _f.pose && _Has(_f.pose->commits, w) &&
+               _Has(_f.pose->walkSteps, w) &&
+               !_f.pose->walkSteps[size_t(w)].solverBatch &&
+               _Has(_f.pose->constraints, _f.pose->walkSteps[size_t(w)].index);
+    }
+
+    /// Constraint commit \p w's constraint; \p w must pass
+    /// _ConstraintCommit.
+    const fb::RigExecWireConstraint &_ConstraintAt(int64_t w) const
+    {
+        return _f.pose
+            ->constraints[size_t(_f.pose->walkSteps[size_t(w)].index)];
+    }
+
+    /// Whether host output target \p target stores a constraint node's
+    /// result.
+    static bool _ConstraintTarget(uint8_t target)
+    {
+        return (target >= 35 && target <= 37) || (target >= 70 && target <= 74);
+    }
+
+    /// Whether lookup source \p source reads a constraint commit's inputs.
+    static bool _ConstraintLookup(uint8_t source)
+    {
+        return (source >= 32 && source <= 39) || source == 70 || source == 71;
+    }
+
+    /// The constraint commit a constraint op step solves, or -1; with
+    /// \p delta, also the step measuring its delta.
+    int64_t _ConstraintOf(const fb::RigExecWireStep &step,
+                          bool delta = false) const
+    {
+        if (step.kind != fb::StepKind::OpNode || step.object < 0 ||
+            size_t(step.object) >= _constraintNode.size())
+            return -1;
+        return delta ? _constraintNode[size_t(step.object)]
+                     : _constraintSolve[size_t(step.object)];
+    }
+    /// Per op node: the slot whose avars its AvarInputs stores, or -1.
+    std::vector<int64_t> _avarNode;
+    /// Per op node: the space checkpoint whose switch frame it stores, or -1.
+    std::vector<int64_t> _checkpointNode;
+    /// Per op node: the pose interpolator whose weights it stores, or -1.
+    std::vector<int64_t> _interpolatorNode;
+    /// Per op node: the compose group whose rest it stores, or -1.
+    std::vector<int64_t> _restNode;
+    /// Per op node: the compose group whose ladder it stores, or -1.
+    std::vector<int64_t> _ladderNode;
+    /// Per op node: the compose group whose first pose it stores, or -1.
+    std::vector<int64_t> _composeNode;
+
+    /// Per op node: the solver whose frames it stores, or -1; and the
+    /// solver it runs for: that one, or the one of the node it feeds.
+    std::vector<int64_t> _solveNode, _solverOf;
+
+    /// The solver a solver's op node runs, or -1.
+    int64_t _SolverOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _solverOf.size()
+                   ? _solverOf[size_t(step.object)]
+                   : -1;
+    }
+    /// The solver whose frames an op node stores, keeping its Solve
+    /// identity; -1 otherwise.
+    int64_t _SolveOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _solveNode.size()
+                   ? _solveNode[size_t(step.object)]
+                   : -1;
+    }
+
+    /// The commit a constraint or PoseCommit op step works on, or -1.
+    int64_t _CommitOf(const fb::RigExecWireStep &step) const
+    {
+        if (_ConstraintOf(step) >= 0)
+            return _ConstraintOf(step);
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _commitNode.size()
+                   ? _commitNode[size_t(step.object)]
+                   : -1;
+    }
+    /// Per op node: the provider refresh it runs, or -1.
+    std::vector<int64_t> _refreshOf;
+    /// Per op node: the provider value producer whose answer it stores
+    /// (host output 52), or -1.
+    std::vector<int64_t> _answerOf;
+    /// Per op node: the provider op whose result it stores (host output
+    /// 28 or 29), or -1.
+    std::vector<int64_t> _providerOpOf;
+    std::vector<uint8_t> _placementBase;
     std::string _error;
     size_t _slots = 0;
     size_t _clusters = 0;
@@ -8988,7 +10687,7 @@ private:
     std::set<const RigExecWireInput *> _sampledLeafReads;
     std::set<const RigExecWireInput *> _boundWalkReads;
     std::map<const RigExecWireInput *, const std::vector<int32_t> *>
-        _oracleScalarContexts;
+        _weightScalarContexts;
     /// Per path node: 0 for paths[0], else its parent's depth plus one.
     std::vector<uint32_t> _depth;
     /// The steps in playback order, and each step's position in it.
@@ -9009,6 +10708,8 @@ private:
 bool
 RigExecFormatValidate(const fb::RigExecWireFile &file, std::string *error)
 {
+    if (!RigExecManifestValidate(file, error))
+        return false;
     return _Validator(file).Run(error);
 }
 
@@ -9064,6 +10765,36 @@ RigExecFormatGroupWriters(const fb::RigExecWireFile &file, size_t chain,
                 continue;
             }
             (*written)[size_t(r)][size_t(step.part)] = 1;
+        }
+        // A range chain member stores the groups its writes name into the
+        // revision its ChainGroup host output names.
+        const fb::RigExecWireOpGraph *graph = file.opGraph.get();
+        for (size_t i = 0; graph && i < graph->hostOutputs.size(); ++i) {
+            const fb::RigExecWireOpHostOutput *output =
+                graph->hostOutputs[i].get();
+            const int64_t r = output ? int64_t(output->object) - first : -1;
+            if (!output || output->target != 4 || r < 0 ||
+                uint64_t(r) >= count ||
+                !RigExecFormatIsRangeRevision(revisions[size_t(r)])) {
+                continue;
+            }
+            for (const auto &chain : graph->chains) {
+                const auto &members = chain->members;
+                const auto member =
+                    std::find(members.begin(), members.end(), output->node);
+                if (member == members.end() ||
+                    chain->bounds.size() != groups + 1) {
+                    continue;
+                }
+                const size_t row = size_t(member - members.begin()) * groups;
+                for (size_t k = 0; k < groups; ++k) {
+                    if (chain->writes.empty() ||
+                        (row + k < chain->writes.size() &&
+                         chain->writes[row + k])) {
+                        (*written)[size_t(r)][k] = 1;
+                    }
+                }
+            }
         }
     }
     for (size_t k = 0; k < groups; ++k) {
@@ -9148,13 +10879,13 @@ namespace {
 std::string
 _VersionRefusal(uint32_t version)
 {
-    static_assert(RigExecFormatOldestReadable == 20,
+    static_assert(RigExecFormatOldestReadable == 68,
                   "name what the oldest refused format version lacks");
     return "unsupported .rigexec format version " + _N(version) +
            " (this reader reads " + _N(RigExecFormatOldestReadable) +
            " through " + _N(RigExecFormatVersion) + "); " +
            (version < RigExecFormatOldestReadable
-                ? "re-export: per-group range chains"
+                ? "re-export: step 10 op nodes"
                 : "rebake");
 }
 
@@ -9201,6 +10932,9 @@ _OpenAligned(const uint8_t *bytes, size_t size,
     }
     std::unique_ptr<fb::RigExecWireFile> unpacked(root->UnPack());
     std::string why;
+    if (!RigExecManifestResolve(unpacked.get(), &why)) {
+        return _Fail(error, "invalid .rigexec: " + why);
+    }
     if (!RigExecFormatValidate(*unpacked, &why)) {
         return _Fail(error, "invalid .rigexec: " + why);
     }
@@ -9209,6 +10943,15 @@ _OpenAligned(const uint8_t *bytes, size_t size,
 }
 
 } // namespace
+
+bool
+RigExecFormatPropertyPart(const RigExecWireFile &file,
+                          const RigExecWireStep &step, size_t *chain,
+                          size_t *part)
+{
+    return step.kind == fb::StepKind::OpNode &&
+           _PropertyNodeParts(file).Of(step.object, chain, part);
+}
 
 bool
 RigExecFormatOpen(const uint8_t *bytes, size_t size,
@@ -9276,7 +11019,7 @@ RigExecFormatWrite(const fb::RigExecWireFile &file, std::vector<uint8_t> *bytes,
         if (!RigExecFormatValidate(file, &why)) {
             return _Fail(error, "invalid .rigexec: " + why);
         }
-        // Readable older versions open, but every file written is current.
+        // Every file written is the current format version.
         if (file.formatVersion != RigExecFormatVersion) {
             return _Fail(error, "invalid .rigexec: format_version is " +
                                     _N(file.formatVersion) +
@@ -9347,30 +11090,28 @@ const char *
 _StepKindName(fb::StepKind kind)
 {
     switch (kind) {
-    case fb::StepKind::ComposeSubtree:
-        return "ComposeSubtree";
-    case fb::StepKind::Solve:
+    case fb::StepKind::ReservedSolve:
         return "Solve";
-    case fb::StepKind::SolverCommit:
-        return "SolverCommit";
-    case fb::StepKind::Constraint:
-        return "Constraint";
-    case fb::StepKind::CommitDelta:
-        return "CommitDelta";
-    case fb::StepKind::PropagateChunk:
-        return "PropagateChunk";
-    case fb::StepKind::CommitApply:
-        return "CommitApply";
-    case fb::StepKind::ProviderMatrix:
-        return "ProviderMatrix";
+    case fb::StepKind::ReservedSolverCommit:
+        return "ReservedSolverCommit";
+    case fb::StepKind::ReservedConstraint:
+        return "ReservedConstraint";
+    case fb::StepKind::ReservedCommitDelta:
+        return "ReservedCommitDelta";
+    case fb::StepKind::ReservedPropagateChunk:
+        return "ReservedPropagateChunk";
+    case fb::StepKind::ReservedCommitApply:
+        return "ReservedCommitApply";
+    case fb::StepKind::ReservedProviderMatrix:
+        return "ReservedProviderMatrix";
     case fb::StepKind::SnapshotFinals:
         return "SnapshotFinals";
-    case fb::StepKind::PoseInterpolator:
-        return "PoseInterpolator";
-    case fb::StepKind::VolumePlacements:
-        return "VolumePlacements";
-    case fb::StepKind::WeightPacket:
-        return "WeightPacket";
+    case fb::StepKind::ReservedPoseInterpolator:
+        return "ReservedPoseInterpolator";
+    case fb::StepKind::ReservedVolumePlacements:
+        return "ReservedVolumePlacements";
+    case fb::StepKind::ReservedWeightPacket:
+        return "ReservedWeightPacket";
     case fb::StepKind::InfluenceFold:
         return "InfluenceFold";
     case fb::StepKind::RevisionStatic:
@@ -9383,22 +11124,36 @@ _StepKindName(fb::StepKind kind)
         return "ChainStatus";
     case fb::StepKind::Derived:
         return "Derived";
-    case fb::StepKind::FrameMatrix:
-        return "FrameMatrix";
-    case fb::StepKind::PropertyRevision:
-        return "PropertyRevision";
-    case fb::StepKind::RestCompose:
-        return "RestCompose";
-    case fb::StepKind::LadderCompose:
-        return "LadderCompose";
+    case fb::StepKind::ReservedFrameMatrix:
+        return "ReservedFrameMatrix";
+    case fb::StepKind::ReservedPropertyRevision:
+        return "ReservedPropertyRevision";
+    case fb::StepKind::ReservedRestCompose:
+        return "ReservedRestCompose";
+    case fb::StepKind::ReservedLadderCompose:
+        return "ReservedLadderCompose";
     case fb::StepKind::SkinTopology:
         return "SkinTopology";
-    case fb::StepKind::WeightField:
-        return "WeightField";
-    case fb::StepKind::SpaceCheckpoint:
-        return "SpaceCheckpoint";
-    case fb::StepKind::ProviderRefresh:
-        return "ProviderRefresh";
+    case fb::StepKind::ReservedWeightField:
+        return "ReservedWeightField";
+    case fb::StepKind::ReservedSpaceExpression:
+        return "ReservedSpaceExpression";
+    case fb::StepKind::ChainInputs:
+        return "ChainInputs";
+    case fb::StepKind::ReservedAvarInputs:
+        return "ReservedAvarInputs";
+    case fb::StepKind::ReservedSpaceCheckpoint:
+        return "ReservedSpaceCheckpoint";
+    case fb::StepKind::ReservedProviderRefresh:
+        return "ReservedProviderRefresh";
+    case fb::StepKind::ReservedOpGraph:
+        return "ReservedOpGraph";
+    case fb::StepKind::OpNode:
+        return "OpNode";
+    case fb::StepKind::OpChainHead:
+        return "OpChainHead";
+    case fb::StepKind::OpChainRange:
+        return "OpChainRange";
     }
     return "unknown";
 }
@@ -9417,94 +11172,228 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
     const fb::RigExecWireDomainGeometry *geometry = file.geometry.get();
     const int32_t object = step.object;
     switch (step.kind) {
-    case fb::StepKind::ComposeSubtree: {
-        if (!pose || !meta || !_Has(pose->composeGroups, object)) {
-            return false;
-        }
-        const int32_t begin = pose->composeGroups[size_t(object)].begin;
-        if (!_Has(meta->paths, begin)) {
-            return false;
-        }
-        *out = text(meta->paths[size_t(begin)]);
-        return true;
-    }
-    case fb::StepKind::Solve:
+    case fb::StepKind::ReservedSolve:
         if (!pose || !_Has(pose->solvers, object)) {
             return false;
         }
         *out = text(pose->solvers[size_t(object)].path);
         return true;
-    case fb::StepKind::SolverCommit:
-    case fb::StepKind::Constraint:
-    case fb::StepKind::CommitDelta:
-    case fb::StepKind::PropagateChunk:
-    case fb::StepKind::CommitApply: {
-        if (!pose || !_Has(pose->commits, object)) {
-            return false;
-        }
-        // An empty mover path is a batch of commits with no one mover.
-        const std::string mover = text(pose->commits[size_t(object)].moverPath);
-        *out = mover.empty() ? "batch " + std::to_string(object) : mover;
-        return true;
-    }
-    case fb::StepKind::ProviderMatrix:
-        if (!meta || !_Has(meta->paths, object)) {
-            return false;
-        }
-        *out = text(meta->paths[size_t(object)]) +
-               (step.part ? " final" : " base");
-        return true;
+    case fb::StepKind::ReservedSolverCommit:
+    case fb::StepKind::ReservedCommitDelta:
+    case fb::StepKind::ReservedPropagateChunk:
+    case fb::StepKind::ReservedCommitApply:
+        return false;
+    case fb::StepKind::ReservedConstraint:
+        return false;
+    case fb::StepKind::ReservedProviderMatrix:
+        return false;
     case fb::StepKind::SnapshotFinals:
         *out = "every provider";
         return true;
-    case fb::StepKind::PropertyRevision: {
-        if (!_Has(file.propertyChains, object))
+    case fb::StepKind::ReservedPropertyRevision:
+        return false;
+    case fb::StepKind::ReservedRestCompose:
+        return false;
+    case fb::StepKind::ReservedLadderCompose:
+        return false;
+    case fb::StepKind::ReservedSpaceCheckpoint:
+        return false;
+    case fb::StepKind::ReservedProviderRefresh:
+    case fb::StepKind::ReservedSpaceExpression:
+        return false;
+    case fb::StepKind::ReservedOpGraph:
+        return false;
+    case fb::StepKind::OpNode: {
+        if (!file.opGraph || !_Has(file.opGraph->nodes, object))
             return false;
-        const auto &chain = file.propertyChains[size_t(object)];
-        if (step.part == 0) {
-            if (chain.target >= file.inputs.size())
-                return false;
-            *out = text(file.inputs[chain.target].name()) + " base";
-        } else {
-            if (!_Has(chain.revisions, int64_t(step.part) - 1))
-                return false;
-            *out = text(chain.revisions[size_t(step.part - 1)].mover);
+        for (const auto &output : file.opGraph->hostOutputs) {
+            if (!output || output->node != uint64_t(object))
+                continue;
+            if ((output->target == 20 || output->target == 21) && meta &&
+                _Has(meta->paths, output->object)) {
+                *out = text(meta->paths[output->object]) +
+                       (output->target == 20 ? " final" : " base");
+                return true;
+            }
+            if (output->target == 52 && file.providerProgram) {
+                eval::spaces::ProviderProducers producers;
+                producers.operations = file.providerProgram->ops.size();
+                producers.sampled = file.providerProgram->sampled.size();
+                producers.external =
+                    file.providerProgram->externalInputs.size();
+                producers.routed = file.providerProgram->routedInputs.size();
+                producers.frames = pose ? pose->providerFrameInputs.size() : 0;
+                eval::spaces::ProviderProducer part;
+                size_t row = 0;
+                if (!producers.Of(output->object, &part, &row))
+                    return false;
+                using Producer = eval::spaces::ProviderProducer;
+                const auto &p = *file.providerProgram;
+                const uint64_t value =
+                    part == Producer::Operation  ? p.ops[row].output
+                    : part == Producer::Sampled  ? p.sampled[row].value
+                    : part == Producer::External ? p.externalInputs[row].value
+                    : part == Producer::Routed
+                        ? p.routedInputs[row].value
+                        : pose->providerFrameInputs[row].value;
+                if (!_Has(p.valueKeys, value))
+                    return false;
+                *out = p.valueKeys[size_t(value)];
+                return true;
+            }
+            if ((output->target == 28 || output->target == 29) &&
+                file.providerProgram &&
+                _Has(file.providerProgram->ops, output->object) &&
+                _Has(file.providerProgram->valueKeys,
+                     file.providerProgram->ops[output->object].output)) {
+                *out = file.providerProgram->valueKeys[size_t(
+                    file.providerProgram->ops[output->object].output)];
+                return true;
+            }
+            if (output->target == 24 && pose &&
+                _Has(pose->providerRefreshes, output->object)) {
+                *out = pose->providerRefreshes[size_t(output->object)].key;
+                return true;
+            }
+            if (output->target == 22 && pose &&
+                _Has(pose->frameRecords, output->object)) {
+                const fb::FrameRecord &record =
+                    pose->frameRecords[size_t(output->object)];
+                *out = (meta && _Has(meta->paths, int64_t(record.slot()))
+                            ? text(meta->paths[size_t(record.slot())])
+                            : "slot " + std::to_string(record.slot())) +
+                       " after " + text(record.moverLabel());
+                return true;
+            }
         }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) && meta &&
+                output->target == 46 && _Has(meta->paths, output->object)) {
+                *out = text(meta->paths[output->object]);
+                return true;
+            }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
+                output->target == 44 && pose && meta &&
+                _Has(pose->composeGroups, output->object) &&
+                _Has(meta->paths,
+                     pose->composeGroups[size_t(output->object)].begin)) {
+                *out =
+                    text(meta->paths[size_t(
+                        pose->composeGroups[size_t(output->object)].begin)]) +
+                    " ladder";
+                return true;
+            }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
+                output->target == 43 && pose && meta &&
+                _Has(pose->composeGroups, output->object) &&
+                _Has(meta->paths,
+                     pose->composeGroups[size_t(output->object)].begin)) {
+                *out =
+                    text(meta->paths[size_t(
+                        pose->composeGroups[size_t(output->object)].begin)]) +
+                    " rest";
+                return true;
+            }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
+                output->target == 42 && pose &&
+                _Has(pose->poseInterpolators, output->object)) {
+                *out =
+                    text(pose->poseInterpolators[size_t(output->object)].path);
+                return true;
+            }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
+                output->target == 41 && pose &&
+                _Has(pose->spaceCheckpoints, output->object)) {
+                *out = pose->spaceCheckpoints[size_t(output->object)].key;
+                return true;
+            }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
+                output->target == 40 && meta &&
+                _Has(meta->paths, output->object)) {
+                *out = text(meta->paths[output->object]) + " avars";
+                return true;
+            }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
+                (output->target == 1 || output->target == 2) && meta &&
+                _Has(meta->paths, output->object)) {
+                *out = text(meta->paths[output->object]) +
+                       (output->target == 2 ? " base" : "");
+                return true;
+            }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
+                output->target == 30 && pose &&
+                _Has(pose->commits, output->object)) {
+                const std::string mover =
+                    text(pose->commits[output->object].moverPath);
+                *out = mover.empty() ? "batch " + std::to_string(output->object)
+                                     : mover;
+                return true;
+            }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
+                output->target == 60 && pose &&
+                _Has(pose->solvers, output->object)) {
+                *out = text(pose->solvers[output->object].path);
+                return true;
+            }
+        if (_Has(file.opGraph->nodes, object) && file.opGraph->nodes[object])
+            for (const auto &input : file.opGraph->nodes[object]->inputs)
+                if (input && input->host == 4 && pose &&
+                    _Has(file.opGraph->lookups, input->object) &&
+                    file.opGraph->lookups[input->object] &&
+                    file.opGraph->lookups[input->object]->source == 60 &&
+                    _Has(pose->solvers,
+                         file.opGraph->lookups[input->object]->object)) {
+                    *out = text(
+                        pose
+                            ->solvers[size_t(
+                                file.opGraph->lookups[input->object]->object)]
+                            .path);
+                    return true;
+                }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) &&
+                output->target == 3 && geometry &&
+                _Has(geometry->weightObjects, output->object)) {
+                *out = text(geometry->weightObjects[output->object].path);
+                return true;
+            }
+        if (_Has(file.opGraph->nodes, object) && file.opGraph->nodes[object])
+            for (const auto &input : file.opGraph->nodes[object]->inputs)
+                if (input && input->host == 4 && geometry &&
+                    _Has(file.opGraph->lookups, input->object) &&
+                    file.opGraph->lookups[input->object] &&
+                    file.opGraph->lookups[input->object]->source == 4 &&
+                    _Has(geometry->weightObjects,
+                         file.opGraph->lookups[input->object]->part)) {
+                    *out = text(
+                        geometry
+                            ->weightObjects[size_t(
+                                file.opGraph->lookups[input->object]->part)]
+                            .path);
+                    return true;
+                }
+        size_t chain = 0, part = 0;
+        *out = _PropertyNodeParts(file).Of(object, &chain, &part)
+                   ? text(file.propertyChains[chain].revisions[part - 1].mover)
+                   : "op node " + std::to_string(object);
         return true;
     }
-    case fb::StepKind::RestCompose:
-    case fb::StepKind::LadderCompose: {
-        if (!pose || !meta || !_Has(pose->composeGroups, object))
+    case fb::StepKind::OpChainHead:
+    case fb::StepKind::OpChainRange:
+        if (!file.opGraph || !_Has(file.opGraph->chains, object))
             return false;
-        const int first = pose->composeGroups[size_t(object)].begin;
-        if (!_Has(meta->paths, first))
-            return false;
-        *out = text(meta->paths[size_t(first)]);
+        *out = "op chain " + std::to_string(object);
         return true;
-    }
-    case fb::StepKind::SpaceCheckpoint: {
-        if (!pose || !_Has(pose->spaceCheckpoints, object))
-            return false;
-        *out = pose->spaceCheckpoints[size_t(object)].key;
-        return true;
-    }
-    case fb::StepKind::ProviderRefresh:
-        if (!pose || !_Has(pose->providerRefreshes, object))
-            return false;
-        *out = pose->providerRefreshes[size_t(object)].key;
-        return true;
-    case fb::StepKind::WeightField: {
-        if (!geometry || !_Has(geometry->weightFields, object))
-            return false;
-        const auto &field = geometry->weightFields[size_t(object)];
-        if (!_Has(geometry->weightObjects, field.object))
-            return false;
-        *out = text(geometry->weightObjects[size_t(field.object)].path) +
-               " form " + std::to_string(int(field.form)) + " consumer " +
-               std::to_string(field.consumer) + " part " +
-               std::to_string(field.part);
-        return true;
-    }
+    case fb::StepKind::ReservedWeightField:
+        return false;
     case fb::StepKind::SkinTopology: {
         if (!geometry || object < 0)
             return false;
@@ -9534,41 +11423,14 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
         }
         return true;
     }
-    case fb::StepKind::FrameMatrix: {
-        if (!pose || !_Has(pose->frameRecords, object)) {
-            *out = "record " + std::to_string(object);
-            return true;
-        }
-        const fb::FrameRecord &record = pose->frameRecords[size_t(object)];
-        *out = (meta && _Has(meta->paths, int64_t(record.slot()))
-                    ? text(meta->paths[size_t(record.slot())])
-                    : "slot " + std::to_string(record.slot())) +
-               " after " + text(record.moverLabel());
-        return true;
-    }
-    case fb::StepKind::PoseInterpolator:
-        if (!pose || !_Has(pose->poseInterpolators, object)) {
-            return false;
-        }
-        *out = text(pose->poseInterpolators[size_t(object)].path);
-        return true;
-    case fb::StepKind::VolumePlacements:
-        // part 1 places one volume, at slot `object`; any other form has
-        // no slot to name.
-        if ((step.part == 1 || step.part == 2) && meta &&
-            _Has(meta->paths, object)) {
-            *out = text(meta->paths[size_t(object)]) +
-                   (step.part == 2 ? " base" : "");
-        } else {
-            *out = "every volume weight";
-        }
-        return true;
-    case fb::StepKind::WeightPacket:
-        if (!geometry || !_Has(geometry->weightObjects, object)) {
-            return false;
-        }
-        *out = text(geometry->weightObjects[size_t(object)].path);
-        return true;
+    case fb::StepKind::ReservedFrameMatrix:
+        return false;
+    case fb::StepKind::ReservedPoseInterpolator:
+        return false;
+    case fb::StepKind::ReservedVolumePlacements:
+        return false;
+    case fb::StepKind::ReservedWeightPacket:
+        return false;
     case fb::StepKind::InfluenceFold:
     case fb::StepKind::RevisionStatic:
     case fb::StepKind::RevisionChunk:

@@ -3,10 +3,10 @@
 #include "rigExecFrameRecordCheck.h"
 #include "rigExecPoseCompare.h"
 
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/moverGraph.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/moverGraph.h"
+#include "rigExec/api/rigEvaluator.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/getenv.h"

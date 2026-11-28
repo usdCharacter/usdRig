@@ -4,18 +4,18 @@
 #include "rigExecFrozenParity.h"
 #include "rigExecGraphDependencyCheck.h"
 #include "rigExecRuntimeDrive.h"
-#include "rigExecSceneProgramDrive.h"
-#include "rigExec/frozenContext.h"
+#include "rigExecStoredSolve.h"
+#include "rigExec/api/frozenContext.h"
 #include "rigExecSampler/runtimePoseProjection.h"
 #include "rigExecRuntime/stageArrayInputs.h"
 
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedTrace.h"
-#include "rigExec/frameExtraction.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/tapSet.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedTrace.h"
+#include "rigExec/internal/frameExtraction.h"
+#include "rigExec/api/frozenContext.h"
 #include "rigExecMath/pointFrame.h"
+#include "rigExecMath/spaceMatchKernel.h"
 #include "rigExecMath/splineIk.h"
 
 #include "pxr/base/gf/rotation.h"
@@ -27,10 +27,13 @@
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usdGeom/xform.h"
 
+#include <memory>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <string>
 #include <utility>
@@ -71,6 +74,46 @@ static bool
 Near(const GfVec3d &a, const GfVec3d &b, double tolerance = 1e-5)
 {
     return (a - b).GetLength() <= tolerance;
+}
+
+static bool
+SameFrame(const RigExecPointFrame &a, const RigExecPointFrame &b)
+{
+    return a.flags == b.flags &&
+           std::memcmp(a.points.data(), b.points.data(), sizeof a.points) == 0;
+}
+
+// The frames \p evaluator publishes for \p solver, with the rests its
+// program stores beside them; both must hold the same frames.
+static RigExecPointFrameArray
+PublishedSolve(RigExecRigEvaluator &evaluator, const UsdStageRefPtr &stage,
+               const SdfPath &rigPath, const SdfPath &solver)
+{
+    RigExecPointFrameArray stored;
+    CHECK(RigExecStoredSolve(stage, rigPath, solver, UsdTimeCode::Default(),
+                             &stored));
+    const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
+    CHECK(pose.valid);
+    const auto it = pose.solverFrames.find(solver);
+    CHECK(it != pose.solverFrames.end());
+    if (it == pose.solverFrames.end())
+        return stored;
+    CHECK(std::equal(it->second.begin(), it->second.end(),
+                     stored.frames.begin(), stored.frames.end(), SameFrame));
+    stored.frames = it->second;
+    return stored;
+}
+
+static std::unique_ptr<RigExecRigEvaluator>
+CompiledWithSolverFrames(const UsdStageRefPtr &stage, const SdfPath &rigPath)
+{
+    auto evaluator = std::make_unique<RigExecRigEvaluator>(stage, rigPath);
+    evaluator->SetSolverGuidesEnabled(true);
+    std::vector<std::string> errors;
+    CHECK(evaluator->Compile(&errors));
+    for (const std::string &error : errors)
+        std::printf("  compile: %s\n", error.c_str());
+    return evaluator;
 }
 
 // GfRotation's default constructor has an EMPTY body and its members are
@@ -458,39 +501,16 @@ TestEvaluatorSemantics()
                    GfVec3d(1, 1, 5)));
     }
 
-    // A LIVE constraint with a malformed table says so and passes through,
-    // in declared operation order: the cardinality line the raw read
-    // owns, then the mover's "unusable constraint inputs". Both arrays are
-    // read per frame on the canonical graph, so this is also what proves the program
-    // reproduces the diagnostic from THIS run's numbers rather than from
-    // something captured at bake.
+    // A LIVE constraint with a malformed table stops the frame with the
+    // cardinality line of THIS run's numbers: both arrays are read per frame
+    // on the canonical graph, so nothing captured at bake can answer it.
     position.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
     const RigExecRigPose malformed = evaluator.Evaluate(UsdTimeCode::Default());
-    CHECK(malformed.valid);
-    const auto cardinality = std::find_if(
-        malformed.diagnostics.begin(), malformed.diagnostics.end(),
-        [](const std::string &diagnostic) {
-            return diagnostic.find(
-                       "inputs:sourceWeights has 3 entries for 2 sources") !=
-                   std::string::npos;
-        });
-    CHECK(cardinality != malformed.diagnostics.end());
-    if (cardinality != malformed.diagnostics.end()) {
-        const auto unusable = std::find_if(
-            cardinality, malformed.diagnostics.end(),
-            [](const std::string &diagnostic) {
-                return diagnostic.find("has unusable constraint inputs") !=
-                       std::string::npos;
-            });
-        CHECK(unusable != malformed.diagnostics.end());
-    }
-    const auto malformedPosition =
-        malformed.providerXforms.find(SdfPath("/Asset/Targets/Position"));
-    CHECK(malformedPosition != malformed.providerXforms.end());
-    if (malformedPosition != malformed.providerXforms.end()) {
-        CHECK(Near(malformedPosition->second.ExtractTranslation(),
-                   GfVec3d(1, 1, 5)));
-    }
+    CHECK(!malformed.valid);
+    CHECK(std::find(malformed.diagnostics.begin(), malformed.diagnostics.end(),
+                    position.GetPath().GetString() +
+                        ": inputs:sourceWeights has 3 entries for 2 "
+                        "sources") != malformed.diagnostics.end());
 
     // An ANIMATED blend between two parents. The table is re-read per
     // frame, so the two frames below have to differ -- and differ from each
@@ -974,6 +994,58 @@ TestModeAndFailureContracts()
         CHECK(!HasDiagnostic(pose, "world-up object"));
     }
 
+    // An aim that weighs nothing (its only source weighted zero, its weight
+    // zero, or disabled) never reads its world-up object, whatever that
+    // object holds. An aim whose source sits on its target has no aim
+    // direction. Either way every evaluator leaves the target as it entered,
+    // without an error; only the aim without a solution says so.
+    GfMatrix4d entering(0.0);
+    for (const int mode : {2, 0, 1, 3}) {
+        const UsdStageRefPtr stage = BuildConstraintStage(nullptr);
+        MakeXform(stage, SdfPath("/Asset/Flat"),
+                  Matrix(GfVec3d(0, 5, 0), GfRotation(GfVec3d(0, 0, 1), 0.0),
+                         GfVec3d(0.0)));
+        const UsdPrim aim =
+            stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/Aim"));
+        aim.GetAttribute(TfToken("rigExec:worldUpType"))
+            .Set(TfToken("objectRotationUp"));
+        aim.CreateRelationship(TfToken("rigExec:worldUpObject"))
+            .SetTargets({SdfPath("/Asset/Flat")});
+        if (mode == 0)
+            aim.CreateAttribute(TfToken("inputs:sourceWeights"),
+                                SdfValueTypeNames->FloatArray)
+                .Set(VtFloatArray{0.0f});
+        else if (mode == 1)
+            aim.GetAttribute(TfToken("inputs:defaultWeight")).Set(0.0f);
+        else if (mode == 2)
+            aim.GetAttribute(TfToken("inputs:enabled")).Set(false);
+        else
+            stage
+                ->GetAttributeAtPath(
+                    SdfPath("/Asset/Sources/Aim.xformOp:transform"))
+                .Set(Matrix());
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        std::vector<std::string> errors;
+        CHECK(evaluator.Compile(&errors));
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
+        CHECK(pose.valid);
+        CHECK(HasDiagnostic(pose, "degenerate frame") == (mode == 3));
+        const auto aimed =
+            pose.providerXforms.find(SdfPath("/Asset/Targets/Aim"));
+        CHECK(aimed != pose.providerXforms.end());
+        if (aimed == pose.providerXforms.end())
+            continue;
+        if (mode == 2)
+            entering = aimed->second;
+        CHECK(aimed->second == entering);
+        std::string why;
+        CHECK(RigExecFrozenMatchesLive(&evaluator, SdfPath("/Asset/Rig"),
+                                       UsdTimeCode::Default(), &why));
+        std::vector<uint8_t> bytes;
+        std::string error;
+        CHECK(RigExecTestBakeAt(evaluator, 1, &bytes, &error));
+    }
+
     // SingleChain mode ignores dormant pole wiring, malformed pole weights,
     // non-finite pole values, and twist end-to-end.
     {
@@ -1142,8 +1214,8 @@ TestModeAndFailureContracts()
         }
     }
 
-    // Parallel source arrays fail closed at evaluation and leave the target
-    // untouched rather than accepting a partially specified Parent offset.
+    // Parallel source arrays that disagree with the sources stop the frame
+    // rather than accept a partially specified Parent offset.
     {
         const UsdStageRefPtr stage = BuildConstraintStage(nullptr);
         const UsdPrim parent =
@@ -1156,14 +1228,12 @@ TestModeAndFailureContracts()
         std::vector<std::string> errors;
         CHECK(evaluator.Compile(&errors));
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
-        CHECK(HasDiagnostic(pose, "rotationOffsets has 2 entries"));
-        const auto parentXform =
-            pose.providerXforms.find(SdfPath("/Asset/Targets/Parent"));
-        CHECK(parentXform != pose.providerXforms.end());
-        if (parentXform != pose.providerXforms.end()) {
-            CHECK(Near(parentXform->second.ExtractTranslation(),
-                       GfVec3d(1, 0, 0)));
-        }
+        CHECK(!pose.valid);
+        const std::vector<std::string> expected{
+            parent.GetPath().GetString() +
+                ": inputs:rotationOffsets has 2 entries for 1 sources",
+            "native program did not complete generation"};
+        CHECK(pose.diagnostics == expected);
     }
 
     // Structural tokens cannot be animated or assigned an unknown value.
@@ -2331,14 +2401,11 @@ TestSolverBindsJointsUnderAnyScope()
 }
 
 static void
-TestIncompleteSolverLeavesJointsVisible()
+TestIncompleteSolverIsRefused()
 {
-    // Removing a solver's control relationships must not make its joints
-    // disappear: with no aggregate element to extract, each bound joint
-    // keeps its natural rest-chain frame (and stays drawable) while a
-    // diagnostic names the gap. A present-but-degenerate solve is the
-    // opposite case and still propagates; this test covers only the
-    // incomplete solver, whose kernel returns an empty aggregate.
+    // A solver with its control relationships removed cannot solve: Build
+    // refuses it, so the rig compiles and every evaluation is invalid and
+    // names the unbound inputs.
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     MakeXform(stage, SdfPath("/Asset"), Matrix());
     stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
@@ -2381,28 +2448,13 @@ TestIncompleteSolverLeavesJointsVisible()
     CHECK(errors.empty());
 
     const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
-    CHECK(pose.valid);
-    // Every bound joint stays on its rest chain. rest:tx/ty/tz is the
-    // offset from the parent frame provider, so each joint sits at the
-    // accumulated chain -- three 1-unit steps reaching x = 1, 2, 3.
-    const GfVec3d expected[3] = {GfVec3d(1, 0, 0), GfVec3d(2, 0, 0),
-                                 GfVec3d(3, 0, 0)};
-    for (int i = 0; i < 3; ++i) {
-        const auto frame = pose.jointFramesFinal.find(joints[i]);
-        CHECK(frame != pose.jointFramesFinal.end());
-        if (frame == pose.jointFramesFinal.end()) {
-            continue;
-        }
-        CHECK(frame->second.IsValid());
-        CHECK(!frame->second.IsDegenerate());
-        CHECK(Near(frame->second.Origin(), expected[i]));
-        // The matrix is what imaging draws: omitted means invisible.
-        CHECK(pose.jointMatricesFinal.count(joints[i]) == 1);
-    }
+    CHECK(!pose.valid);
     CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
                       [](const std::string &diagnostic) {
                           return diagnostic.find(
-                                     "fell back to its rest chain") !=
+                                     "two-bone IK needs root, effector and "
+                                     "pole controls that are pose providers: "
+                                     "/Asset/Rig/Solvers/LegIK") !=
                                  std::string::npos;
                       }));
 }
@@ -2621,6 +2673,7 @@ TestTwoBoneIkRestFrameInputs()
 {
     {
         const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+        stage->DefinePrim(SdfPath("/Rig"), TfToken("RigExecRoot"));
         const auto provider = [&](const char *path, const char *type,
                                   double tx) {
             const UsdPrim prim =
@@ -2629,14 +2682,15 @@ TestTwoBoneIkRestFrameInputs()
             prim.GetAttribute(TfToken("rest:rx")).Set(0.0);
             return prim;
         };
-        const UsdPrim root = provider("/Root", "RigExecControl", 0.0);
-        const UsdPrim goal = provider("/Goal", "RigExecControl", 6.0);
-        const UsdPrim pole = provider("/Pole", "RigExecControl", 2.0);
-        const UsdPrim jointRoot = provider("/JointRoot", "RigExecJoint", 0.0);
-        const UsdPrim jointMid = provider("/JointMid", "RigExecJoint", 3.0);
-        const UsdPrim jointEnd = provider("/JointEnd", "RigExecJoint", 7.0);
+        const UsdPrim root = provider("/Rig/Root", "RigExecControl", 0.0);
+        const UsdPrim goal = provider("/Rig/Goal", "RigExecControl", 6.0);
+        const UsdPrim pole = provider("/Rig/Pole", "RigExecControl", 2.0);
+        const UsdPrim jointRoot =
+            provider("/Rig/JointRoot", "RigExecJoint", 0.0);
+        const UsdPrim jointMid = provider("/Rig/JointMid", "RigExecJoint", 3.0);
+        const UsdPrim jointEnd = provider("/Rig/JointEnd", "RigExecJoint", 7.0);
         const UsdPrim ik =
-            stage->DefinePrim(SdfPath("/IK"), TfToken("RigExecTwoBoneIk"));
+            stage->DefinePrim(SdfPath("/Rig/IK"), TfToken("RigExecTwoBoneIk"));
         ik.GetRelationship(TfToken("rigExec:rootControl"))
             .SetTargets({root.GetPath()});
         ik.GetRelationship(TfToken("rigExec:effectorControl"))
@@ -2652,15 +2706,10 @@ TestTwoBoneIkRestFrameInputs()
         ik.CreateAttribute(TfToken("rigExec:jointElements"),
                            SdfValueTypeNames->IntArray)
             .Set(VtIntArray{2, 0, 1});
-        RigExecTapSet taps(stage);
-        const RigExecTapId tap = taps.Add(RigExecValueAddress::Prim(
-            ik.GetPath(), SchemaComputation::computePointFrameArray));
-        CHECK(taps.Prepare());
+        const auto evaluator = CompiledWithSolverFrames(stage, SdfPath("/Rig"));
         const auto solve = [&]() {
-            const RigExecSnapshot snapshot =
-                taps.Evaluate(UsdTimeCode::Default());
-            CHECK(snapshot.IsValid() && snapshot.IsComplete());
-            return snapshot.Get<RigExecPointFrameArray>(tap);
+            return PublishedSolve(*evaluator, stage, SdfPath("/Rig"),
+                                  ik.GetPath());
         };
         const auto before = solve();
         CHECK(before.frames.size() == 3 && before.rests.size() == 3);
@@ -2697,6 +2746,7 @@ static void
 TestAggregateSolverValueUpdates()
 {
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/Rig"), TfToken("RigExecRoot"));
     const auto control = [&](const char *path, double tx) {
         const UsdPrim prim =
             stage->DefinePrim(SdfPath(path), TfToken("RigExecControl"));
@@ -2704,35 +2754,31 @@ TestAggregateSolverValueUpdates()
         prim.GetAttribute(TfToken("avars:ty")).Set(0.0);
         return prim;
     };
-    const UsdPrim start = control("/Start", 0.0);
-    const UsdPrim mid = control("/Mid", 2.0);
-    const UsdPrim end = control("/End", 4.0);
+    const UsdPrim start = control("/Rig/Start", 0.0);
+    const UsdPrim mid = control("/Rig/Mid", 2.0);
+    const UsdPrim end = control("/Rig/End", 4.0);
     const UsdPrim fk =
-        stage->DefinePrim(SdfPath("/FK"), TfToken("RigExecFkChain"));
+        stage->DefinePrim(SdfPath("/Rig/FK"), TfToken("RigExecFkChain"));
     fk.GetRelationship(TfToken("rigExec:controls"))
         .SetTargets({start.GetPath(), mid.GetPath(), end.GetPath()});
     const UsdPrim twist = stage->DefinePrim(
-        SdfPath("/Twist"), TfToken("RigExecTwistDistribution"));
+        SdfPath("/Rig/Twist"), TfToken("RigExecTwistDistribution"));
     twist.GetRelationship(TfToken("rigExec:start"))
         .SetTargets({start.GetPath()});
     twist.GetRelationship(TfToken("rigExec:end")).SetTargets({end.GetPath()});
     twist.GetAttribute(TfToken("rigExec:weights"))
         .Set(VtFloatArray{0, 0.5f, 1});
-    const UsdPrim blend = stage->DefinePrim(SdfPath("/Blend"),
+    const UsdPrim blend = stage->DefinePrim(SdfPath("/Rig/Blend"),
                                             TfToken("RigExecBlendPointFrames"));
     blend.GetRelationship(TfToken("rigExec:inputA")).SetTargets({fk.GetPath()});
     blend.GetRelationship(TfToken("rigExec:inputB"))
         .SetTargets({twist.GetPath()});
     blend.GetAttribute(TfToken("inputs:weight")).Set(0.5f);
 
-    RigExecTapSet taps(stage);
-    const RigExecTapId tap = taps.Add(RigExecValueAddress::Prim(
-        blend.GetPath(), SchemaComputation::computePointFrameArray));
-    CHECK(taps.Prepare());
+    const auto evaluator = CompiledWithSolverFrames(stage, SdfPath("/Rig"));
     const auto middle = [&]() {
-        const auto snapshot = taps.Evaluate(UsdTimeCode::Default());
-        CHECK(snapshot.IsValid() && snapshot.IsComplete());
-        const auto frames = snapshot.Get<RigExecPointFrameArray>(tap);
+        const auto frames =
+            PublishedSolve(*evaluator, stage, SdfPath("/Rig"), blend.GetPath());
         CHECK(frames.GetSize() == 3);
         return frames.GetSize() == 3 ? frames.frames[1].Origin() : GfVec3d(0);
     };
@@ -3964,13 +4010,10 @@ SplineIkStraightOrigins()
 static RigExecPointFrameArray
 SplineIkSolve(const SplineIkStage &s)
 {
-    RigExecTapSet taps(s.stage);
-    const RigExecTapId tap = taps.Add(RigExecValueAddress::Prim(
-        s.solver.GetPath(), SchemaComputation::computePointFrameArray));
-    CHECK(taps.Prepare());
-    const RigExecSnapshot snapshot = taps.Evaluate(UsdTimeCode::Default());
-    CHECK(snapshot.IsValid() && snapshot.IsComplete());
-    return snapshot.Get<RigExecPointFrameArray>(tap);
+    const auto evaluator =
+        CompiledWithSolverFrames(s.stage, SdfPath("/Asset/Rig"));
+    return PublishedSolve(*evaluator, s.stage, SdfPath("/Asset/Rig"),
+                          s.solver.GetPath());
 }
 
 static void
@@ -4646,6 +4689,63 @@ TestSingleChainIkOwnInputsMoveOverTimeAndUnderDrag()
     }
 }
 
+// rigExec:orientationMode "preserve" reaches the baked runtime: the .rigexec
+// file carries it, and the solve keeps each joint's orientation relative to its
+// bone as the native solve does.
+static void
+TestSingleChainIkPreserveOrientationBaked()
+{
+    const SdfPath ikPath("/Asset/Rig/Movers/IK");
+    const SdfPath midPath("/Asset/Rig/Joints/Root/Mid");
+    GfMatrix4d mids[2];
+    for (const bool preserve : {false, true}) {
+        const UsdStageRefPtr stage = BuildConstraintStage(nullptr);
+        // The mid joint's X does not run along its bone.
+        stage->GetPrimAtPath(midPath)
+            .GetAttribute(TfToken("posed:space"))
+            .Set(Matrix(GfVec3d(2, 0, 0), GfRotation(GfVec3d(0, 0, 1), 35)));
+        stage->GetPrimAtPath(ikPath)
+            .CreateAttribute(TfToken("rigExec:orientationMode"),
+                             SdfValueTypeNames->Token, /*custom=*/false,
+                             SdfVariabilityUniform)
+            .Set(TfToken(preserve ? "preserve" : "aimX"));
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        CHECK(evaluator.Compile());
+        const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1));
+        CHECK(native.valid);
+        const auto mid = native.jointFramesFinal.find(midPath);
+        CHECK(mid != native.jointFramesFinal.end());
+        if (mid != native.jointFramesFinal.end()) {
+            GfMatrix4d m(1.0);
+            RigExecPointsToMatrix(RigExecIdentityLandmarks(),
+                                  mid->second.points, &m);
+            mids[preserve] = m;
+        }
+        std::vector<uint8_t> bytes;
+        std::string error;
+        const bool baked = RigExecTestBakeAt(evaluator, 1, &bytes, &error);
+        CHECK(baked);
+        RigExecTestPlayer player;
+        const bool played = baked && player.Open(bytes, stage, &error) &&
+                            player.Play(1.0, &error);
+        CHECK(played);
+        if (!played) {
+            std::printf("preserve orientation: %s\n", error.c_str());
+            continue;
+        }
+        RigExecRigPose runtime;
+        CHECK(RigExecProjectRuntimePose(player.Reader(), UsdTimeCode(1), true,
+                                        &runtime, &error));
+        int failures = 0;
+        rigExecTest::CompareEveryMap(
+            &failures, preserve ? "preserve runtime" : "aimX runtime", native,
+            runtime);
+        CHECK(failures == 0);
+    }
+    // The two modes orient the mid joint differently.
+    CHECK(!GfIsClose(mids[0], mids[1], 1e-6));
+}
+
 // Computed float connections and preview overrides must reach IK through
 // the dynamic, baked and frozen routes, including release at the same time.
 static void
@@ -4795,8 +4895,8 @@ struct ConstraintsSourcePlayback {
         context.varyingInputCount = inputs.values.size();
         RigExecFrozenRunReport report;
         const auto detached = RigExecEvaluateFrozen(
-            context, inputs, RigExecMakeProductionStepRunner(), nullptr,
-            SdfPath(), &report);
+            context, inputs, RigExecMakeProductionStepRunner(),
+            RigExecCancellationToken(), &report);
         CHECK(detached.valid);
         rigExecTest::CompareEveryMap(&failures, "source frozen", native,
                                      detached);
@@ -4935,14 +5035,25 @@ TestConstraintTableNormalizationAcrossHosts()
             std::vector<std::string> errors;
             CHECK(evaluator.Compile(&errors));
             const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1));
-            CHECK(native.valid);
             const bool mismatch = entries == 1 || entries == 3;
+            // A table its constraint's op node reads stops the frame.
+            const bool refused = mismatch;
+            CHECK(native.valid == !refused);
             CHECK(HasDiagnostic(native, "sourceWeights has") ==
                   (mismatch && channel == 0));
             CHECK(HasDiagnostic(native, "translationOffsets has") ==
                   (mismatch && channel == 1));
             CHECK(HasDiagnostic(native, "poleVectorWeights has") ==
                   (mismatch && channel == 2));
+            if (refused) {
+                std::string why;
+                CHECK(
+                    RigExecFrozenFailsAsLive(&evaluator, UsdTimeCode(1), &why));
+                std::vector<uint8_t> bytes;
+                std::string error;
+                CHECK(!RigExecTestBakeAt(evaluator, 1, &bytes, &error));
+                continue;
+            }
             std::string why;
             CHECK(RigExecFrozenMatchesLive(&evaluator, SdfPath("/Asset/Rig"),
                                            UsdTimeCode(1), &why));
@@ -4980,36 +5091,19 @@ TestConstraintTableNormalizationAcrossHosts()
         }
         const std::string path = parent.GetPath().GetString();
         const std::vector<std::string> expected{
-            path + " " +
+            path + ": " +
                 (phase == 0 ? SchemaAttrText::inputsSourceWeights
                             : SchemaAttrText::inputsTranslationOffsets) +
                 " has 1 entries for 2 sources",
-            path +
-                " has unusable constraint inputs; constraint passed through"};
+            "native program did not complete generation"};
         RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
         std::vector<std::string> errors;
         CHECK(evaluator.Compile(&errors));
         const RigExecRigPose native = evaluator.Evaluate(UsdTimeCode(1));
-        CHECK(native.valid);
+        CHECK(!native.valid);
         CHECK(native.diagnostics == expected);
-        ConstraintsSourcePlayback playback;
-        if (!playback.Open(evaluator, stage)) {
-            continue;
-        }
-        RigExecFrameInputs inputs;
-        std::string error;
-        CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(1), {}, &inputs,
-                                       &error));
-        playback.context.varyingInputCount = inputs.values.size();
-        const RigExecRigPose frozen = RigExecEvaluateFrozen(
-            playback.context, inputs, RigExecMakeProductionStepRunner());
-        CHECK(frozen.valid);
-        CHECK(frozen.diagnostics == expected);
-        CHECK(playback.player.Play(1, &error));
-        RigExecRigPose runtime;
-        CHECK(RigExecProjectRuntimePose(
-            playback.player.Reader(), UsdTimeCode(1), true, &runtime, &error));
-        CHECK(runtime.diagnostics == expected);
+        std::string why;
+        CHECK(RigExecFrozenFailsAsLive(&evaluator, UsdTimeCode(1), &why));
     }
 }
 
@@ -5153,7 +5247,7 @@ TestDirectStaticNumericSources()
                 RigExecFrozenRunReport report;
                 const auto frozen = RigExecEvaluateFrozen(
                     playback.context, inputs, RigExecMakeProductionStepRunner(),
-                    nullptr, SdfPath(), &report);
+                    RigExecCancellationToken(), &report);
                 CHECK(frozen.valid);
                 rigExecTest::CompareEveryMap(
                     &failures, "source override frozen", native, frozen);
@@ -5434,8 +5528,9 @@ TestAuthoredPosedSpaceBakesAndAnimatedOneFollows()
         std::find_if(graph.begin(), graph.end(), [&](const auto &node) {
             if (node.kind != "SpaceExpression")
                 return false;
-            const auto &body =
-                binding.steps[binding.opGraph.ops[node.step].originalIndex];
+            const RigExecBakedStepIdentity body = RigExecBakedIdentityOf(
+                binding,
+                binding.steps[binding.opGraph.ops[node.step].originalIndex]);
             if (body.part != 0)
                 return false;
             const auto &op =
@@ -5475,7 +5570,8 @@ TestAuthoredPosedSpaceBakesAndAnimatedOneFollows()
 }
 
 // A diagnostic can name another operation without making it responsible.
-// In particular, "cycle" in a prim name must not select cycle recovery.
+// In particular, "cycle" in a prim name must not select cycle recovery. The
+// broken constraint moves a structural property of the healthy one.
 static void
 TestCompileRecoveryIgnoresOperationSpelling()
 {
@@ -5492,7 +5588,7 @@ TestCompileRecoveryIgnoresOperationSpelling()
             .SetTargets({SdfPath("/Asset/Source")});
         const UsdPrim broken = MakeConstraint(
             stage, name, "RigExecPositionConstraint",
-            {healthy.GetPath().AppendProperty(TfToken("missing"))});
+            {healthy.GetPath().AppendProperty(TfToken("faceVertexCounts"))});
 
         RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
         std::vector<std::string> errors;
@@ -5509,18 +5605,14 @@ TestCompileRecoveryIgnoresOperationSpelling()
     }
 }
 
-// A switchable limb with an IK/FK match: the scene program publishes the
-// same outputs:ikValues/fkValues and presents the same control frames as the
-// native evaluator, on the FK value, the IK value and between them. A foreign
-// applied API schema on a control does not refuse the scene program.
-static void
-TestIkFkMatchSceneProgramMatchesNative()
+// A switchable limb with an IK/FK match: FK on frames 1-4, IK on 5-8,
+// between on 9-10. The match is /Asset/Rig/Movers/Match.
+static UsdStageRefPtr
+BuildIkFkMatchArm()
 {
-    using rigExecSceneProgramDrive::SceneRun;
-    const SdfPath rig("/Asset/Rig");
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     MakeXform(stage, SdfPath("/Asset"), Matrix());
-    stage->DefinePrim(rig, TfToken("RigExecRoot"));
+    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
     const auto control = [&](const std::string &path, double tx, double tz) {
         const UsdPrim prim = stage->DefinePrim(
             SdfPath("/Asset/Rig/Controls/" + path), TfToken("RigExecControl"));
@@ -5621,279 +5713,314 @@ TestIkFkMatchSceneProgramMatchesNative()
     match.CreateAttribute(TfToken("inputs:twist"), SdfValueTypeNames->Double)
         .Set(10.0);
     SolversLast(stage);
-
-    RigExecRigEvaluator native(stage, rig);
-    std::vector<std::string> errors;
-    CHECK(native.Compile(&errors));
-    for (const auto &message : errors)
-        std::printf("native: %s\n", message.c_str());
-    SceneRun scene(stage, rig, 1, 10);
-    CHECK(scene.ok);
-    if (!scene.ok)
-        return;
-
-    const SdfPath ikValuesPath =
-        match.GetPath().AppendProperty(TfToken("outputs:ikValues"));
-    const SdfPath fkValuesPath =
-        match.GetPath().AppendProperty(TfToken("outputs:fkValues"));
-    const SdfPath presentedControls[6] = {ik.GetPath(),   pole.GetPath(),
-                                          up.GetPath(),   lo.GetPath(),
-                                          hand.GetPath(), orient.GetPath()};
-    for (const SdfPath &path : presentedControls) {
-        CHECK(scene.program.presentedPoses.count(path) == 1);
-    }
-    const auto sceneValue = [&](RigExecValueId id) {
-        VtValue value;
-        RigExecReadSceneGraphValue(scene.runtime.values, id, &value);
-        return value;
-    };
-    const auto publicValue = [&](const SdfPath &path) {
-        const auto found = scene.program.publicValues.find(path);
-        return found == scene.program.publicValues.end()
-                   ? VtValue()
-                   : sceneValue(found->second);
-    };
-    double worst = 0;
-    bool sawIk = false, sawFk = false, sawValues = false;
-    for (int t = 1; t <= 10; ++t) {
-        const RigExecRigPose pose = native.Evaluate(UsdTimeCode(t));
-        CHECK(pose.valid);
-        CHECK(scene.Evaluate(t));
-        // The consumed IK reads its joints' rests where the blend begins,
-        // never the blend's own output: no operation is set aside.
-        CHECK(scene.program.graph.cycleMembers.empty());
-        for (const SdfPath *path : {&ikValuesPath, &fkValuesPath}) {
-            const auto want = pose.movedProperties.find(*path);
-            const VtValue got = publicValue(*path);
-            CHECK((want != pose.movedProperties.end()) ==
-                  got.IsHolding<VtDoubleArray>());
-            if (want == pose.movedProperties.end() ||
-                !got.IsHolding<VtDoubleArray>() ||
-                !want->second.IsHolding<VtDoubleArray>())
-                continue;
-            sawValues = true;
-            const VtDoubleArray &a = want->second.UncheckedGet<VtDoubleArray>();
-            const VtDoubleArray &b = got.UncheckedGet<VtDoubleArray>();
-            CHECK(a.size() == b.size());
-            for (size_t k = 0; k < std::min(a.size(), b.size()); ++k) {
-                worst = std::max(worst, std::abs(a[k] - b[k]));
-            }
-        }
-        for (size_t c = 0; c < 6; ++c) {
-            const auto want = pose.controlFrames.find(presentedControls[c]);
-            const auto found =
-                scene.program.presentedPoses.find(presentedControls[c]);
-            CHECK(want != pose.controlFrames.end() &&
-                  found != scene.program.presentedPoses.end());
-            if (want == pose.controlFrames.end() ||
-                found == scene.program.presentedPoses.end())
-                continue;
-            const VtValue got = sceneValue(found->second);
-            CHECK(got.IsHolding<RigExecPointFrame>());
-            if (!got.IsHolding<RigExecPointFrame>())
-                continue;
-            const RigExecPointFrame &frame =
-                got.UncheckedGet<RigExecPointFrame>();
-            for (size_t p = 0; p < 4; ++p) {
-                worst = std::max(
-                    worst,
-                    (want->second.points[p] - frame.points[p]).GetLength());
-            }
-            // Presented away from the final version: the IK half on the FK
-            // value, the FK half on the IK value.
-            const VtValue last = scene.Final(presentedControls[c],
-                                             RigExecSceneValueDomain::Pose);
-            if (last.IsHolding<RigExecPointFrame>() &&
-                (last.UncheckedGet<RigExecPointFrame>().Origin() -
-                 frame.Origin())
-                        .GetLength() > 1e-6) {
-                (c < 2 || c == 5 ? sawIk : sawFk) = true;
-            }
-        }
-        for (const SdfPath &joint : joints) {
-            const auto want = pose.jointFramesFinal.find(joint);
-            const VtValue got =
-                scene.Final(joint, RigExecSceneValueDomain::Pose);
-            CHECK(want != pose.jointFramesFinal.end() &&
-                  got.IsHolding<RigExecPointFrame>());
-            if (want != pose.jointFramesFinal.end() &&
-                got.IsHolding<RigExecPointFrame>()) {
-                worst = std::max(
-                    worst, (want->second.Origin() -
-                            got.UncheckedGet<RigExecPointFrame>().Origin())
-                               .GetLength());
-            }
-        }
-    }
-    if (worst > 1e-9)
-        std::printf("IK/FK match scene/native worst difference %g\n", worst);
-    CHECK(worst <= 1e-9);
-    CHECK(sawValues);
-    CHECK(sawIk);
-    CHECK(sawFk);
+    return stage;
 }
 
-// Two (or three) unconsumed solvers naming the same joints stack in stack
-// order (testRigExecSolverStacking's Stacked rig): the scene program writes
-// the same joint frames as the native evaluator, the later writer measuring
-// its chain from the frames the earlier one left.
-static void
-TestStackedSolversSceneProgramMatchesNative()
+// One published value bit for bit, any NaN equal to any NaN
+// (rigExecTest::SameBitsOrNaN).
+static bool
+SameValueBits(const VtValue &a, const VtValue &b, const char *what)
 {
-    using rigExecSceneProgramDrive::SceneRun;
-    const auto rest = [](double x, double y, double z) {
-        char buffer[160];
-        std::snprintf(
-            buffer, sizeof(buffer),
-            "( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (%g, %g, %g, 1) )", x,
-            y, z);
-        return std::string(buffer);
-    };
-    const auto chain = [&](const char *prefix, const char *rz) {
-        return std::string("            def RigExecControl \"") + prefix +
-               "Hip\"\n"
-               "            {\n"
-               "                double avars:rz.timeSamples = { 1: 0, 5: " +
-               rz +
-               " }\n"
-               "                matrix4d rest:space = " +
-               rest(0, 8, 0) +
-               "\n"
-               "                def RigExecControl \"" +
-               prefix +
-               "Knee\"\n"
-               "                {\n"
-               "                    double avars:rz.timeSamples = { 1: 0, 5: "
-               "-25 }\n"
-               "                    matrix4d rest:space = " +
-               rest(4, 0, 0) +
-               "\n"
-               "                    def RigExecControl \"" +
-               prefix +
-               "Ankle\"\n"
-               "                    {\n"
-               "                        matrix4d rest:space = " +
-               rest(4, 0, 0) +
-               "\n"
-               "                    }\n"
-               "                }\n"
-               "            }\n";
-    };
-    const auto fkSolver = [](const char *name, const char *prefix) {
-        const std::string c = std::string("</Asset/Rig/Controls/") + prefix;
-        return std::string("            def RigExecFkChain \"") + name +
-               "\"\n"
-               "            {\n"
-               "                rel rigExec:controls = [ " +
-               c + "Hip>, " + c + "Hip/" + prefix + "Knee>, " + c + "Hip/" +
-               prefix + "Knee/" + prefix +
-               "Ankle> ]\n"
-               "                rel rigExec:joints = [ "
-               "</Asset/Rig/Joints/Hip>, </Asset/Rig/Joints/Hip/Knee>, "
-               "</Asset/Rig/Joints/Hip/Knee/Ankle> ]\n"
-               "            }\n";
-    };
-    const SdfPath joints[3] = {SdfPath("/Asset/Rig/Joints/Hip"),
-                               SdfPath("/Asset/Rig/Joints/Hip/Knee"),
-                               SdfPath("/Asset/Rig/Joints/Hip/Knee/Ankle")};
-    for (const bool threeDeep : {false, true}) {
-        std::string text =
-            "#usda 1.0\n(\n    defaultPrim = \"Asset\"\n    startTimeCode = "
-            "1\n    endTimeCode = 5\n"
-            "    upAxis = \"Y\"\n)\n"
-            "def Xform \"Asset\"\n{\n    def RigExecRoot \"Rig\"\n    {\n"
-            "        def Scope \"Controls\"\n        {\n"
-            "            def RigExecControl \"HipRoot\"\n            {\n"
-            "                matrix4d rest:space = " +
-            rest(0, 8, 0) +
-            "\n            }\n"
-            "            def RigExecControl \"FootIK\"\n            {\n"
-            "                double avars:ty.timeSamples = { 1: 0, 3: 1.5, 5: "
-            "0.5 }\n"
-            "                matrix4d rest:space = " +
-            rest(0, 0, 0) +
-            "\n            }\n"
-            "            def RigExecControl \"KneePole\"\n            {\n"
-            "                matrix4d rest:space = " +
-            rest(0, 4, 3) + "\n            }\n" + chain("Fk", "30") +
-            (threeDeep ? chain("Fk2", "-20") : std::string()) +
-            "        }\n"
-            "        def Scope \"Joints\"\n        {\n"
-            "            def RigExecJoint \"Hip\"\n            {\n"
-            "                matrix4d rest:space = " +
-            rest(0, 8, 0) +
-            "\n"
-            "                def RigExecJoint \"Knee\"\n                {\n"
-            "                    matrix4d rest:space = " +
-            rest(4, 0, 0) +
-            "\n"
-            "                    def RigExecJoint \"Ankle\"\n                  "
-            "  {\n"
-            "                        matrix4d rest:space = " +
-            rest(4, 0, 0) +
-            "\n"
-            "                    }\n                }\n            }\n        "
-            "}\n"
-            "        def Scope \"Solvers\"\n        {\n"
-            "            def RigExecTwoBoneIk \"LegIK\"\n            {\n"
-            "                rel rigExec:rootControl = "
-            "</Asset/Rig/Controls/HipRoot>\n"
-            "                rel rigExec:effectorControl = "
-            "</Asset/Rig/Controls/FootIK>\n"
-            "                rel rigExec:poleControl = "
-            "</Asset/Rig/Controls/KneePole>\n"
-            "                rel rigExec:joints = [ </Asset/Rig/Joints/Hip>, "
-            "</Asset/Rig/Joints/Hip/Knee>, "
-            "</Asset/Rig/Joints/Hip/Knee/Ankle> ]\n"
-            "                double rigExec:preferredBendRadians = 0.3\n"
-            "            }\n" +
-            fkSolver("LegFK", "Fk") +
-            (threeDeep ? fkSolver("LegFK2", "Fk2") : std::string()) +
-            "        }\n    }\n}\n";
-        const SdfLayerRefPtr layer = SdfLayer::CreateAnonymous(".usda");
-        CHECK(layer && layer->ImportFromString(text));
-        if (!layer)
-            return;
-        const UsdStageRefPtr stage = UsdStage::Open(layer);
-        const SdfPath rig("/Asset/Rig");
-        RigExecRigEvaluator native(stage, rig);
-        std::vector<std::string> errors;
-        CHECK(native.Compile(&errors));
-        for (const auto &message : errors)
-            std::printf("native: %s\n", message.c_str());
-        SceneRun scene(stage, rig, 1, 5);
-        CHECK(scene.ok);
-        if (!scene.ok)
-            return;
-        double worst = 0;
-        for (int t = 1; t <= 5; ++t) {
-            const RigExecRigPose pose = native.Evaluate(UsdTimeCode(t));
-            CHECK(pose.valid);
-            CHECK(scene.Evaluate(t));
-            for (const SdfPath &joint : joints) {
-                const auto want = pose.jointFramesFinal.find(joint);
-                const VtValue got =
-                    scene.Final(joint, RigExecSceneValueDomain::Pose);
-                CHECK(want != pose.jointFramesFinal.end() &&
-                      got.IsHolding<RigExecPointFrame>());
-                if (want == pose.jointFramesFinal.end() ||
-                    !got.IsHolding<RigExecPointFrame>())
-                    continue;
-                for (size_t p = 0; p < 4; ++p) {
-                    const double d =
-                        (want->second.points[p] -
-                         got.UncheckedGet<RigExecPointFrame>().points[p])
-                            .GetLength();
-                    if (d > 1e-9)
-                        std::printf("stacked%s t=%d %s p%zu differs by %g\n",
-                                    threeDeep ? " (three)" : "", t,
-                                    joint.GetText(), p, d);
-                    worst = std::max(worst, d);
-                }
+    using rigExecTest::SameBitsOrNaN;
+    if (a.IsHolding<VtDoubleArray>() && b.IsHolding<VtDoubleArray>()) {
+        const VtDoubleArray &x = a.UncheckedGet<VtDoubleArray>();
+        const VtDoubleArray &y = b.UncheckedGet<VtDoubleArray>();
+        return x.size() == y.size() &&
+               SameBitsOrNaN(x.cdata(), y.cdata(), x.size(), what);
+    }
+    if (a.IsHolding<double>() && b.IsHolding<double>())
+        return SameBitsOrNaN(&a.UncheckedGet<double>(),
+                             &b.UncheckedGet<double>(), 1, what);
+    if (a.IsHolding<float>() && b.IsHolding<float>())
+        return SameBitsOrNaN(&a.UncheckedGet<float>(), &b.UncheckedGet<float>(),
+                             1, what);
+    if (a.IsHolding<GfMatrix4d>() && b.IsHolding<GfMatrix4d>())
+        return SameBitsOrNaN(a.UncheckedGet<GfMatrix4d>().data(),
+                             b.UncheckedGet<GfMatrix4d>().data(), 16, what);
+    return a == b;
+}
+
+// Two publications of one frame: the ordered diagnostics and validity
+// exactly, every moved property and every base, final and control frame bit
+// for bit with any NaN equal to any NaN. Prints the first difference.
+static bool
+SamePublishedBits(const RigExecRigPose &a, const RigExecRigPose &b)
+{
+    if (a.valid != b.valid || a.diagnostics != b.diagnostics) {
+        std::printf("    validity or diagnostics differ\n");
+        return false;
+    }
+    if (a.movedProperties.size() != b.movedProperties.size()) {
+        std::printf("    %zu vs %zu moved properties\n",
+                    a.movedProperties.size(), b.movedProperties.size());
+        return false;
+    }
+    for (const auto &[path, value] : a.movedProperties) {
+        const auto found = b.movedProperties.find(path);
+        if (found == b.movedProperties.end() ||
+            !SameValueBits(value, found->second, path.GetText())) {
+            std::printf("    moved property %s differs\n", path.GetText());
+            return false;
+        }
+    }
+    const auto sameFrames = [](const char *what, const auto &x, const auto &y) {
+        if (x.size() != y.size()) {
+            std::printf("    %zu vs %zu %s\n", x.size(), y.size(), what);
+            return false;
+        }
+        for (const auto &[path, frame] : x) {
+            const auto found = y.find(path);
+            if (found == y.end() || frame.flags != found->second.flags ||
+                !rigExecTest::SameBitsOrNaN(frame.points[0].data(),
+                                            found->second.points[0].data(), 12,
+                                            path.GetText())) {
+                std::printf("    %s %s differs\n", what, path.GetText());
+                return false;
             }
         }
-        CHECK(worst <= 1e-9);
+        return true;
+    };
+    return sameFrames("base frame", a.jointFramesBase, b.jointFramesBase) &&
+           sameFrames("final frame", a.jointFramesFinal, b.jointFramesFinal) &&
+           sameFrames("control frame", a.controlFrames, b.controlFrames);
+}
+
+// One frame of \p rig in the native evaluator, a frozen job and the
+// .rigexec runtime baked at that frame.
+struct EveryEvaluatorPose {
+    bool ok = false;
+    RigExecRigPose native, frozen, runtime;
+};
+
+static EveryEvaluatorPose
+EvaluateEveryEvaluator(const UsdStageRefPtr &stage, const SdfPath &rig,
+                       double time)
+{
+    EveryEvaluatorPose out;
+    RigExecRigEvaluator evaluator(stage, rig);
+    std::vector<std::string> errors;
+    std::string error;
+    if (!evaluator.Compile(&errors)) {
+        std::printf("FAIL every evaluator: %s does not compile\n",
+                    rig.GetText());
+        ++failures;
+        return out;
     }
+    out.native = evaluator.Evaluate(UsdTimeCode(time));
+    std::shared_ptr<const RigExecFrozenProgram> frozen;
+    RigExecFrameInputs inputs;
+    if (!RigExecFreezeProgram(evaluator, &frozen, &error) || !frozen ||
+        !RigExecSampleFrameInputs(evaluator, UsdTimeCode(time), {}, &inputs,
+                                  &error)) {
+        std::printf("FAIL every evaluator: frozen: %s\n", error.c_str());
+        ++failures;
+        return out;
+    }
+    RigExecFrozenEvalContext context;
+    context.compiledRigSignature = evaluator.GetCompiledRigSignature();
+    context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
+    context.varyingInputCount = inputs.values.size();
+    if (evaluator.GetSolverGuidesEnabled())
+        context.flags |= kRigExecFrozenSolverGuidesEnabled;
+    if (evaluator.GetPublishWeightFields())
+        context.flags |= kRigExecFrozenPublishWeightFields;
+    context.frozen = frozen.get();
+    out.frozen = RigExecEvaluateFrozen(context, inputs,
+                                       RigExecMakeProductionStepRunner());
+    std::vector<uint8_t> bytes;
+    RigExecTestPlayer player;
+    if (!RigExecTestBakeAt(evaluator, time, &bytes, &error) ||
+        !player.Open(bytes, stage, &error) || !player.Play(time, &error) ||
+        !RigExecProjectRuntimePose(player.Reader(), UsdTimeCode(time), true,
+                                   &out.runtime, &error)) {
+        std::printf("FAIL every evaluator: runtime: %s\n", error.c_str());
+        ++failures;
+        return out;
+    }
+    out.ok = true;
+    return out;
+}
+
+// A space switch on P between Other and the rig, P in the rig's space.
+static const char *const kNonFiniteSpaceSwitch = R"usda(#usda 1.0
+def RigExecRoot "Rig"
+{
+    def Scope "Controls"
+    {
+        def RigExecControl "Other" (
+            prepend apiSchemas = ["RigExecControlAPI"]
+        )
+        {
+            double avars:tx.timeSamples = { 1: 10, 2: 20 }
+            matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (50, 100, 0, 1) )
+        }
+
+        def RigExecControl "P" (
+            prepend apiSchemas = ["RigExecControlAPI"]
+        )
+        {
+            double avars:rz.timeSamples = { 1: 15, 2: -10 }
+            matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 100, 0, 1) )
+
+            def RigExecJoint "PJ"
+            {
+                uniform token purpose = "default"
+            }
+        }
+    }
+
+    def "Movers"
+    {
+        def RigExecSpaceSwitch "pSpaces"
+        {
+            double inputs:activeSpace.timeSamples = { 1: 1, 2: 0 }
+            rel rigExec:sources = [
+                </Rig/Controls/Other>,
+                </Rig>,
+            ]
+            rel rigExec:target = </Rig/Controls/P>
+        }
+    }
+}
+)usda";
+
+// A frame whose landmarks are not all finite -- a NaN or either infinity in
+// a control's translation (every landmark) or in one rotation channel (the
+// landmarks its rows move) -- is refused by the space match and the IK/FK
+// match in every evaluator: the native evaluator, a frozen job and the
+// .rigexec runtime publish no match values for it and report the same
+// diagnostics. Unpoisoned, all three publish the same match values.
+static void
+TestNonFiniteMatchesAreRefused()
+{
+    const double poisons[] = {std::numeric_limits<double>::quiet_NaN(),
+                              std::numeric_limits<double>::infinity(),
+                              -std::numeric_limits<double>::infinity()};
+    const char *const channels[] = {"avars:tx", "avars:rx", "avars:ry",
+                                    "avars:rz"};
+    const auto agree = [](const std::string &label,
+                          const EveryEvaluatorPose &played) {
+        const bool frozen = SamePublishedBits(played.native, played.frozen);
+        const bool runtime = SamePublishedBits(played.native, played.runtime);
+        if (!frozen || !runtime) {
+            std::printf("FAIL %s: native and %s publish differently\n",
+                        label.c_str(), frozen ? "runtime" : "frozen");
+            for (const auto *pose :
+                 {&played.native, &played.frozen, &played.runtime})
+                for (const std::string &line : pose->diagnostics)
+                    std::printf("    %s\n", line.c_str());
+            ++failures;
+        }
+    };
+    const auto names = [](const RigExecRigPose &pose, const std::string &text) {
+        return std::any_of(
+            pose.diagnostics.begin(), pose.diagnostics.end(),
+            [&](const std::string &line) { return line == text; });
+    };
+
+    const SdfPath rig("/Rig");
+    const SdfPath matchValues(std::string("/Rig/Controls/P.") +
+                              SchemaAttrText::spacesMatchValues);
+    const std::string refusal =
+        std::string("/Rig/Controls/P") + kRigExecSpaceMatchNotFinite;
+    const auto switchStage = [] {
+        const SdfLayerRefPtr layer = SdfLayer::CreateAnonymous(".usda");
+        CHECK(layer->ImportFromString(kNonFiniteSpaceSwitch));
+        const UsdStageRefPtr stage = UsdStage::Open(layer);
+        stage->SetEditTarget(stage->GetSessionLayer());
+        return stage;
+    };
+    for (const double time : {1.0, 2.0}) {
+        const EveryEvaluatorPose played =
+            EvaluateEveryEvaluator(switchStage(), rig, time);
+        if (!played.ok)
+            continue;
+        const std::string label =
+            "finite space match at " + std::to_string(int(time));
+        agree(label, played);
+        CHECK(played.native.movedProperties.count(matchValues) == 1);
+        CHECK(!names(played.native, refusal));
+    }
+    int spaceRefusals = 0;
+    for (const double poison : poisons) {
+        // P's own channel poisons the target; Other's poisons the space
+        // match's run with Other selected.
+        for (const char *control : {"/Rig/Controls/P", "/Rig/Controls/Other"}) {
+            for (const char *channel : channels) {
+                const UsdStageRefPtr stage = switchStage();
+                stage->GetPrimAtPath(SdfPath(control))
+                    .CreateAttribute(TfToken(channel),
+                                     SdfValueTypeNames->Double)
+                    .Set(poison);
+                const EveryEvaluatorPose played =
+                    EvaluateEveryEvaluator(stage, rig, 1.0);
+                if (!played.ok)
+                    continue;
+                const std::string label = std::string("space match, ") +
+                                          control + "." + channel + " = " +
+                                          std::to_string(poison);
+                agree(label, played);
+                for (const auto *pose :
+                     {&played.native, &played.frozen, &played.runtime}) {
+                    CHECK(pose->movedProperties.count(matchValues) == 0);
+                    CHECK(names(*pose, refusal));
+                }
+                ++spaceRefusals;
+            }
+        }
+    }
+    CHECK(spaceRefusals == 24);
+
+    const SdfPath arm("/Asset/Rig");
+    const SdfPath ikValues("/Asset/Rig/Movers/Match.outputs:ikValues");
+    const SdfPath fkValues("/Asset/Rig/Movers/Match.outputs:fkValues");
+    for (const double time : {2.0, 6.0}) {
+        const EveryEvaluatorPose played =
+            EvaluateEveryEvaluator(BuildIkFkMatchArm(), arm, time);
+        if (!played.ok)
+            continue;
+        agree("finite IK/FK match at " + std::to_string(int(time)), played);
+        CHECK(played.native.movedProperties.count(ikValues) == 1);
+    }
+    int limbRefusals = 0;
+    for (const double poison : poisons) {
+        // The IK control on the IK side, an FK control on the FK side.
+        for (const auto &[control, time] :
+             {std::make_pair("/Asset/Rig/Controls/Ik", 6.0),
+              std::make_pair("/Asset/Rig/Controls/Shoulder/Up", 2.0)}) {
+            for (const char *channel : channels) {
+                const UsdStageRefPtr stage = BuildIkFkMatchArm();
+                stage->SetEditTarget(stage->GetSessionLayer());
+                stage->GetPrimAtPath(SdfPath(control))
+                    .CreateAttribute(TfToken(channel),
+                                     SdfValueTypeNames->Double)
+                    .Set(poison);
+                const EveryEvaluatorPose played =
+                    EvaluateEveryEvaluator(stage, arm, time);
+                if (!played.ok)
+                    continue;
+                const std::string label = std::string("IK/FK match, ") +
+                                          control + "." + channel + " = " +
+                                          std::to_string(poison);
+                agree(label, played);
+                for (const auto *pose :
+                     {&played.native, &played.frozen, &played.runtime}) {
+                    CHECK(pose->movedProperties.count(ikValues) == 0 &&
+                          pose->movedProperties.count(fkValues) == 0);
+                    CHECK(std::any_of(
+                        pose->diagnostics.begin(), pose->diagnostics.end(),
+                        [](const std::string &line) {
+                            return line.rfind("/Asset/Rig/Movers/Match ", 0) ==
+                                   0;
+                        }));
+                }
+                ++limbRefusals;
+            }
+        }
+    }
+    CHECK(limbRefusals == 24);
+    std::printf("non-finite matches: %d space and %d IK/FK refusals agree\n",
+                spaceRefusals, limbRefusals);
 }
 
 int
@@ -5939,7 +6066,7 @@ main()
     TestLegacyWeightSpellingIsRejected();
     TestInvalidContractsFailClosed();
     TestSolverBindsJointsUnderAnyScope();
-    TestIncompleteSolverLeavesJointsVisible();
+    TestIncompleteSolverIsRefused();
     TestTwoBoneIkImpliedLengths(false);
     TestTwoBoneIkImpliedLengths(true);
     TestTwoBoneIkRestFrameInputs();
@@ -5968,8 +6095,8 @@ main()
     TestAuthoredPosedSpaceBakesAndAnimatedOneFollows();
     TestSingleChainIkOwnInputsMoveOverTimeAndUnderDrag();
     TestSingleChainIkComputedStretch();
-    TestIkFkMatchSceneProgramMatchesNative();
-    TestStackedSolversSceneProgramMatchesNative();
+    TestSingleChainIkPreserveOrientationBaked();
+    TestNonFiniteMatchesAreRefused();
 
     if (failures) {
         std::printf("%d FAILURE(S)\n", failures);

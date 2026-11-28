@@ -14,7 +14,7 @@
 // tiers, and no stage authoring. Live evaluation is checked against the
 // tables' expectations, the frame-cache worker and the .rigexec runtime
 // against live, bit for bit.
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBake/bake.h"
 #include "rigExecImaging/bridge.h"
 #include "rigExecImaging/playback.h"
@@ -51,8 +51,13 @@ using namespace rigExec;
 PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
-#define CHECK(condition) do { if (!(condition)) { ++failures; \
-    std::printf("FAIL %d: %s\n", __LINE__, #condition); } } while (0)
+#define CHECK(condition)                                                       \
+    do {                                                                       \
+        if (!(condition)) {                                                    \
+            ++failures;                                                        \
+            std::printf("FAIL %d: %s\n", __LINE__, #condition);                \
+        }                                                                      \
+    } while (0)
 
 #include "rigExecFrozenParity.h"
 #include "rigExecRuntimeDrive.h"
@@ -105,7 +110,8 @@ Array(const Values &values)
 {
     std::string text = "[";
     for (size_t i = 0; i < values.size(); ++i) {
-        if (i) text += ", ";
+        if (i)
+            text += ", ";
         text += Number(double(values[i]));
     }
     return text + "]";
@@ -116,7 +122,8 @@ std::vector<double>
 Samples(int n, const std::function<double(int)> &f)
 {
     std::vector<double> samples;
-    for (int k = 0; k <= n; ++k) samples.push_back(f(k));
+    for (int k = 0; k <= n; ++k)
+        samples.push_back(f(k));
     return samples;
 }
 
@@ -151,7 +158,8 @@ Exact(double v)
 bool
 FullTurn(const std::vector<double> &s)
 {
-    return s.size() >= 2 && std::abs(std::abs(s.back() - s.front()) - 360.0) <= 1.0;
+    return s.size() >= 2 &&
+           std::abs(std::abs(s.back() - s.front()) - 360.0) <= 1.0;
 }
 
 // The nearest-sample cells of the unique sample values, outer cells to
@@ -165,21 +173,27 @@ Cells(const std::vector<double> &s, bool tiesLater)
 {
     std::map<double, int> frame;
     for (size_t k = 0; k < s.size(); ++k) {
-        if (tiesLater || !frame.count(s[k])) frame[s[k]] = int(k);
+        if (tiesLater || !frame.count(s[k]))
+            frame[s[k]] = int(k);
     }
-    const std::vector<std::pair<double, int>> values(frame.begin(), frame.end());
+    const std::vector<std::pair<double, int>> values(frame.begin(),
+                                                     frame.end());
     std::vector<Row> cells;
     for (size_t j = 0; j < values.size(); ++j) {
         Row row;
-        row.from = j == 0 ? -kMax : Exact(0.5 * (values[j - 1].first + values[j].first));
-        row.to = j + 1 == values.size() ? kMax
-                                        : Exact(0.5 * (values[j].first + values[j + 1].first));
+        row.from = j == 0
+                       ? -kMax
+                       : Exact(0.5 * (values[j - 1].first + values[j].first));
+        row.to = j + 1 == values.size()
+                     ? kMax
+                     : Exact(0.5 * (values[j].first + values[j + 1].first));
         row.frame = values[j].second;
         cells.push_back(row);
     }
-    std::stable_sort(cells.begin(), cells.end(), [&](const Row &a, const Row &b) {
-        return tiesLater ? a.frame > b.frame : a.frame < b.frame;
-    });
+    std::stable_sort(
+        cells.begin(), cells.end(), [&](const Row &a, const Row &b) {
+            return tiesLater ? a.frame > b.frame : a.frame < b.frame;
+        });
     return cells;
 }
 
@@ -196,7 +210,8 @@ StepRows(const std::vector<double> &s, int side, bool tiesLater = false)
     gate.from = side > 0 ? -kMax : Exact(s[0]);
     gate.to = side > 0 ? Exact(s[0]) : kMax;
     rows.push_back(gate);
-    for (const Row &cell : Cells(s, tiesLater)) rows.push_back(cell);
+    for (const Row &cell : Cells(s, tiesLater))
+        rows.push_back(cell);
     if (FullTurn(s)) {
         Row seam;
         seam.input = 1;
@@ -251,18 +266,27 @@ ActionMaps(const std::vector<double> &samples, int side, bool tiesLater,
     const std::vector<Row> rows = StepRows(samples, side, tiesLater);
     const int n = int(samples.size()) - 1;
     std::vector<MapSpec> maps;
-    maps.push_back({"weight", Arrays(rows, [n](int k) {
-                        return double(float(k) / float(n)); }), true});
-    maps.push_back({"active", Arrays(rows, [](int k) { return k > 0 ? 1.0 : 0.0; }), true});
-    maps.push_back({"frame", Arrays(rows, [](int k) { return double(k); }), false});
+    maps.push_back(
+        {"weight",
+         Arrays(rows, [n](int k) { return double(float(k) / float(n)); }),
+         true});
+    maps.push_back({"active",
+                    Arrays(rows, [](int k) { return k > 0 ? 1.0 : 0.0; }),
+                    true});
+    maps.push_back(
+        {"frame", Arrays(rows, [](int k) { return double(k); }), false});
     for (const ChannelSpec &c : channels) {
         const std::vector<double> v = c.samples;
         const size_t last = v.size() - 1;
         const bool value = c.value;
-        maps.push_back({c.name, Arrays(rows, [v, last, value](int k) {
-                            const double at = v[std::min(size_t(k), last)];
-                            return value ? at : at - v[0];
-                        }), false});
+        maps.push_back({c.name,
+                        Arrays(rows,
+                               [v, last, value](int k) {
+                                   const double at =
+                                       v[std::min(size_t(k), last)];
+                                   return value ? at : at - v[0];
+                               }),
+                        false});
     }
     return maps;
 }
@@ -271,13 +295,19 @@ std::string
 MapText(const MapSpec &map)
 {
     const std::string i = "                ";
-    return i + "def RigExecAnimatedMap \"" + map.name + "\"\n" + i + "{\n" +
-           i + "    uniform int[] rigExec:rowInputs = " + Array(map.arrays.inputs) + "\n" +
-           i + "    uniform float[] rigExec:rowFrom = " + Array(map.arrays.from) + "\n" +
-           i + "    uniform float[] rigExec:rowTo = " + Array(map.arrays.to) + "\n" +
-           i + "    uniform float[] rigExec:rowSlope = " + Array(map.arrays.slope) + "\n" +
-           i + "    uniform float[] rigExec:rowCut = " + Array(map.arrays.cut) + "\n" +
-           (map.clamp ? std::string() : i + "    uniform bool rigExec:clampOutput = false\n") +
+    return i + "def RigExecAnimatedMap \"" + map.name + "\"\n" + i + "{\n" + i +
+           "    uniform int[] rigExec:rowInputs = " + Array(map.arrays.inputs) +
+           "\n" + i +
+           "    uniform float[] rigExec:rowFrom = " + Array(map.arrays.from) +
+           "\n" + i +
+           "    uniform float[] rigExec:rowTo = " + Array(map.arrays.to) +
+           "\n" + i +
+           "    uniform float[] rigExec:rowSlope = " + Array(map.arrays.slope) +
+           "\n" + i +
+           "    uniform float[] rigExec:rowCut = " + Array(map.arrays.cut) +
+           "\n" +
+           (map.clamp ? std::string()
+                      : i + "    uniform bool rigExec:clampOutput = false\n") +
            i + "}\n";
 }
 
@@ -285,19 +315,23 @@ MapText(const MapSpec &map)
 // read at `final`.
 std::string
 Action(const char *name, const std::vector<std::string> &drivers,
-       const std::vector<MapSpec> &maps, const std::string &extra = std::string(),
-       bool revised = false)
+       const std::vector<MapSpec> &maps,
+       const std::string &extra = std::string(), bool revised = false)
 {
     std::string targets;
     for (const std::string &d : drivers) {
-        if (!targets.empty()) targets += ", ";
+        if (!targets.empty())
+            targets += ", ";
         targets += "<" + d + ">";
     }
-    std::string text = std::string("            def RigExecAnimatedMaps \"") + name +
-                       "\"\n            {\n"
-                       "                rel rigExec:driverAttributes = [" + targets + "]" +
-                       (revised ? " (rigExecReadPhase = \"final\")" : "") + "\n" + extra;
-    for (const MapSpec &map : maps) text += MapText(map);
+    std::string text =
+        std::string("            def RigExecAnimatedMaps \"") + name +
+        "\"\n            {\n"
+        "                rel rigExec:driverAttributes = [" +
+        targets + "]" + (revised ? " (rigExecReadPhase = \"final\")" : "") +
+        "\n" + extra;
+    for (const MapSpec &map : maps)
+        text += MapText(map);
     return text + "            }\n";
 }
 
@@ -308,9 +342,11 @@ AuthorMaps(const UsdStageRefPtr &stage, const char *action,
 {
     SdfChangeBlock block;
     for (const MapSpec &map : maps) {
-        const UsdPrim prim = stage->GetPrimAtPath(SdfPath(ActionPath(action) + "/" + map.name));
+        const UsdPrim prim =
+            stage->GetPrimAtPath(SdfPath(ActionPath(action) + "/" + map.name));
         CHECK(prim);
-        if (!prim) continue;
+        if (!prim)
+            continue;
         prim.GetAttribute(TfToken("rigExec:rowInputs")).Set(map.arrays.inputs);
         prim.GetAttribute(TfToken("rigExec:rowFrom")).Set(map.arrays.from);
         prim.GetAttribute(TfToken("rigExec:rowTo")).Set(map.arrays.to);
@@ -322,17 +358,19 @@ AuthorMaps(const UsdStageRefPtr &stage, const char *action,
 std::string
 MathMover(const char *name, const std::string &target, const char *operation,
           const std::string &value, const std::string &weight = std::string(),
-          const std::string &minimum = std::string(), const char *indent = "            ")
+          const std::string &minimum = std::string(),
+          const char *indent = "            ")
 {
     const std::string i = indent;
     std::string text = i + "def RigExecFloatMathMover \"" + name +
-        "\" (prepend apiSchemas = [\"RigExecMoverAPI\"])\n" + i + "{\n" +
-        i + "    rel rigExec:moves = <" + target + ">\n" +
-        i + "    uniform token rigExec:operation = \"" + operation + "\"\n";
+                       "\" (prepend apiSchemas = [\"RigExecMoverAPI\"])\n" + i +
+                       "{\n" + i + "    rel rigExec:moves = <" + target +
+                       ">\n" + i + "    uniform token rigExec:operation = \"" +
+                       operation + "\"\n";
     // A map output is read at `final` (its published value); an undeclared
     // connection would read the output's authored base.
-    const std::string final = " (\n" + i + "        rigExecReadPhase = \"final\"\n" + i +
-                              "    )\n";
+    const std::string final =
+        " (\n" + i + "        rigExecReadPhase = \"final\"\n" + i + "    )\n";
     if (value[0] == '/') {
         text += i + "    float inputs:value" + final;
         text += i + "    float inputs:value.connect = <" + value + ">\n";
@@ -343,7 +381,8 @@ MathMover(const char *name, const std::string &target, const char *operation,
     }
     if (!weight.empty()) {
         text += i + "    float inputs:defaultWeight" + final;
-        text += i + "    float inputs:defaultWeight.connect = <" + weight + ">\n";
+        text +=
+            i + "    float inputs:defaultWeight.connect = <" + weight + ">\n";
     }
     if (!minimum.empty()) {
         text += i + "    float inputs:min = " + minimum + "\n";
@@ -365,25 +404,34 @@ WrapMovers(const char *action, const std::string &dial, int side)
     const std::string angle = ActionPath(action) + ".turn:angle";
     const char *in = "                ";
     std::vector<std::pair<const char *, std::string>> ops;
-    ops.push_back({"shiftCopy", MathMover("shiftCopy", shift, "blend", dial, "", "", in)});
+    ops.push_back({"shiftCopy",
+                   MathMover("shiftCopy", shift, "blend", dial, "", "", in)});
     if (side > 0) {
-        ops.push_back({"shiftFloor", MathMover("shiftFloor", shift, "quantize", "360", "", "0", in)});
-        ops.push_back({"shiftNegate", MathMover("shiftNegate", shift, "multiply", "-1", "", "", in)});
+        ops.push_back({"shiftFloor", MathMover("shiftFloor", shift, "quantize",
+                                               "360", "", "0", in)});
+        ops.push_back({"shiftNegate", MathMover("shiftNegate", shift,
+                                                "multiply", "-1", "", "", in)});
     } else {
-        ops.push_back({"shiftNegate", MathMover("shiftNegate", shift, "multiply", "-1", "", "", in)});
-        ops.push_back({"shiftFloor", MathMover("shiftFloor", shift, "quantize", "360", "", "0", in)});
+        ops.push_back({"shiftNegate", MathMover("shiftNegate", shift,
+                                                "multiply", "-1", "", "", in)});
+        ops.push_back({"shiftFloor", MathMover("shiftFloor", shift, "quantize",
+                                               "360", "", "0", in)});
     }
-    ops.push_back({"angleCopy", MathMover("angleCopy", angle, "blend", dial, "", "", in)});
-    ops.push_back({"angleShift", MathMover("angleShift", angle, "add", shift, "", "", in)});
+    ops.push_back({"angleCopy",
+                   MathMover("angleCopy", angle, "blend", dial, "", "", in)});
+    ops.push_back({"angleShift",
+                   MathMover("angleShift", angle, "add", shift, "", "", in)});
     std::string order, movers;
     for (auto it = ops.rbegin(); it != ops.rend(); ++it) {
-        if (!order.empty()) order += ", ";
+        if (!order.empty())
+            order += ", ";
         order += "\"" + std::string(it->first) + "\"";
         movers += it->second;
     }
-    return std::string("            def Scope \"") + action + "_wrap\"\n            {\n"
-           "                reorder nameChildren = [" + order + "]\n" + movers +
-           "            }\n";
+    return std::string("            def Scope \"") + action +
+           "_wrap\"\n            {\n"
+           "                reorder nameChildren = [" +
+           order + "]\n" + movers + "            }\n";
 }
 
 // The dials' mainline keys, one value per test frame 1..18 (every frame
@@ -395,13 +443,22 @@ Mainline()
     const auto key = [&](const char *name, std::map<int, double> values) {
         std::vector<double> &row = keys[name];
         row.assign(kFrames, 0.0);
-        for (const auto &[frame, value] : values) row[size_t(frame - 1)] = value;
+        for (const auto &[frame, value] : values)
+            row[size_t(frame - 1)] = value;
     };
     // Whole steps and the hold (1-6), the negative side (7-8); additive
     // offsets (9), a rotated frame (10), the order gate (11); stepped values
     // (12-15 and 17 with D11), the mainline switch (16), a chained dial (18).
-    key("D1", {{2, 10.0}, {3, 25.3}, {4, 25.6}, {5, 99.4}, {6, 130.0},
-               {7, -20.0}, {8, -80.0}, {9, 50.0}, {10, 50.0}, {11, 100.0}});
+    key("D1", {{2, 10.0},
+               {3, 25.3},
+               {4, 25.6},
+               {5, 99.4},
+               {6, 130.0},
+               {7, -20.0},
+               {8, -80.0},
+               {9, 50.0},
+               {10, 50.0},
+               {11, 100.0}});
     key("D2", {{9, 50.0}});
     key("D7", {{10, 100.0}});
     key("D8", {{12, 20.0}, {13, 40.0}, {14, 70.0}, {15, 90.0}, {17, 70.0}});
@@ -415,7 +472,8 @@ TimeSamples(const std::vector<double> &row)
 {
     std::string text = "{";
     for (size_t f = 0; f < row.size(); ++f) {
-        if (f) text += ", ";
+        if (f)
+            text += ", ";
         text += std::to_string(f + 1) + ": " + Number(row[f]);
     }
     return text + "}";
@@ -442,7 +500,8 @@ ControlPrim(const char *name, const std::string &body)
     return std::string("            def RigExecControl \"") + name +
            "\" (prepend apiSchemas = [\"RigExecControlAPI\"])\n            {\n"
            "                matrix4d rest:space = ((1, 0, 0, 0), (0, 1, 0, 0), "
-           "(0, 0, 1, 0), (0, 0, 0, 1))\n" + body + "            }\n";
+           "(0, 0, 1, 0), (0, 0, 0, 1))\n" +
+           body + "            }\n";
 }
 
 std::string
@@ -451,25 +510,29 @@ CorrectiveMover(const std::string &scope, const char *indent, bool zeroSample)
     const std::string i = indent;
     const std::string input = scope + "/Correctives/D1";
     std::string samples = "[";
-    if (zeroSample) samples += "<" + input + "/k0>, ";
+    if (zeroSample)
+        samples += "<" + input + "/k0>, ";
     samples += "<" + input + "/k50>, <" + input + "/k100>]";
     // A blend input reads the computed weight without a declaration.
     std::string text =
-        i + "def RigExecBlendShapeMover \"Correctives\" (prepend apiSchemas = [\"RigExecMoverAPI\"])\n" +
-        i + "{\n" +
-        i + "    rel rigExec:moves = </Char/Art/Stroke.points>\n" +
-        i + "    rel rigExec:blendInputs = [<" + input + ">]\n" +
-        i + "    def RigExecBlendInput \"D1\"\n" + i + "    {\n" +
-        i + "        float inputs:weight.connect = <" + Output("D1", "weight").GetString() + ">\n" +
-        i + "        rel rigExec:samples = " + samples + "\n";
+        i +
+        "def RigExecBlendShapeMover \"Correctives\" (prepend apiSchemas = "
+        "[\"RigExecMoverAPI\"])\n" +
+        i + "{\n" + i + "    rel rigExec:moves = </Char/Art/Stroke.points>\n" +
+        i + "    rel rigExec:blendInputs = [<" + input + ">]\n" + i +
+        "    def RigExecBlendInput \"D1\"\n" + i + "    {\n" + i +
+        "        float inputs:weight.connect = <" +
+        Output("D1", "weight").GetString() + ">\n" + i +
+        "        rel rigExec:samples = " + samples + "\n";
     const auto sample = [&](const char *name, int k, const char *shape) {
-        text += i + "        def RigExecBlendSample \"" + name + "\"\n" + i + "        {\n" +
-                i + "            float rigExec:activation = " +
-                Number(double(float(k) / float(100))) + "\n" +
-                i + "            rel rigExec:blendShape = </Char/Art/Shapes/" + shape + ">\n" +
-                i + "        }\n";
+        text += i + "        def RigExecBlendSample \"" + name + "\"\n" + i +
+                "        {\n" + i + "            float rigExec:activation = " +
+                Number(double(float(k) / float(100))) + "\n" + i +
+                "            rel rigExec:blendShape = </Char/Art/Shapes/" +
+                shape + ">\n" + i + "        }\n";
     };
-    if (zeroSample) sample("k0", 0, "Q1_k0");
+    if (zeroSample)
+        sample("k0", 0, "Q1_k0");
     sample("k50", 50, "Q1_k50");
     sample("k100", 100, "Q1_k100");
     return text + i + "    }\n" + i + "}\n";
@@ -485,16 +548,22 @@ D1Channels()
 std::vector<ChannelSpec>
 D1_2Channels()
 {
-    return {{"Q_ty", Samples(50, [](int k) { return -0.5 * double(k) / 50.0; })}};
+    return {
+        {"Q_ty", Samples(50, [](int k) { return -0.5 * double(k) / 50.0; })}};
 }
 
 std::vector<ChannelSpec>
 D8Channels()
 {
-    return {{"Switch", Samples(90, [](int k) { return k < 30 ? 0.0 : k < 60 ? 1.0 : 2.0; }),
-             true},
-            // The channel's own values (1 at rest), published as an offset.
-            {"Opacity", Samples(90, [](int k) { return 1.0 - 0.5 * double(k) / 90.0; })}};
+    return {
+        {"Switch",
+         Samples(90, [](int k) { return k < 30   ? 0.0
+                                        : k < 60 ? 1.0
+                                                 : 2.0; }),
+         true},
+        // The channel's own values (1 at rest), published as an offset.
+        {"Opacity",
+         Samples(90, [](int k) { return 1.0 - 0.5 * double(k) / 90.0; })}};
 }
 
 std::string
@@ -511,42 +580,65 @@ MakeStage(const Options &options = Options())
     const auto keys = Mainline();
     std::string controls;
     for (const char *dial : {"D1", "D2", "D7", "D8", "D11", "D9"}) {
-        controls += ControlPrim(dial, "                double avars:rz.timeSamples = " +
-                                          TimeSamples(keys.at(dial)) + "\n");
+        controls +=
+            ControlPrim(dial, "                double avars:rz.timeSamples = " +
+                                  TimeSamples(keys.at(dial)) + "\n");
     }
     controls += ControlPrim("D10", "                double avars:rz = 0\n");
     std::vector<double> qy(kFrames, 0.0), crz(kFrames, 0.0), brz(kFrames, 0.0);
     qy[9] = 0.2;
     crz[9] = 30.0;
     brz[10] = 90.0;
-    controls += ControlPrim("Q", "                double avars:tx = 0\n"
-                                 "                double avars:ty.timeSamples = " +
-                                     TimeSamples(qy) + "\n");
+    controls +=
+        ControlPrim("Q", "                double avars:tx = 0\n"
+                         "                double avars:ty.timeSamples = " +
+                             TimeSamples(qy) + "\n");
     controls += ControlPrim("Q2", "                double avars:ty = 0\n");
     controls += ControlPrim("Q6", "                double avars:tx = 0\n");
-    controls += ControlPrim("C", "                double avars:rz.timeSamples = " +
-                                     TimeSamples(crz) + "\n");
+    controls +=
+        ControlPrim("C", "                double avars:rz.timeSamples = " +
+                             TimeSamples(crz) + "\n");
 
     std::string actions;
-    actions += Action("D1", {Driver("D1")}, ActionMaps(Ramp(100.0, 100), +1, false, D1Channels()));
+    actions += Action("D1", {Driver("D1")},
+                      ActionMaps(Ramp(100.0, 100), +1, false, D1Channels()));
     actions += Action("D1_2", {Driver("D1")},
                       ActionMaps(Ramp(-50.0, 50), -1, false, D1_2Channels()));
-    actions += Action("D2", {Driver("D2")}, ActionMaps(Ramp(100.0, 100), +1, false,
-        {{"Q_tx", Samples(100, [](int k) { return 0.5 * double(k) / 100.0; })},
-         {"Q2_ty", Samples(100, [](int k) { return 0.3 * double(k) / 100.0; })}}));
-    actions += Action("D7", {Driver("D7")}, ActionMaps(Ramp(100.0, 100), +1, false,
-        {{"C_rz", Samples(100, [](int k) { return 20.0 * double(k) / 100.0; })}}));
-    actions += Action("D8", {Driver("D8")}, ActionMaps(Ramp(90.0, 90), +1, false, D8Channels()));
-    actions += Action("D11", {Driver("D11")}, ActionMaps(Ramp(100.0, 100), +1, false,
-        {{"Switch", Samples(100, [](int k) { return k == 100 ? 1.0 : 0.0; }), true}}));
-    actions += Action("D9", {Driver("D9")}, ActionMaps(Ramp(100.0, 100), +1, false,
-        {{"D10_rz", Samples(100, [](int k) { return 45.0 * double(k) / 100.0; })}}),
+    actions += Action(
+        "D2", {Driver("D2")},
+        ActionMaps(
+            Ramp(100.0, 100), +1, false,
+            {{"Q_tx",
+              Samples(100, [](int k) { return 0.5 * double(k) / 100.0; })},
+             {"Q2_ty",
+              Samples(100, [](int k) { return 0.3 * double(k) / 100.0; })}}));
+    actions += Action("D7", {Driver("D7")},
+                      ActionMaps(Ramp(100.0, 100), +1, false,
+                                 {{"C_rz", Samples(100, [](int k) {
+                                       return 20.0 * double(k) / 100.0;
+                                   })}}));
+    actions += Action("D8", {Driver("D8")},
+                      ActionMaps(Ramp(90.0, 90), +1, false, D8Channels()));
+    actions += Action(
+        "D11", {Driver("D11")},
+        ActionMaps(Ramp(100.0, 100), +1, false,
+                   {{"Switch",
+                     Samples(100, [](int k) { return k == 100 ? 1.0 : 0.0; }),
+                     true}}));
+    actions += Action(
+        "D9", {Driver("D9")},
+        ActionMaps(
+            Ramp(100.0, 100), +1, false,
+            {{"D10_rz",
+              Samples(100, [](int k) { return 45.0 * double(k) / 100.0; })}}),
         std::string(), options.cycle);
     std::vector<ChannelSpec> d10 = {
         {"Q6_tx", Samples(90, [](int k) { return double(k) / 100.0; })}};
-    if (options.cycle) d10.push_back({"D9_rz", Samples(90, [](int k) { return double(k); })});
-    actions += Action("D10", {Driver("D10")}, ActionMaps(Ramp(90.0, 90), +1, false, d10),
-                      std::string(), true);
+    if (options.cycle)
+        d10.push_back({"D9_rz", Samples(90, [](int k) { return double(k); })});
+    actions +=
+        Action("D10", {Driver("D10")},
+               ActionMaps(Ramp(90.0, 90), +1, false, d10), std::string(), true);
 
     std::string movers;
     movers += MathMover("D1_Q_tx", Control("Q") + ".avars:tx", "add",
@@ -574,21 +666,25 @@ MakeStage(const Options &options = Options())
         movers += MathMover("D10_D9_rz", Control("D9") + ".avars:rz", "add",
                             Output("D10", "D9_rz").GetString());
     }
-    movers += MathMover("D8_Opacity", kHead.GetString() + ".primvars:opacity", "add",
-                        Output("D8", "Opacity").GetString());
-    movers += MathMover("Switch_D8", kHead.GetString() + ".primvars:switchIndex", "blend",
-                        Output("D8", "Switch").GetString(),
-                        Output("D8", "active").GetString());
-    movers += MathMover("Switch_D11", kHead.GetString() + ".primvars:switchIndex", "blend",
-                        Output("D11", "Switch").GetString(),
-                        Output("D11", "active").GetString());
-    movers += MathMover("KnobDial", kKnob.GetString() + ".userDial", "add", "1");
+    movers += MathMover("D8_Opacity", kHead.GetString() + ".primvars:opacity",
+                        "add", Output("D8", "Opacity").GetString());
+    movers += MathMover(
+        "Switch_D8", kHead.GetString() + ".primvars:switchIndex", "blend",
+        Output("D8", "Switch").GetString(), Output("D8", "active").GetString());
+    movers +=
+        MathMover("Switch_D11", kHead.GetString() + ".primvars:switchIndex",
+                  "blend", Output("D11", "Switch").GetString(),
+                  Output("D11", "active").GetString());
+    movers +=
+        MathMover("KnobDial", kKnob.GetString() + ".userDial", "add", "1");
     // A primvar chain no table drives: the scalar publication alone.
     movers += MathMover("Glow", kHead.GetString() + ".primvars:glow", "add",
                         TimeSamples(Samples(kFrames - 1, [](int k) {
-                            return 0.125 * double(k + 1); })));
+                            return 0.125 * double(k + 1);
+                        })));
     std::string skin =
-        "            def RigExecSkinMover \"StrokeSkin\" (prepend apiSchemas = [\"RigExecMoverAPI\"])\n"
+        "            def RigExecSkinMover \"StrokeSkin\" (prepend apiSchemas = "
+        "[\"RigExecMoverAPI\"])\n"
         "            {\n"
         "                rel rigExec:moves = </Char/Art/Stroke.points>\n"
         "                rel rigExec:influences = [</Char/Rig/Joints/B>]\n"
@@ -596,13 +692,14 @@ MakeStage(const Options &options = Options())
         "                float[] rigExec:jointWeights = [1, 1, 1]\n"
         "                uniform int rigExec:elementSize = 1\n";
     if (options.correctives == Correctives::Nested) {
-        skin += CorrectiveMover("/Char/Rig/Movers/StrokeSkin", "                ",
-                                options.zeroSample);
+        skin += CorrectiveMover("/Char/Rig/Movers/StrokeSkin",
+                                "                ", options.zeroSample);
     }
     skin += "            }\n";
     movers += skin;
     if (options.correctives != Correctives::Nested) {
-        movers += CorrectiveMover("/Char/Rig/Movers", "            ", options.zeroSample);
+        movers += CorrectiveMover("/Char/Rig/Movers", "            ",
+                                  options.zeroSample);
     }
     // Bottom sibling fires first: the top switch blend is applied last.
     std::string order = options.d8OnTop ? "\"Switch_D8\", \"Switch_D11\""
@@ -618,16 +715,24 @@ MakeStage(const Options &options = Options())
         "    endTimeCode = 18\n    upAxis = \"Y\"\n)\n"
         "def Xform \"Char\"\n{\n"
         "    def RigExecRoot \"Rig\"\n    {\n"
-        "        def Scope \"Controls\"\n        {\n" + controls + "        }\n"
+        "        def Scope \"Controls\"\n        {\n" +
+        controls +
+        "        }\n"
         "        def Scope \"Joints\"\n        {\n"
         "            def RigExecJoint \"B\"\n            {\n"
-        "                matrix4d rest:space = ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (-0.5, -0.5, 0, 1))\n"
-        "                double avars:rz.timeSamples = " + TimeSamples(brz) + "\n"
+        "                matrix4d rest:space = ((1, 0, 0, 0), (0, 1, 0, 0), "
+        "(0, 0, 1, 0), (-0.5, -0.5, 0, 1))\n"
+        "                double avars:rz.timeSamples = " +
+        TimeSamples(brz) +
+        "\n"
         "            }\n        }\n"
-        "        def Scope \"Actions\"\n        {\n" + actions + "        }\n"
+        "        def Scope \"Actions\"\n        {\n" +
+        actions +
+        "        }\n"
         "        def Scope \"Movers\"\n        {\n"
-        "            reorder nameChildren = [" + order + "]\n" +
-        movers + "        }\n"
+        "            reorder nameChildren = [" +
+        order + "]\n" + movers +
+        "        }\n"
         "    }\n"
         "    def Scope \"Art\"\n    {\n"
         "        def Xform \"Head\"\n        {\n"
@@ -635,21 +740,26 @@ MakeStage(const Options &options = Options())
         "            float primvars:opacity = 1\n"
         "            float primvars:glow = 0.5\n"
         "        }\n"
-        "        def Xform \"Knob\"\n        {\n            float userDial = 0\n        }\n"
+        "        def Xform \"Knob\"\n        {\n            float userDial = "
+        "0\n        }\n"
         "        def Mesh \"Stroke\"\n        {\n"
         "            int[] faceVertexCounts = [3]\n"
         "            int[] faceVertexIndices = [0, 1, 2]\n"
-        "            point3f[] points = [(0, 0.3, 0), (0.5, 0.3, 0), (0, 0.8, 0)]\n"
+        "            point3f[] points = [(0, 0.3, 0), (0.5, 0.3, 0), (0, 0.8, "
+        "0)]\n"
         "        }\n"
         "        def Scope \"Shapes\"\n        {\n"
         "            def BlendShape \"Q1_k0\"\n            {\n"
-        "                vector3f[] offsets = [(0, 0, 0)]\n                int[] pointIndices = [0]\n"
+        "                vector3f[] offsets = [(0, 0, 0)]\n                "
+        "int[] pointIndices = [0]\n"
         "            }\n"
         "            def BlendShape \"Q1_k50\"\n            {\n"
-        "                vector3f[] offsets = [(0.5, 0, 0)]\n                int[] pointIndices = [0]\n"
+        "                vector3f[] offsets = [(0.5, 0, 0)]\n                "
+        "int[] pointIndices = [0]\n"
         "            }\n"
         "            def BlendShape \"Q1_k100\"\n            {\n"
-        "                vector3f[] offsets = [(1, 0, 0)]\n                int[] pointIndices = [0]\n"
+        "                vector3f[] offsets = [(1, 0, 0)]\n                "
+        "int[] pointIndices = [0]\n"
         "            }\n"
         "        }\n"
         "    }\n"
@@ -667,18 +777,23 @@ double
 Published(const RigExecRigPose &pose, const SdfPath &path)
 {
     const auto found = pose.movedProperties.find(path);
-    if (found == pose.movedProperties.end()) return std::nan("");
+    if (found == pose.movedProperties.end())
+        return std::nan("");
     const VtValue &v = found->second;
-    if (v.IsHolding<float>()) return double(v.UncheckedGet<float>());
-    if (v.IsHolding<double>()) return v.UncheckedGet<double>();
+    if (v.IsHolding<float>())
+        return double(v.UncheckedGet<float>());
+    if (v.IsHolding<double>())
+        return v.UncheckedGet<double>();
     return std::nan("");
 }
 
 GfVec3f
 StrokePoint(const RigExecRigPose &pose, size_t index)
 {
-    const auto found = pose.movedProperties.find(kStroke.AppendProperty(TfToken("points")));
-    if (found == pose.movedProperties.end() || !found->second.IsHolding<VtVec3fArray>()) {
+    const auto found =
+        pose.movedProperties.find(kStroke.AppendProperty(TfToken("points")));
+    if (found == pose.movedProperties.end() ||
+        !found->second.IsHolding<VtVec3fArray>()) {
         return GfVec3f(std::nanf(""));
     }
     const VtVec3fArray &points = found->second.UncheckedGet<VtVec3fArray>();
@@ -697,8 +812,8 @@ Expect(const char *what, int frame, double got, double expected,
 {
     if (!Near(got, expected, tolerance)) {
         ++failures;
-        std::printf("FAIL %s at frame %d: %.9g, expected %.9g\n", what, frame, got,
-                    expected);
+        std::printf("FAIL %s at frame %d: %.9g, expected %.9g\n", what, frame,
+                    got, expected);
     }
 }
 
@@ -713,8 +828,10 @@ Key(const char *dial, int frame)
 int32_t
 RampFrame(double angle, double end, int n)
 {
-    if (!(end > 0 ? angle > 0 : angle < 0)) return 0;
-    return int32_t(std::min(double(n), std::floor(angle / end * double(n) + 0.5)));
+    if (!(end > 0 ? angle > 0 : angle < 0))
+        return 0;
+    return int32_t(
+        std::min(double(n), std::floor(angle / end * double(n) + 0.5)));
 }
 
 // Every test frame against live, frozen (frame-cache worker) and the
@@ -723,13 +840,16 @@ RampFrame(double angle, double end, int n)
 void
 CheckEvaluators(RigExecRigEvaluator &evaluator, const UsdStageRefPtr &stage,
                 const std::string &label, int frames = kFrames,
-                std::vector<int> order = {3, 11, 1, 18, 14, 9, 17, 7, 7, 12, 16, 10})
+                std::vector<int> order = {3, 11, 1, 18, 14, 9, 17, 7, 7, 12, 16,
+                                          10})
 {
     for (int f = 1; f <= frames; ++f) {
         std::string why;
-        if (!RigExecFrozenMatchesLive(&evaluator, kRig, UsdTimeCode(double(f)), &why)) {
+        if (!RigExecFrozenMatchesLive(&evaluator, kRig, UsdTimeCode(double(f)),
+                                      &why)) {
             ++failures;
-            std::printf("FAIL %s frozen frame %d: %s\n", label.c_str(), f, why.c_str());
+            std::printf("FAIL %s frozen frame %d: %s\n", label.c_str(), f,
+                        why.c_str());
         }
     }
     std::vector<uint8_t> bytes;
@@ -750,24 +870,28 @@ CheckEvaluators(RigExecRigEvaluator &evaluator, const UsdStageRefPtr &stage,
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(double(f)));
         if (!player.Play(double(f), &error)) {
             ++failures;
-            std::printf("FAIL %s play frame %d: %s\n", label.c_str(), f, error.c_str());
+            std::printf("FAIL %s play frame %d: %s\n", label.c_str(), f,
+                        error.c_str());
             return;
         }
         std::vector<std::string> diffs;
         if (!RigExecCompareRuntimeRun(pose, player.Reader(), &diffs)) {
             ++failures;
             std::printf("FAIL %s runtime frame %d:\n", label.c_str(), f);
-            for (const auto &d : diffs) std::printf("    %s\n", d.c_str());
+            for (const auto &d : diffs)
+                std::printf("    %s\n", d.c_str());
         }
         const auto runtimeScalars = player.Reader().GetScalarPrimvars();
         CHECK(runtimeScalars.size() == scalars.size());
-        for (size_t k = 0; k < runtimeScalars.size() && k < scalars.size(); ++k) {
+        for (size_t k = 0; k < runtimeScalars.size() && k < scalars.size();
+             ++k) {
             CHECK(runtimeScalars[k].path == scalars[k].GetString());
             if (runtimeScalars[k].value != float(Published(pose, scalars[k]))) {
                 ++failures;
                 std::printf("FAIL %s runtime scalar %s frame %d: %g, live %g\n",
                             label.c_str(), runtimeScalars[k].path.c_str(), f,
-                            runtimeScalars[k].value, Published(pose, scalars[k]));
+                            runtimeScalars[k].value,
+                            Published(pose, scalars[k]));
             }
         }
     }
@@ -787,12 +911,14 @@ Compiled(RigExecRigEvaluator &evaluator, const char *label)
     std::vector<std::string> notes;
     if (!evaluator.Compile(&notes)) {
         ++failures;
-        for (const auto &n : notes) std::printf("FAIL %s compile: %s\n", label, n.c_str());
+        for (const auto &n : notes)
+            std::printf("FAIL %s compile: %s\n", label, n.c_str());
         return false;
     }
     for (const auto &[path, why] : evaluator.GetSkippedOperations()) {
         ++failures;
-        std::printf("FAIL %s skipped %s: %s\n", label, path.GetText(), why.c_str());
+        std::printf("FAIL %s skipped %s: %s\n", label, path.GetText(),
+                    why.c_str());
     }
     return true;
 }
@@ -806,15 +932,20 @@ const double kInf = std::numeric_limits<double>::infinity();
 // table gives it. Samples [0, 10, 20, 30]: 5, 15 and 25 are ties; past 30
 // the last frame holds (out to FLT_MAX: a finite angle beyond it matches no
 // row); s_0, the other side and a non-finite angle read 0.
-const std::vector<double> kAngles = {-5, 0, 4, 5, 6, 10, 15, 15.001, 25, 29, 31,
-                                     100, 370, 1e30, kNan, kInf, -kInf, 1e39};
+const std::vector<double> kAngles = {-5,  0,      4,    5,    6,     10,
+                                     15,  15.001, 25,   29,   31,    100,
+                                     370, 1e30,   kNan, kInf, -kInf, 1e39};
 // Ta [0, 10, 20, 30] earlier ties; Tn the negative side on dial U.
-const std::vector<int> kTa = {0, 0, 0, 0, 1, 1, 1, 2, 2, 3, 3, 3, 3, 3, 0, 0, 0, 0};
+const std::vector<int> kTa = {0, 0, 0, 0, 1, 1, 1, 2, 2,
+                              3, 3, 3, 3, 3, 0, 0, 0, 0};
 // Tl [0, 10, 20, 30] later ties.
-const std::vector<int> kTl = {0, 0, 0, 1, 1, 1, 2, 2, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0};
+const std::vector<int> kTl = {0, 0, 0, 1, 1, 1, 2, 2, 3,
+                              3, 3, 3, 3, 3, 0, 0, 0, 0};
 // Ts [0, 10, 10, 20] (a stepped repeat) earlier ties, Tsl later ties.
-const std::vector<int> kTs = {0, 0, 0, 0, 1, 1, 1, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0};
-const std::vector<int> kTsl = {0, 0, 0, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0};
+const std::vector<int> kTs = {0, 0, 0, 0, 1, 1, 1, 3, 3,
+                              3, 3, 3, 3, 3, 0, 0, 0, 0};
+const std::vector<int> kTsl = {0, 0, 0, 2, 2, 2, 3, 3, 3,
+                               3, 3, 3, 3, 3, 0, 0, 0, 0};
 
 // Dial W's angle per frame (dial V's is its negation) and the frame of a
 // full turn 0 -> 360 by 5 degrees (N = 72) on side +1 (Wn: 0 -> -360 on
@@ -822,10 +953,11 @@ const std::vector<int> kTsl = {0, 0, 0, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0
 // is the last frame (the seam row); outside, the angle folds into the
 // window first: 361 -> 1 -> frame 0, 370 -> 10 -> frame 2, -10 -> 350,
 // 1e5 -> 280, 1e6 + 10 -> 290 (the fold has no turn bound).
-const std::vector<double> kTurnAngles = {0, 2.5, 5, 180, 357.5, 359.9, 360, 361, 370,
-                                         720, 725, -10, -350, 1e5, 1e6 + 10, 0, 0, 0};
-const std::vector<int> kTurn = {0, 0, 1, 36, 71, 72, 72, 0, 2, 0, 1, 70, 2, 56, 58,
-                                0, 0, 0};
+const std::vector<double> kTurnAngles = {0,    2.5, 5,        180, 357.5, 359.9,
+                                         360,  361, 370,      720, 725,   -10,
+                                         -350, 1e5, 1e6 + 10, 0,   0,     0};
+const std::vector<int> kTurn = {0, 0, 1,  36, 71, 72, 72, 0, 2,
+                                0, 1, 70, 2,  56, 58, 0,  0, 0};
 
 // The full turn's channel: two degrees per frame, so the seam publishes 144.
 std::vector<ChannelSpec>
@@ -847,7 +979,8 @@ MakeTableStage()
     for (const char *dial : {"W", "V"}) {
         controls += ControlPrim(dial, "                double avars:rz = 0\n");
     }
-    const std::vector<double> plain = {0, 10, 20, 30}, stepped = {0, 10, 10, 20};
+    const std::vector<double> plain = {0, 10, 20, 30},
+                              stepped = {0, 10, 10, 20};
     const std::vector<double> negative = {0, -10, -20, -30};
     const std::string turnFloats = "                float turn:shift = 0\n"
                                    "                float turn:angle = 0\n";
@@ -859,21 +992,32 @@ MakeTableStage()
     actions += Action("Ts", {t}, ActionMaps(stepped, +1, false, {}));
     actions += Action("Tsl", {t}, ActionMaps(stepped, +1, true, {}));
     actions += Action("Wp", {ActionPath("Wp") + ".turn:angle", Driver("W")},
-                      ActionMaps(Ramp(360.0, 72), +1, false, SpinChannels()), turnFloats, true);
+                      ActionMaps(Ramp(360.0, 72), +1, false, SpinChannels()),
+                      turnFloats, true);
     actions += Action("Wn", {ActionPath("Wn") + ".turn:angle", Driver("V")},
-                      ActionMaps(Ramp(-360.0, 72), -1, false, SpinChannels()), turnFloats, true);
-    const std::string movers = WrapMovers("Wp", Driver("W"), +1) +
-                               WrapMovers("Wn", Driver("V"), -1);
+                      ActionMaps(Ramp(-360.0, 72), -1, false, SpinChannels()),
+                      turnFloats, true);
+    const std::string movers =
+        WrapMovers("Wp", Driver("W"), +1) + WrapMovers("Wn", Driver("V"), -1);
     const std::string text =
         "#usda 1.0\n(\n    defaultPrim = \"Char\"\n    startTimeCode = 1\n"
-        "    endTimeCode = " + std::to_string(kAngles.size()) + "\n    upAxis = \"Y\"\n)\n"
+        "    endTimeCode = " +
+        std::to_string(kAngles.size()) +
+        "\n    upAxis = \"Y\"\n)\n"
         "def Xform \"Char\"\n{\n"
         "    def RigExecRoot \"Rig\"\n    {\n"
-        "        def Scope \"Controls\"\n        {\n" + controls + "        }\n"
+        "        def Scope \"Controls\"\n        {\n" +
+        controls +
+        "        }\n"
         "        def Scope \"Dials\"\n        {\n"
-        "            double angleT = 0\n            double angleU = 0\n        }\n"
-        "        def Scope \"Actions\"\n        {\n" + actions + "        }\n"
-        "        def Scope \"Movers\"\n        {\n" + movers + "        }\n"
+        "            double angleT = 0\n            double angleU = 0\n        "
+        "}\n"
+        "        def Scope \"Actions\"\n        {\n" +
+        actions +
+        "        }\n"
+        "        def Scope \"Movers\"\n        {\n" +
+        movers +
+        "        }\n"
         "    }\n"
         "}\n";
     SdfLayerRefPtr layer = SdfLayer::CreateAnonymous(".usda");
@@ -901,17 +1045,21 @@ TestFrameTables()
 {
     CHECK(kTa.size() == kAngles.size() && kTl.size() == kAngles.size() &&
           kTs.size() == kAngles.size() && kTsl.size() == kAngles.size() &&
-          kTurnAngles.size() == kAngles.size() && kTurn.size() == kAngles.size());
+          kTurnAngles.size() == kAngles.size() &&
+          kTurn.size() == kAngles.size());
     UsdStageRefPtr stage = MakeTableStage();
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecRigEvaluator evaluator(stage, kRig);
-    if (!Compiled(evaluator, "frame tables")) return;
+    if (!Compiled(evaluator, "frame tables"))
+        return;
     const struct {
         const char *action;
         const std::vector<int> *frames;
         int n;
-    } tables[] = {{"Ta", &kTa, 3}, {"Tl", &kTl, 3}, {"Tn", &kTa, 3}, {"Ts", &kTs, 3},
-                  {"Tsl", &kTsl, 3}, {"Wp", &kTurn, 72}, {"Wn", &kTurn, 72}};
+    } tables[] = {{"Ta", &kTa, 3},   {"Tl", &kTl, 3},   {"Tn", &kTa, 3},
+                  {"Ts", &kTs, 3},   {"Tsl", &kTsl, 3}, {"Wp", &kTurn, 72},
+                  {"Wn", &kTurn, 72}};
     for (int f = 1; f <= int(kAngles.size()); ++f) {
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(double(f)));
         CHECK(pose.valid);
@@ -923,22 +1071,27 @@ TestFrameTables()
             const bool negated = t.action[1] == 'n';
             const std::string what = std::string(t.action) + " at " +
                                      Number(negated ? -angle : angle);
-            Expect((what + ": frame").c_str(), f, Published(pose, Output(t.action, "frame")),
-                   double(k), 0.0);
-            Expect((what + ": weight").c_str(), f, Published(pose, Output(t.action, "weight")),
+            Expect((what + ": frame").c_str(), f,
+                   Published(pose, Output(t.action, "frame")), double(k), 0.0);
+            Expect((what + ": weight").c_str(), f,
+                   Published(pose, Output(t.action, "weight")),
                    double(float(k) / float(t.n)), 0.0);
-            Expect((what + ": active").c_str(), f, Published(pose, Output(t.action, "active")),
+            Expect((what + ": active").c_str(), f,
+                   Published(pose, Output(t.action, "active")),
                    k > 0 ? 1.0 : 0.0, 0.0);
         }
         for (const char *turn : {"Wp", "Wn"}) {
-            Expect((std::string(turn) + " spin").c_str(), f, Published(pose, Output(turn, "Spin")),
+            Expect((std::string(turn) + " spin").c_str(), f,
+                   Published(pose, Output(turn, "Spin")),
                    2.0 * double(kTurn[size_t(f - 1)]), 0.0);
         }
     }
     std::vector<int> order;
-    for (int f = int(kAngles.size()); f >= 1; --f) order.push_back(f);
+    for (int f = int(kAngles.size()); f >= 1; --f)
+        order.push_back(f);
     order.push_back(7);
-    CheckEvaluators(evaluator, stage, "frame tables", int(kAngles.size()), order);
+    CheckEvaluators(evaluator, stage, "frame tables", int(kAngles.size()),
+                    order);
 }
 
 // ---- The dials rig ----
@@ -953,15 +1106,18 @@ TestOutputs()
     Options options;
     options.nudgeD10 = true;
     UsdStageRefPtr stage = MakeStage(options);
-    if (!stage) return;
+    if (!stage)
+        return;
     const std::string rootBefore = Export(stage->GetRootLayer());
     const std::string sessionBefore = Export(stage->GetSessionLayer());
 
     RigExecRigEvaluator evaluator(stage, kRig);
-    if (!Compiled(evaluator, "dials")) return;
+    if (!Compiled(evaluator, "dials"))
+        return;
     std::vector<std::string> reasons;
     CHECK(evaluator.IsBakeable(&reasons));
-    for (const auto &r : reasons) std::printf("  not bakeable: %s\n", r.c_str());
+    for (const auto &r : reasons)
+        std::printf("  not bakeable: %s\n", r.c_str());
 
     // The compiled scalar list: float primvars only, never the knob's dial;
     // the tables publish none (no rigExec:meshes).
@@ -975,9 +1131,10 @@ TestOutputs()
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(double(f)));
         CHECK(pose.valid);
         // D1: whole steps and the hold; the negative side is D1 2's.
-        const double q1x[] = {0, 0.10, 0.25, 0.26, 0.99, 1.00, 0, 0, 0.5, 0.5, 1.0,
-                              0, 0, 0, 0, 0, 0, 0};
-        Expect("D1 q1 x offset", f, Published(pose, Output("D1", "Q_tx")), q1x[f - 1]);
+        const double q1x[] = {0,   0.10, 0.25, 0.26, 0.99, 1.00, 0, 0, 0.5,
+                              0.5, 1.0,  0,    0,    0,    0,    0, 0, 0};
+        Expect("D1 q1 x offset", f, Published(pose, Output("D1", "Q_tx")),
+               q1x[f - 1]);
         const int32_t d1 = RampFrame(Key("D1", f), 100.0, 100);
         Expect("D1 frame", f, Published(pose, Output("D1", "frame")), d1, 0.0);
         Expect("D1 weight", f, Published(pose, Output("D1", "weight")),
@@ -986,11 +1143,15 @@ TestOutputs()
                d1 > 0 ? 1.0 : 0.0, 0.0);
         // Negative side: D1 2 holds at its end.
         Expect("D1 2 q1 y offset", f, Published(pose, Output("D1_2", "Q_ty")),
-               f == 7 ? -0.20 : f == 8 ? -0.50 : 0.0);
+               f == 7   ? -0.20
+               : f == 8 ? -0.50
+                        : 0.0);
         // Additive offsets: two tables at +50 each publish their own offset;
         // the add movers on q1 sum them (0.5 + 0.25), q2 takes 0.15.
-        Expect("D2 q1 x offset", f, Published(pose, Output("D2", "Q_tx")), f == 9 ? 0.25 : 0.0);
-        Expect("D2 q2 y offset", f, Published(pose, Output("D2", "Q2_ty")), f == 9 ? 0.15 : 0.0);
+        Expect("D2 q1 x offset", f, Published(pose, Output("D2", "Q_tx")),
+               f == 9 ? 0.25 : 0.0);
+        Expect("D2 q2 y offset", f, Published(pose, Output("D2", "Q2_ty")),
+               f == 9 ? 0.15 : 0.0);
         if (f == 9) {
             Expect("additive q1 x sum", f,
                    double(float(Published(pose, Output("D1", "Q_tx")))) +
@@ -998,14 +1159,18 @@ TestOutputs()
                    0.75);
         }
         // Rotated frame: +20 on C at D7 = +100, unclamped.
-        Expect("D7 C rz offset", f, Published(pose, Output("D7", "C_rz")), f == 10 ? 20.0 : 0.0);
+        Expect("D7 C rz offset", f, Published(pose, Output("D7", "C_rz")),
+               f == 10 ? 20.0 : 0.0);
         // Stepped values: S0 S1 S2 S2 with D8 active; D11's S1 at its last
         // frame.
         const int32_t d8 = RampFrame(Key("D8", f), 90.0, 90);
         Expect("D8 active", f, Published(pose, Output("D8", "active")),
                d8 > 0 ? 1.0 : 0.0, 0.0);
         Expect("D8 switch value", f, Published(pose, Output("D8", "Switch")),
-               d8 < 30 ? 0.0 : d8 < 60 ? 1.0 : 2.0, 0.0);
+               d8 < 30   ? 0.0
+               : d8 < 60 ? 1.0
+                         : 2.0,
+               0.0);
         Expect("D8 opacity offset", f, Published(pose, Output("D8", "Opacity")),
                double(float((1.0 - 0.5 * double(d8) / 90.0) - 1.0)));
         Expect("D11 switch value", f, Published(pose, Output("D11", "Switch")),
@@ -1017,7 +1182,8 @@ TestOutputs()
                f == 18 ? 45.0 : 0.0);
         // A dial a property chain revises drives its table with the chain's
         // result (+45 at frame 18), in the same evaluation.
-        Expect("D10 rz chain", f, Published(pose, Avar("D10", "rz")), f == 18 ? 45.0 : 0.0);
+        Expect("D10 rz chain", f, Published(pose, Avar("D10", "rz")),
+               f == 18 ? 45.0 : 0.0);
         Expect("D10 frame", f, Published(pose, Output("D10", "frame")),
                f == 18 ? 45.0 : 0.0, 0.0);
         Expect("D10 q6 x offset", f, Published(pose, Output("D10", "Q6_tx")),
@@ -1035,11 +1201,13 @@ TestOutputs()
     // disabled table publishes zeros on every map, value channels included.
     const size_t signature = evaluator.GetCompiledRigSignature();
     UsdPrim d8 = stage->GetPrimAtPath(SdfPath(ActionPath("D8")));
-    d8.CreateAttribute(TfToken("inputs:enabled"), SdfValueTypeNames->Bool).Set(false);
+    d8.CreateAttribute(TfToken("inputs:enabled"), SdfValueTypeNames->Bool)
+        .Set(false);
     {
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(14.0));
         CHECK(evaluator.GetCompiledRigSignature() == signature);
-        for (const char *map : {"frame", "weight", "active", "Switch", "Opacity"}) {
+        for (const char *map :
+             {"frame", "weight", "active", "Switch", "Opacity"}) {
             const SdfPath output = Output("D8", map);
             Expect(output.GetText(), 14, Published(pose, output), 0.0, 0.0);
         }
@@ -1048,7 +1216,8 @@ TestOutputs()
         Expect("disabled D8 opacity", 14, Published(pose, opacity), 1.0, 0.0);
     }
     d8.GetAttribute(TfToken("inputs:enabled")).Set(true);
-    CHECK(Published(evaluator.Evaluate(UsdTimeCode(14.0)), Output("D8", "Switch")) == 2.0);
+    CHECK(Published(evaluator.Evaluate(UsdTimeCode(14.0)),
+                    Output("D8", "Switch")) == 2.0);
     CHECK(evaluator.GetCompiledRigSignature() == signature);
     // A dial's own key is a value too.
     {
@@ -1063,15 +1232,19 @@ TestOutputs()
     // Rows, cuts and the clamp are structural: each edit recompiles (a new
     // signature) and changes the output; reverting it returns the original
     // signature.
-    const auto structural = [&](const char *what, const std::function<void()> &edit,
+    const auto structural = [&](const char *what,
+                                const std::function<void()> &edit,
                                 const std::function<void()> &revert, int frame,
                                 const SdfPath &read, double expected) {
         const size_t was = evaluator.GetCompiledRigSignature();
         edit();
-        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(double(frame)));
+        const RigExecRigPose pose =
+            evaluator.Evaluate(UsdTimeCode(double(frame)));
         if (evaluator.GetCompiledRigSignature() == was) {
             ++failures;
-            std::printf("FAIL %s edit left the compiled rig signature as it was\n", what);
+            std::printf(
+                "FAIL %s edit left the compiled rig signature as it was\n",
+                what);
         }
         Expect(what, frame, Published(pose, read), expected);
         revert();
@@ -1082,26 +1255,34 @@ TestOutputs()
         return [&stage, action, maps]() { AuthorMaps(stage, action, maps); };
     };
     // Re-recorded samples (every 2 degrees): 25.3 is closest to 26, frame 13.
-    structural("re-recorded rows",
-               original("D1", ActionMaps(Ramp(200.0, 100), +1, false, D1Channels())),
-               original("D1", ActionMaps(Ramp(100.0, 100), +1, false, D1Channels())),
-               3, Output("D1", "Q_tx"), 0.13);
+    structural(
+        "re-recorded rows",
+        original("D1", ActionMaps(Ramp(200.0, 100), +1, false, D1Channels())),
+        original("D1", ActionMaps(Ramp(100.0, 100), +1, false, D1Channels())),
+        3, Output("D1", "Q_tx"), 0.13);
     // The other side: D1 2's rows re-made for side +1 read 0 at -20.
     structural("side",
-               original("D1_2", ActionMaps(Ramp(-50.0, 50), +1, false, D1_2Channels())),
-               original("D1_2", ActionMaps(Ramp(-50.0, 50), -1, false, D1_2Channels())),
+               original("D1_2",
+                        ActionMaps(Ramp(-50.0, 50), +1, false, D1_2Channels())),
+               original("D1_2",
+                        ActionMaps(Ramp(-50.0, 50), -1, false, D1_2Channels())),
                7, Output("D1_2", "Q_ty"), 0.0);
     {
         // A held tail (samples min(k, 50)): its cell is the earliest tied
         // frame, 50, with earlier ties and the tail's end, 100, with later.
-        const std::vector<double> held = Samples(100, [](int k) { return double(std::min(k, 50)); });
+        const std::vector<double> held =
+            Samples(100, [](int k) { return double(std::min(k, 50)); });
         AuthorMaps(stage, "D1", ActionMaps(held, +1, false, D1Channels()));
         Expect("held tail, earlier", 9,
-               Published(evaluator.Evaluate(UsdTimeCode(9.0)), Output("D1", "Q_tx")), 0.5);
-        structural("later ties", original("D1", ActionMaps(held, +1, true, D1Channels())),
-                   original("D1", ActionMaps(held, +1, false, D1Channels())),
-                   9, Output("D1", "Q_tx"), 1.0);
-        AuthorMaps(stage, "D1", ActionMaps(Ramp(100.0, 100), +1, false, D1Channels()));
+               Published(evaluator.Evaluate(UsdTimeCode(9.0)),
+                         Output("D1", "Q_tx")),
+               0.5);
+        structural("later ties",
+                   original("D1", ActionMaps(held, +1, true, D1Channels())),
+                   original("D1", ActionMaps(held, +1, false, D1Channels())), 9,
+                   Output("D1", "Q_tx"), 1.0);
+        AuthorMaps(stage, "D1",
+                   ActionMaps(Ramp(100.0, 100), +1, false, D1Channels()));
         evaluator.Evaluate(UsdTimeCode(9.0));
     }
     {
@@ -1109,23 +1290,28 @@ TestOutputs()
         // offset cuts publish its change from rest (-0.5).
         std::vector<ChannelSpec> channels = D8Channels();
         channels[1].value = true;
-        structural("value cuts", original("D8", ActionMaps(Ramp(90.0, 90), +1, false, channels)),
-                   original("D8", ActionMaps(Ramp(90.0, 90), +1, false, D8Channels())),
-                   15, Output("D8", "Opacity"), 0.5);
+        structural(
+            "value cuts",
+            original("D8", ActionMaps(Ramp(90.0, 90), +1, false, channels)),
+            original("D8", ActionMaps(Ramp(90.0, 90), +1, false, D8Channels())),
+            15, Output("D8", "Opacity"), 0.5);
         channels = D8Channels();
-        channels[0].samples = Samples(90, [](int k) { return k < 45 ? 0.0 : 3.0; });
-        structural("channel values",
-                   original("D8", ActionMaps(Ramp(90.0, 90), +1, false, channels)),
-                   original("D8", ActionMaps(Ramp(90.0, 90), +1, false, D8Channels())),
-                   13, Output("D8", "Switch"), 0.0);
+        channels[0].samples =
+            Samples(90, [](int k) { return k < 45 ? 0.0 : 3.0; });
+        structural(
+            "channel values",
+            original("D8", ActionMaps(Ramp(90.0, 90), +1, false, channels)),
+            original("D8", ActionMaps(Ramp(90.0, 90), +1, false, D8Channels())),
+            13, Output("D8", "Switch"), 0.0);
     }
     {
         // Clamped, the 20-degree channel publishes 1.
         const UsdAttribute clamp = stage->GetAttributeAtPath(
             SdfPath(ActionPath("D7") + "/C_rz.rigExec:clampOutput"));
         CHECK(clamp);
-        structural("clampOutput", [&]() { clamp.Set(true); }, [&]() { clamp.Set(false); },
-                   10, Output("D7", "C_rz"), 1.0);
+        structural(
+            "clampOutput", [&]() { clamp.Set(true); },
+            [&]() { clamp.Set(false); }, 10, Output("D7", "C_rz"), 1.0);
     }
     CHECK(evaluator.GetCompiledRigSignature() == signature);
 
@@ -1134,13 +1320,14 @@ TestOutputs()
         .GetRelationship(TfToken("rigExec:driverAttributes"))
         .SetTargets({SdfPath(Control("D11") + ".avars:missing")});
     const RigExecRigPose refused = evaluator.Evaluate(UsdTimeCode(17.0));
-    CHECK(evaluator.GetSkippedOperations().count(SdfPath(ActionPath("D11"))) == 1);
+    CHECK(evaluator.GetSkippedOperations().count(SdfPath(ActionPath("D11"))) ==
+          1);
     CHECK(evaluator.GetSkippedOperations().size() == 1);
     for (const auto &[path, why] : evaluator.GetSkippedOperations()) {
         std::printf("  set aside %s: %s\n", path.GetText(), why.c_str());
     }
-    Expect("D8 beside a refused table", 17, Published(refused, Output("D8", "active")),
-           1.0, 0.0);
+    Expect("D8 beside a refused table", 17,
+           Published(refused, Output("D8", "active")), 1.0, 0.0);
 }
 
 // The order gate: the corrective nested under the skin and the same mover
@@ -1162,16 +1349,19 @@ TestCorrectiveOrder()
         Options options;
         options.correctives = c.layout;
         UsdStageRefPtr stage = MakeStage(options);
-        if (!stage) continue;
+        if (!stage)
+            continue;
         RigExecRigEvaluator evaluator(stage, kRig);
-        if (!Compiled(evaluator, c.label)) continue;
-        const GfVec3f rest = StrokePoint(evaluator.Evaluate(UsdTimeCode(1.0)), 0);
+        if (!Compiled(evaluator, c.label))
+            continue;
+        const GfVec3f rest =
+            StrokePoint(evaluator.Evaluate(UsdTimeCode(1.0)), 0);
         CHECK(Near(rest[0], 0.0) && Near(rest[1], 0.3));
         const GfVec3f p = StrokePoint(evaluator.Evaluate(UsdTimeCode(11.0)), 0);
         if (!Near(p[0], c.x, 1e-5) || !Near(p[1], c.y, 1e-5)) {
             ++failures;
-            std::printf("FAIL corrective %s: q1 (%g, %g), expected (%g, %g)\n", c.label,
-                        p[0], p[1], c.x, c.y);
+            std::printf("FAIL corrective %s: q1 (%g, %g), expected (%g, %g)\n",
+                        c.label, p[0], p[1], c.x, c.y);
         }
         CheckEvaluators(evaluator, stage, c.label);
     }
@@ -1181,7 +1371,8 @@ TestCorrectiveOrder()
     Options zero;
     zero.zeroSample = true;
     UsdStageRefPtr stage = MakeStage(zero);
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecRigEvaluator evaluator(stage, kRig);
     std::vector<std::string> notes;
     if (evaluator.Compile(&notes) && evaluator.GetSkippedOperations().empty()) {
@@ -1189,7 +1380,8 @@ TestCorrectiveOrder()
         const GfVec3f p = StrokePoint(pose, 0);
         if (!Near(p[0], -1.3, 1e-5) || !Near(p[1], 0.0, 1e-5)) {
             ++failures;
-            std::printf("FAIL k = 0 corrective applied: q1 (%g, %g)\n", p[0], p[1]);
+            std::printf("FAIL k = 0 corrective applied: q1 (%g, %g)\n", p[0],
+                        p[1]);
         }
         CHECK(!pose.diagnostics.empty());
     }
@@ -1204,17 +1396,20 @@ void
 TestHydraPublish(bool switches)
 {
     UsdStageRefPtr stage = MakeStage();
-    if (!stage) return;
+    if (!stage)
+        return;
     auto liveStore = std::make_shared<RigExecSnapshotStore>();
     RigExecImagingBridge live(stage, kRig, liveStore);
     std::vector<std::string> errors;
     CHECK(live.Compile(&errors));
-    for (const auto &e : errors) std::printf("  bridge compile: %s\n", e.c_str());
+    for (const auto &e : errors)
+        std::printf("  bridge compile: %s\n", e.c_str());
 
     auto stageIndex = UsdImagingStageSceneIndex::New();
     stageIndex->SetStage(stage);
     stageIndex->ApplyPendingUpdates();
-    auto flattened = HdFlatteningSceneIndex::New(stageIndex, HdFlattenedDataSourceProviders());
+    auto flattened = HdFlatteningSceneIndex::New(
+        stageIndex, HdFlattenedDataSourceProviders());
     auto results = RigExecResultsSceneIndex::New(flattened, liveStore);
 
     RigExecRigEvaluator evaluator(stage, kRig);
@@ -1223,12 +1418,15 @@ TestHydraPublish(bool switches)
     std::vector<uint8_t> bytes;
     std::string error;
     CHECK(RigExecTestBakeAt(evaluator, 1.0, &bytes, &error));
-    const std::filesystem::path scratch = std::filesystem::temp_directory_path() /
-        ("testRigExecStepMaps-" + std::to_string(
-            std::chrono::steady_clock::now().time_since_epoch().count()));
+    const std::filesystem::path scratch =
+        std::filesystem::temp_directory_path() /
+        ("testRigExecStepMaps-" +
+         std::to_string(
+             std::chrono::steady_clock::now().time_since_epoch().count()));
     std::error_code made;
     CHECK(std::filesystem::create_directory(scratch, made) && !made);
-    if (made || bytes.empty()) return;
+    if (made || bytes.empty())
+        return;
     const std::string binary = (scratch / "tds.rigexec").string();
     {
         std::ofstream stream(binary, std::ios::binary);
@@ -1246,13 +1444,16 @@ TestHydraPublish(bool switches)
             HdPrimvarsSchema::GetFromParent(results->GetPrim(kHead).dataSource);
         const HdPrimvarSchema primvar = primvars.GetPrimvar(name);
         const HdSampledDataSourceHandle value = primvar.GetPrimvarValue();
-        const HdTokenDataSourceHandle interpolation = primvar.GetInterpolation();
+        const HdTokenDataSourceHandle interpolation =
+            primvar.GetInterpolation();
         if (!value || !interpolation ||
-            interpolation->GetTypedValue(0) != HdPrimvarSchemaTokens->constant) {
+            interpolation->GetTypedValue(0) !=
+                HdPrimvarSchemaTokens->constant) {
             return false;
         }
         const VtValue v = value->GetValue(0);
-        if (!v.IsHolding<float>()) return false;
+        if (!v.IsHolding<float>())
+            return false;
         *out = v.UncheckedGet<float>();
         return true;
     };
@@ -1266,12 +1467,14 @@ TestHydraPublish(bool switches)
         const RigExecImagingSnapshotConstPtr a = liveStore->Get();
         const RigExecImagingSnapshotConstPtr b = playStore->Get();
         CHECK(a && b);
-        if (!a || !b) continue;
+        if (!a || !b)
+            continue;
         CHECK(a->prims.count(kKnob) == 0 && b->prims.count(kKnob) == 0);
         const auto liveHead = a->prims.find(kHead);
         const auto playHead = b->prims.find(kHead);
         CHECK(liveHead != a->prims.end() && playHead != b->prims.end());
-        if (liveHead == a->prims.end() || playHead == b->prims.end()) continue;
+        if (liveHead == a->prims.end() || playHead == b->prims.end())
+            continue;
         CHECK(liveHead->second.shaderFloats == playHead->second.shaderFloats);
         CHECK(liveHead->second.shaderFloats.size() == 3);
         const float glowValue = float(0.5 + 0.125 * double(f));
@@ -1281,12 +1484,14 @@ TestHydraPublish(bool switches)
         CHECK(drawn(glow, &got) && got == glowValue);
         if (switches) {
             CHECK(liveHead->second.shaderFloats.count(switchIndex) &&
-                  liveHead->second.shaderFloats.at(switchIndex) == expected[f - 12]);
+                  liveHead->second.shaderFloats.at(switchIndex) ==
+                      expected[f - 12]);
             got = -1.0f;
             if (!drawn(switchIndex, &got) || got != expected[f - 12]) {
                 ++failures;
-                std::printf("FAIL Hydra switchIndex at frame %d: %g, expected %g\n", f,
-                            got, expected[f - 12]);
+                std::printf(
+                    "FAIL Hydra switchIndex at frame %d: %g, expected %g\n", f,
+                    got, expected[f - 12]);
             }
         }
     }
@@ -1303,24 +1508,33 @@ void
 TestChannels()
 {
     UsdStageRefPtr stage = MakeStage();
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecRigEvaluator evaluator(stage, kRig);
-    if (!Compiled(evaluator, "channels")) return;
-    const SdfPath qx = Avar("Q", "tx"), qy = Avar("Q", "ty"), q2y = Avar("Q2", "ty");
-    const SdfPath crz = Avar("C", "rz"), d10 = Avar("D10", "rz"), q6x = Avar("Q6", "tx");
+    if (!Compiled(evaluator, "channels"))
+        return;
+    const SdfPath qx = Avar("Q", "tx"), qy = Avar("Q", "ty"),
+                  q2y = Avar("Q2", "ty");
+    const SdfPath crz = Avar("C", "rz"), d10 = Avar("D10", "rz"),
+                  q6x = Avar("Q6", "tx");
     const SdfPath sw = kHead.AppendProperty(TfToken("primvars:switchIndex"));
     const SdfPath opacity = kHead.AppendProperty(TfToken("primvars:opacity"));
     for (int f = 1; f <= kFrames; ++f) {
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(double(f)));
-        const double q1x[] = {0, 0.10, 0.25, 0.26, 0.99, 1.00, 0, 0, 0.75, 0.5, 1.0,
-                              0, 0, 0, 0, 0, 0, 0};
+        const double q1x[] = {0,   0.10, 0.25, 0.26, 0.99, 1.00, 0, 0, 0.75,
+                              0.5, 1.0,  0,    0,    0,    0,    0, 0, 0};
         Expect("q1 x", f, Published(pose, qx), q1x[f - 1]);
-        Expect("q1 y", f, Published(pose, qy), f == 7 ? -0.2 : f == 8 ? -0.5 : f == 10 ? 0.2 : 0.0);
+        Expect("q1 y", f, Published(pose, qy),
+               f == 7    ? -0.2
+               : f == 8  ? -0.5
+               : f == 10 ? 0.2
+                         : 0.0);
         Expect("q2 y", f, Published(pose, q2y), f == 9 ? 0.15 : 0.0);
         Expect("C rz", f, Published(pose, crz), f == 10 ? 50.0 : 0.0);
         Expect("D10 rz", f, Published(pose, d10), f == 18 ? 45.0 : 0.0);
         Expect("q6 x", f, Published(pose, q6x), f == 18 ? 0.45 : 0.0);
-        const double sws[] = {7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 1, 2, 2, 7, 2, 7};
+        const double sws[] = {7, 7, 7, 7, 7, 7, 7, 7, 7,
+                              7, 7, 0, 1, 2, 2, 7, 2, 7};
         Expect("switch", f, Published(pose, sw), sws[f - 1], 0.0);
         const int32_t d8 = RampFrame(Key("D8", f), 90.0, 90);
         Expect("opacity", f, Published(pose, opacity),
@@ -1333,7 +1547,8 @@ TestChannels()
         CHECK(found != pose.controlFrames.end());
         if (found != pose.controlFrames.end()) {
             const GfVec3d x = found->second.X() - found->second.Origin();
-            const double angle = std::atan2(x[1], x[0]) * 180.0 / 3.14159265358979323846;
+            const double angle =
+                std::atan2(x[1], x[0]) * 180.0 / 3.14159265358979323846;
             Expect("C world angle", 10, angle, 50.0, 1e-4);
         }
     }
@@ -1343,7 +1558,8 @@ TestChannels()
         RigExecRigEvaluator alone(stage, kRig);
         std::vector<std::string> notes;
         CHECK(alone.Compile(&notes));
-        Expect("q6 x alone", 18, Published(alone.Evaluate(UsdTimeCode(18.0)), q6x), 0.45);
+        Expect("q6 x alone", 18,
+               Published(alone.Evaluate(UsdTimeCode(18.0)), q6x), 0.45);
     }
     CheckEvaluators(evaluator, stage, "channels");
 
@@ -1355,10 +1571,13 @@ TestChannels()
     if (swapped) {
         RigExecRigEvaluator e(swapped, kRig);
         if (Compiled(e, "D11 on top")) {
-            Expect("D11 on top", 17, Published(e.Evaluate(UsdTimeCode(17.0)), sw), 1.0, 0.0);
+            Expect("D11 on top", 17,
+                   Published(e.Evaluate(UsdTimeCode(17.0)), sw), 1.0, 0.0);
             swapped->GetPrimAtPath(SdfPath("/Char/Rig/Movers"))
-                .SetChildrenReorder({TfToken("Switch_D8"), TfToken("Switch_D11")});
-            Expect("D8 on top", 17, Published(e.Evaluate(UsdTimeCode(17.0)), sw), 2.0, 0.0);
+                .SetChildrenReorder(
+                    {TfToken("Switch_D8"), TfToken("Switch_D11")});
+            Expect("D8 on top", 17,
+                   Published(e.Evaluate(UsdTimeCode(17.0)), sw), 2.0, 0.0);
         }
     }
 
@@ -1386,7 +1605,7 @@ TestChannels()
     TestHydraPublish(true);
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
@@ -1405,6 +1624,7 @@ main(int argc, char **argv)
         std::printf("%d FAILURE(S)\n", failures);
         return 1;
     }
-    std::printf("testRigExecStepMaps%s: all tests passed\n", channels ? " channels" : "");
+    std::printf("testRigExecStepMaps%s: all tests passed\n",
+                channels ? " channels" : "");
     return 0;
 }

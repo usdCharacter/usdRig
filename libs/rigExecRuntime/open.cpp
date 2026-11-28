@@ -181,6 +181,7 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
         const auto &revisions = geometry.chains[c].revisions;
         for (size_t r = 0; r < revisions.size(); ++r) {
             if (revisions[r].op == uint8_t(RigExecWireExternalRevisionOp) &&
+                !revisions[r].rangeRole &&
                 !program.externalIndex.count(
                     std::make_pair(uint32_t(c), uint32_t(r)))) {
                 return fail("a plugin revision carries no external mover "
@@ -490,26 +491,53 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
         const auto &step = file.steps[i];
         if (step.isHead)
             continue;
-        if (step.kind == RigExecWireStepKind::ComposeSubtree) {
-            const auto &group = poses.composeGroups[size_t(step.object)];
-            for (int slot = group.begin; slot < group.end; ++slot)
-                program.avarReaderSteps[size_t(slot)].push_back(int32_t(i));
-        }
+        const bool compose = step.kind == RigExecWireStepKind::OpNode &&
+                             step.object >= 0 &&
+                             RrReadsComposeLookup(file, size_t(step.object));
         for (const auto &read : step.reads) {
-            if (step.kind == RigExecWireStepKind::ComposeSubtree &&
-                read.domain() == RigExecWireSlotDomain::Avars) {
+            if (compose && read.domain() == RigExecWireSlotDomain::Avars) {
                 for (uint32_t slot = read.begin() / 11;
                      slot < (uint64_t(read.end()) + 10) / 11 && slot < slots;
                      ++slot)
-                    if (int(slot) <
-                            poses.composeGroups[size_t(step.object)].begin ||
-                        int(slot) >=
-                            poses.composeGroups[size_t(step.object)].end)
-                        program.avarReaderSteps[slot].push_back(int32_t(i));
+                    program.avarReaderSteps[slot].push_back(int32_t(i));
             }
             if (read.domain() == RigExecWireSlotDomain::ChainBase) {
                 for (uint32_t c = read.begin(); c < read.end(); ++c)
                     program.chainBaseSteps[c].push_back(int32_t(i));
+            }
+        }
+        if (step.kind == RigExecWireStepKind::OpNode ||
+            step.kind == RigExecWireStepKind::OpChainHead ||
+            step.kind == RigExecWireStepKind::OpChainRange) {
+            // An op step standing in for a revision's static, fold or chunk
+            // writes its packet, its transforms or its groups.
+            const auto &geo = *file.geometry;
+            for (const auto &write : step.writes) {
+                const auto domain = write.domain();
+                for (uint32_t s = write.begin(); s < write.end(); ++s) {
+                    int64_t revision = -1;
+                    if (domain == RigExecWireSlotDomain::RevisionPacket ||
+                        domain == RigExecWireSlotDomain::RevisionTransforms) {
+                        revision = s;
+                    } else if (domain == RigExecWireSlotDomain::RevisionOut) {
+                        for (size_t r = 0; r < geo.revisionChunkBase.size();
+                             ++r)
+                            if (geo.revisionChunkBase[r] >= 0 &&
+                                s >= uint32_t(geo.revisionChunkBase[r]) &&
+                                s - uint32_t(geo.revisionChunkBase[r]) <
+                                    uint32_t(geo.revisionChunkCount[r]))
+                                revision = int64_t(r);
+                    }
+                    if (revision < 0 ||
+                        size_t(revision) >= program.revisionSteps.size())
+                        continue;
+                    if (domain == RigExecWireSlotDomain::RevisionPacket)
+                        program.revisionStaticStep[size_t(revision)] =
+                            int32_t(i);
+                    auto &steps = program.revisionSteps[size_t(revision)];
+                    if (steps.empty() || steps.back() != int32_t(i))
+                        steps.push_back(int32_t(i));
+                }
             }
         }
         switch (step.kind) {
@@ -730,6 +758,9 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
         return fail(error ? *error
                           : std::string("common graph initialization failed"));
     }
+    if (!RrOpenOpNodes(&program, error)) {
+        return fail(error ? *error : std::string("op nodes failed to open"));
+    }
     // Unavailable compiled data retains the existing missing-kernel behavior.
     // Module declarations generate this catalog; the engine names no mover.
     size_t moverCount = 0;
@@ -738,9 +769,9 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
     movers.reserve(moverCount);
     for (size_t i = 0; i < moverCount; ++i)
         movers.push_back(factories[i]());
-    std::string registrationError;
-    self->InstallMoverDefinitions(movers.data(), movers.size(),
-                                  &registrationError);
+    if (!self->InstallMoverDefinitions(movers.data(), movers.size(), error))
+        return fail(error ? *error
+                          : std::string("built-in mover registration failed"));
     // History ticks open their own program from these (ExecuteHistory).
     if (!program.windowedOps.empty()) {
         self->_historyBytes =
@@ -755,7 +786,9 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
                            size_t moverCount, std::string *error)
 {
     auto reader = Open(bytes, size, error);
-    if (reader && !reader->InstallMoverDefinitions(movers, moverCount, error))
+    if (reader &&
+        (!reader->InstallMoverDefinitions(movers, moverCount, error) ||
+         !reader->_RequireExternalKernels(error)))
         return nullptr;
     return reader;
 }
@@ -934,8 +967,9 @@ RigExecRuntimeReader::GetSolverFramePublications() const
     const auto &meta = *_program->slotMeta;
     std::vector<char> aliveSolver(_program->poses->solvers.size(), 0);
     for (const RigExecWireStep &step : *_program->steps)
-        if (step.kind == RigExecWireStepKind::Solve)
-            aliveSolver[size_t(step.object)] = 1;
+        if (const int64_t solver = RrSolveOf(_program.get(), step);
+            solver >= 0 && size_t(solver) < aliveSolver.size())
+            aliveSolver[size_t(solver)] = 1;
     for (int index : meta.solverPublishOrder) {
         if (!aliveSolver[size_t(meta.solverArrayElements[size_t(index)])])
             continue;

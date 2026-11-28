@@ -89,7 +89,7 @@ through Hydra for live playback in <code>usdview</code> and other viewers.</p>
     Export a rig to the `.rigexec` binary and play it with a standalone
     runtime that links no USD library.
 
-    [:octicons-arrow-right-24: Standalone runtime](specs/standalone-runtime.md)
+    [:octicons-arrow-right-24: Godot tutorial](concepts/tutorial-godot-baked-rig.md)
 
 </div>
 
@@ -109,7 +109,7 @@ These are rendered straight from them.
 
 usdRig is an early, end-to-end vertical under active development: its APIs,
 behaviour and file formats may change without notice. Its RigExec engine builds
-against an unmodified OpenUSD 26.08 with OpenExec. Project-authored code,
+against an unmodified OpenUSD 26.08. Project-authored code,
 documentation and assets are MIT licensed, and bundled and derived third-party
 material keeps its own terms. See
 [licensing and provenance](concepts/licensing.md) and the

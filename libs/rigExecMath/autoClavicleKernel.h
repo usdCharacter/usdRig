@@ -1,6 +1,4 @@
-// Shared, USD-free arithmetic of RigExecAutoClavicle. The dynamic evaluator,
-// the baked program and the binary runtime all call RigExecAutoClavicleShift,
-// so the three agree by construction.
+// Shared arithmetic of RigExecAutoClavicle.
 //
 // Conventions: frames are 16 doubles, row-major, row vectors (a point maps as
 // p * M; the three handle vectors are rows 0-2 and the origin is row 3), as
@@ -40,8 +38,64 @@ struct RigExecAutoClavicleConstants {
     std::vector<double> gains;
     std::vector<double> weights;
 
-    size_t PoseCount() const { return widths.size(); }
+    size_t PoseCount() const
+    {
+        return widths.size();
+    }
+
+    bool operator==(const RigExecAutoClavicleConstants &o) const
+    {
+        for (int i = 0; i < 9; ++i)
+            if (basis[i] != o.basis[i])
+                return false;
+        return ikValue == o.ikValue && gain == o.gain && kernel == o.kernel &&
+               normalize == o.normalize && swings == o.swings &&
+               widths == o.widths && gains == o.gains && weights == o.weights;
+    }
 };
+
+/// RigExecAutoClavicleConstants as the kernel reads them: the same values,
+/// borrowed, with each per-pose array as a pointer and a count.
+struct RigExecAutoClavicleConstantsView {
+    const double *basis = nullptr;
+    double ikValue = 1.0;
+    double gain = 0.4;
+    int kernel = 0;
+    bool normalize = true;
+    const double *swings = nullptr;
+    size_t swingCount = 0;
+    const double *widths = nullptr;
+    size_t widthCount = 0;
+    const double *gains = nullptr;
+    size_t gainCount = 0;
+    const double *weights = nullptr;
+    size_t weightCount = 0;
+
+    size_t PoseCount() const
+    {
+        return widthCount;
+    }
+};
+
+inline RigExecAutoClavicleConstantsView
+RigExecAutoClavicleViewOf(const RigExecAutoClavicleConstants &c)
+{
+    RigExecAutoClavicleConstantsView v;
+    v.basis = c.basis;
+    v.ikValue = c.ikValue;
+    v.gain = c.gain;
+    v.kernel = c.kernel;
+    v.normalize = c.normalize;
+    v.swings = c.swings.data();
+    v.swingCount = c.swings.size();
+    v.widths = c.widths.data();
+    v.widthCount = c.widths.size();
+    v.gains = c.gains.data();
+    v.gainCount = c.gains.size();
+    v.weights = c.weights.data();
+    v.weightCount = c.weights.size();
+    return v;
+}
 
 /// One frame's inputs. Null pointers are absent optional inputs.
 struct RigExecAutoClavicleFrames {
@@ -108,7 +162,8 @@ RotateByFrame(const double *v, const double *frame, double *out)
 {
     double rows[3][3];
     for (int r = 0; r < 3; ++r) {
-        for (int k = 0; k < 3; ++k) rows[r][k] = frame[r * 4 + k];
+        for (int k = 0; k < 3; ++k)
+            rows[r][k] = frame[r * 4 + k];
         Normalize(rows[r]);
     }
     for (int k = 0; k < 3; ++k) {
@@ -123,10 +178,12 @@ UnrotateByFrame(const double *v, const double *frame, double *out)
 {
     double rows[3][3];
     for (int r = 0; r < 3; ++r) {
-        for (int k = 0; k < 3; ++k) rows[r][k] = frame[r * 4 + k];
+        for (int k = 0; k < 3; ++k)
+            rows[r][k] = frame[r * 4 + k];
         Normalize(rows[r]);
     }
-    for (int r = 0; r < 3; ++r) out[r] = Dot(v, rows[r]);
+    for (int r = 0; r < 3; ++r)
+        out[r] = Dot(v, rows[r]);
 }
 
 /// The 4x4 inverse of a frame, by cofactors. False when singular.
@@ -136,14 +193,17 @@ InvertFrame(const double *m, double *out)
     double inv[16];
     inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15] +
              m[9] * m[7] * m[14] + m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
-    inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15] -
-             m[8] * m[7] * m[14] - m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
+    inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] +
+             m[8] * m[6] * m[15] - m[8] * m[7] * m[14] - m[12] * m[6] * m[11] +
+             m[12] * m[7] * m[10];
     inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15] +
              m[8] * m[7] * m[13] + m[12] * m[5] * m[11] - m[12] * m[7] * m[9];
-    inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14] -
-              m[8] * m[6] * m[13] - m[12] * m[5] * m[10] + m[12] * m[6] * m[9];
-    inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15] -
-             m[9] * m[3] * m[14] - m[13] * m[2] * m[11] + m[13] * m[3] * m[10];
+    inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] +
+              m[8] * m[5] * m[14] - m[8] * m[6] * m[13] - m[12] * m[5] * m[10] +
+              m[12] * m[6] * m[9];
+    inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] +
+             m[9] * m[2] * m[15] - m[9] * m[3] * m[14] - m[13] * m[2] * m[11] +
+             m[13] * m[3] * m[10];
     inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15] +
              m[8] * m[3] * m[14] + m[12] * m[2] * m[11] - m[12] * m[3] * m[10];
     inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15] -
@@ -166,11 +226,13 @@ InvertFrame(const double *m, double *out)
               m[4] * m[3] * m[9] - m[8] * m[1] * m[7] + m[8] * m[3] * m[5];
     inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10] +
               m[4] * m[2] * m[9] + m[8] * m[1] * m[6] - m[8] * m[2] * m[5];
-    const double det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
+    const double det =
+        m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
     if (!std::isfinite(det) || std::abs(det) < 1e-300) {
         return false;
     }
-    for (int i = 0; i < 16; ++i) out[i] = inv[i] / det;
+    for (int i = 0; i < 16; ++i)
+        out[i] = inv[i] / det;
     return true;
 }
 
@@ -256,12 +318,12 @@ AngleBetween(const double *a, const double *b)
 /// (basis axes): RigExecRbfSolver::Evaluate's kernels, solve and
 /// normalisation, for swing poses about X with negative weights kept.
 inline void
-PoseWeights(const RigExecAutoClavicleConstants &c, const double *d,
+PoseWeights(const RigExecAutoClavicleConstantsView &c, const double *d,
             std::vector<double> *out)
 {
     const size_t n = c.PoseCount();
     out->assign(n, 0.0);
-    if (n == 0 || c.weights.size() != n * n || c.swings.size() != n * 4) {
+    if (n == 0 || c.weightCount != n * n || c.swingCount != n * 4) {
         out->clear();
         return;
     }
@@ -274,7 +336,8 @@ PoseWeights(const RigExecAutoClavicleConstants &c, const double *d,
         q[0] = 1.0 + dot, q[1] = 0.0, q[2] = -d[2], q[3] = d[1];
         const double size =
             std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-        for (double &v : q) v /= size;
+        for (double &v : q)
+            v /= size;
     }
     double swing[4];
     SwingAboutX(q, swing);
@@ -282,9 +345,10 @@ PoseWeights(const RigExecAutoClavicleConstants &c, const double *d,
     for (size_t i = 0; i < n; ++i) {
         const double angle = AngleBetween(swing, &c.swings[i * 4]);
         const double width = c.widths[i];
-        const double ratio = width <= 0.0
-            ? (angle <= 0.0 ? 0.0 : std::numeric_limits<double>::infinity())
-            : angle / width;
+        const double ratio =
+            width <= 0.0
+                ? (angle <= 0.0 ? 0.0 : std::numeric_limits<double>::infinity())
+                : angle / width;
         kernels[i] = c.kernel == 1 ? std::max(0.0, 1.0 - ratio)
                                    : std::exp(-(ratio * ratio));
     }
@@ -297,30 +361,32 @@ PoseWeights(const RigExecAutoClavicleConstants &c, const double *d,
     }
     if (c.normalize) {
         double total = 0.0;
-        for (double v : *out) total += v;
+        for (double v : *out)
+            total += v;
         // RigExecRbfNormalizeFloor.
         if (std::abs(total) >= 1.0e-6) {
-            for (double &v : *out) v /= total;
+            for (double &v : *out)
+                v /= total;
         }
     }
 }
 
-}  // namespace autoClavicleKernel
+} // namespace autoClavicleKernel
 
 /// The world-space translation RigExecAutoClavicle adds to its target's
 /// origin this frame, in `delta`, and the blend weight in `weight`. False
 /// (and a zero delta) when a required frame is missing or degenerate.
 inline bool
-RigExecAutoClavicleShift(const RigExecAutoClavicleConstants &c,
+RigExecAutoClavicleShift(const RigExecAutoClavicleConstantsView &c,
                          const RigExecAutoClavicleFrames &f, double delta[3],
                          double *weight = nullptr)
 {
     using namespace autoClavicleKernel;
     delta[0] = delta[1] = delta[2] = 0.0;
-    if (weight) *weight = 0.0;
-    if (!f.anchorPosed || !f.anchorDefault || !f.pivotPosed ||
-        !f.targetPosed || !f.fkPosed || !f.fkDefault[0] || !f.fkDefault[1] ||
-        !f.fkDefault[2]) {
+    if (weight)
+        *weight = 0.0;
+    if (!f.anchorPosed || !f.anchorDefault || !f.pivotPosed || !f.targetPosed ||
+        !f.fkPosed || !f.fkDefault[0] || !f.fkDefault[1] || !f.fkDefault[2]) {
         return false;
     }
     // The rest bone axis, in the first FK control's own axes and in world.
@@ -328,7 +394,8 @@ RigExecAutoClavicleShift(const RigExecAutoClavicleConstants &c,
     const double *mid0 = f.fkDefault[1] + 12;
     double restAxis[3] = {mid0[0] - root0[0], mid0[1] - root0[1],
                           mid0[2] - root0[2]};
-    if (Normalize(restAxis) <= 0.0) return false;
+    if (Normalize(restAxis) <= 0.0)
+        return false;
     double axisLocal[3];
     UnrotateByFrame(restAxis, f.fkDefault[0], axisLocal);
     double dFk[3];
@@ -360,7 +427,7 @@ RigExecAutoClavicleShift(const RigExecAutoClavicleConstants &c,
         Normalize(inBasis);
         PoseWeights(c, inBasis, &poses);
         double sum = 0.0;
-        for (size_t i = 0; i < poses.size() && i < c.gains.size(); ++i) {
+        for (size_t i = 0; i < poses.size() && i < c.gainCount; ++i) {
             sum += c.gains[i] * std::clamp(poses[i], 0.0, 1.0);
         }
         double w = c.gain * f.amount * sum;
@@ -369,12 +436,14 @@ RigExecAutoClavicleShift(const RigExecAutoClavicleConstants &c,
         double axis[3];
         Cross(d0, d, axis);
         const double angle = std::atan2(Normalize(axis), Dot(d0, d)) * w;
-        if (!(angle > 1e-12)) return;
+        if (!(angle > 1e-12))
+            return;
         double arm[3] = {origin[0] - pivot[0], origin[1] - pivot[1],
                          origin[2] - pivot[2]};
         double turned[3];
         RotateAbout(arm, axis, angle, turned);
-        for (int k = 0; k < 3; ++k) out[k] = turned[k] - arm[k];
+        for (int k = 0; k < 3; ++k)
+            out[k] = turned[k] - arm[k];
     };
 
     const double span = 2.0 * c.ikValue - 1.0;
@@ -390,13 +459,15 @@ RigExecAutoClavicleShift(const RigExecAutoClavicleConstants &c,
         // fixed point; there an IK limb matched to an FK one gives the FK
         // direction back, so a matched switch moves nothing.
         double toAnchor[16], carry[16];
-        if (!InvertFrame(f.anchorDefault, toAnchor)) return false;
+        if (!InvertFrame(f.anchorDefault, toAnchor))
+            return false;
         for (int r = 0; r < 4; ++r) {
             for (int k = 0; k < 4; ++k) {
-                carry[r * 4 + k] = toAnchor[r * 4 + 0] * f.anchorPosed[0 * 4 + k] +
-                                   toAnchor[r * 4 + 1] * f.anchorPosed[1 * 4 + k] +
-                                   toAnchor[r * 4 + 2] * f.anchorPosed[2 * 4 + k] +
-                                   toAnchor[r * 4 + 3] * f.anchorPosed[3 * 4 + k];
+                carry[r * 4 + k] =
+                    toAnchor[r * 4 + 0] * f.anchorPosed[0 * 4 + k] +
+                    toAnchor[r * 4 + 1] * f.anchorPosed[1 * 4 + k] +
+                    toAnchor[r * 4 + 2] * f.anchorPosed[2 * 4 + k] +
+                    toAnchor[r * 4 + 3] * f.anchorPosed[3 * 4 + k];
             }
         }
         double root0w[3], mid0w[3], end0w[3];
@@ -421,13 +492,13 @@ RigExecAutoClavicleShift(const RigExecAutoClavicleConstants &c,
         limb.softDistance *= carryScale;
         const double *target = f.ikTargetPosed + 12;
         const auto solve = [&](const double *shift, double *out) {
-            const double root[3] = {origin[0] + shift[0],
-                                    origin[1] + shift[1],
+            const double root[3] = {origin[0] + shift[0], origin[1] + shift[1],
                                     origin[2] + shift[2]};
             double v[3] = {target[0] - root[0], target[1] - root[1],
                            target[2] - root[2]};
             const double dist = Normalize(v);
-            if (!(dist > 1e-9 && a > 1e-9 && b > 1e-9)) return false;
+            if (!(dist > 1e-9 && a > 1e-9 && b > 1e-9))
+                return false;
             double la = a, lb = b;
             if (f.hasLimb) {
                 const double *p = f.polePosed ? f.polePosed + 12 : nullptr;
@@ -441,23 +512,19 @@ RigExecAutoClavicleShift(const RigExecAutoClavicleConstants &c,
                                   (target[1] - p[1]) * (target[1] - p[1]) +
                                   (target[2] - p[2]) * (target[2] - p[2]))
                       : b;
-                const double restUpper = f.limbRestUpper > 1e-12
-                                             ? f.limbRestUpper * carryScale
-                                             : a;
-                const double restLower = f.limbRestLower > 1e-12
-                                             ? f.limbRestLower * carryScale
-                                             : b;
-                RigExecLimbSegmentLengths(restUpper, restLower, dist,
-                                          poleUpper, poleLower, limb, &la,
-                                          &lb);
+                const double restUpper =
+                    f.limbRestUpper > 1e-12 ? f.limbRestUpper * carryScale : a;
+                const double restLower =
+                    f.limbRestLower > 1e-12 ? f.limbRestLower * carryScale : b;
+                RigExecLimbSegmentLengths(restUpper, restLower, dist, poleUpper,
+                                          poleLower, limb, &la, &lb);
                 la = std::max(la, 1e-9);
                 lb = std::max(lb, 1e-9);
             }
-            const double reach =
-                std::clamp(dist, std::abs(la - lb), la + lb);
-            const double cosA = std::clamp(
-                (la * la + reach * reach - lb * lb) / (2.0 * la * reach),
-                -1.0, 1.0);
+            const double reach = std::clamp(dist, std::abs(la - lb), la + lb);
+            const double cosA = std::clamp((la * la + reach * reach - lb * lb) /
+                                               (2.0 * la * reach),
+                                           -1.0, 1.0);
             const double sinA = std::sqrt(std::max(0.0, 1.0 - cosA * cosA));
             double bend[3] = {dFk[0], dFk[1], dFk[2]};
             if (f.polePosed) {
@@ -467,11 +534,14 @@ RigExecAutoClavicleShift(const RigExecAutoClavicleConstants &c,
                 bend[2] = pole[2] - root[2];
             }
             double along = Dot(bend, v);
-            for (int k = 0; k < 3; ++k) bend[k] -= v[k] * along;
+            for (int k = 0; k < 3; ++k)
+                bend[k] -= v[k] * along;
             if (Normalize(bend) < 1e-9) {
-                for (int k = 0; k < 3; ++k) bend[k] = dFk[k];
+                for (int k = 0; k < 3; ++k)
+                    bend[k] = dFk[k];
                 along = Dot(bend, v);
-                for (int k = 0; k < 3; ++k) bend[k] -= v[k] * along;
+                for (int k = 0; k < 3; ++k)
+                    bend[k] -= v[k] * along;
                 Normalize(bend);
             }
             if (f.hasLimb && f.twistRadians != 0.0 &&
@@ -481,10 +551,12 @@ RigExecAutoClavicleShift(const RigExecAutoClavicleConstants &c,
                 Cross(v, bend, vb);
                 const double c = std::cos(f.twistRadians);
                 const double s = std::sin(f.twistRadians);
-                for (int k = 0; k < 3; ++k) bend[k] = bend[k] * c + vb[k] * s;
+                for (int k = 0; k < 3; ++k)
+                    bend[k] = bend[k] * c + vb[k] * s;
             }
             double dIk[3];
-            for (int k = 0; k < 3; ++k) dIk[k] = v[k] * cosA + bend[k] * sinA;
+            for (int k = 0; k < 3; ++k)
+                dIk[k] = v[k] * cosA + bend[k] * sinA;
             Normalize(dIk);
             SlerpUnit(dFk, dIk, t, out);
             Normalize(out);
@@ -496,20 +568,32 @@ RigExecAutoClavicleShift(const RigExecAutoClavicleConstants &c,
             for (int pass = 0; pass < 12; ++pass) {
                 shiftFor(d, shift, &w);
                 double next[3];
-                if (!solve(shift, next)) break;
+                if (!solve(shift, next))
+                    break;
                 const double moved = std::abs(next[0] - d[0]) +
                                      std::abs(next[1] - d[1]) +
                                      std::abs(next[2] - d[2]);
                 d[0] = next[0], d[1] = next[1], d[2] = next[2];
-                if (moved == 0.0) break;
+                if (moved == 0.0)
+                    break;
             }
         }
     }
     shiftFor(d, delta, &w);
-    if (weight) *weight = w;
+    if (weight)
+        *weight = w;
     return true;
 }
 
-}  // namespace rigExec
+inline bool
+RigExecAutoClavicleShift(const RigExecAutoClavicleConstants &c,
+                         const RigExecAutoClavicleFrames &f, double delta[3],
+                         double *weight = nullptr)
+{
+    return RigExecAutoClavicleShift(RigExecAutoClavicleViewOf(c), f, delta,
+                                    weight);
+}
+
+} // namespace rigExec
 
 #endif

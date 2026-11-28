@@ -1,10 +1,10 @@
 // Source-input protocol driver. This is not an original numerical judge.
-#include "rigExec/inputReplay.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/inputReplayWire.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/moverGraph.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/inputReplayWire.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/moverGraph.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/usd/sdf/attributeSpec.h"
 #include "pxr/usd/sdf/changeBlock.h"
@@ -393,7 +393,6 @@ main(int argc, char **argv)
         if (argc != 4)
             return 2;
         PlugRegistry::GetInstance().RegisterPlugins(argv[3]);
-        RigExecLoadComputations();
         std::string error;
         const bool okay = RigExecReplayInputActions(argv[2], &error);
         if (!okay)
@@ -403,6 +402,5 @@ main(int argc, char **argv)
     if (argc != 4)
         return 2;
     PlugRegistry::GetInstance().RegisterPlugins(argv[3]);
-    RigExecLoadComputations();
     return Fixture(argv[2]);
 }

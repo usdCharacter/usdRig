@@ -2,7 +2,7 @@
 #include "rigExecBake/staticCapture.h"
 #include "rigExecBake/computedCapture.h"
 #include "rigExecBake/pathTable.h"
-#include "rigExec/bakedProgramImpl.h"
+#include "rigExec/internal/bakedProgramImpl.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec2f.h"
@@ -93,8 +93,7 @@ _Intern(std::map<std::string, uint32_t> *ids, std::vector<Pool> *pool,
         Pool entry;
         entry.v.resize(count);
         for (size_t i = 0; i < count; ++i) {
-            std::memcpy(&entry.v[i], data + i * Arity,
-                        sizeof(Scalar) * Arity);
+            std::memcpy(&entry.v[i], data + i * Arity, sizeof(Scalar) * Arity);
         }
         pool->push_back(std::move(entry));
     }
@@ -237,8 +236,8 @@ bool
 _SameBytes(const A &a, const B &b)
 {
     return a.size() == b.size() &&
-           (a.empty() || std::memcmp(a.data(), b.data(),
-                                     sizeof(a[0]) * a.size()) == 0);
+           (a.empty() ||
+            std::memcmp(a.data(), b.data(), sizeof(a[0]) * a.size()) == 0);
 }
 
 /// The defaults of \p inputs' array slots, which the bake's run decides,
@@ -263,8 +262,7 @@ _ArrayDefaults(const RigExecBakedProgramImpl &program, double time,
         }
         const fb::InputSlot slot = file->inputs[entry.slot];
         const std::string name = paths->Text(slot.name());
-        const UsdAttribute a =
-            program.stage->GetAttributeAtPath(SdfPath(name));
+        const UsdAttribute a = program.stage->GetAttributeAtPath(SdfPath(name));
         const UsdTimeCode at =
             entry.atDefault ? UsdTimeCode::Default() : UsdTimeCode(time);
         fb::RigExecWireValue value;
@@ -275,7 +273,10 @@ _ArrayDefaults(const RigExecBakedProgramImpl &program, double time,
         VtDoubleArray doubles;
         VtVec2fArray pairs;
         VtVec3fArray points;
-        VtVec3dArray vectors; VtMatrix4dArray matrices; VtTokenArray tokens; VtBoolArray bools;
+        VtVec3dArray vectors;
+        VtMatrix4dArray matrices;
+        VtTokenArray tokens;
+        VtBoolArray bools;
         switch (entry.tag) {
         case fb::InputTag::IntArray:
             has = a && a.Get(&ints, at);
@@ -292,10 +293,18 @@ _ArrayDefaults(const RigExecBakedProgramImpl &program, double time,
         case fb::InputTag::Vec3fArray:
             has = a && a.Get(&points, at);
             break;
-        case fb::InputTag::Vec3dArray: has=a && a.Get(&vectors,at); break;
-        case fb::InputTag::Matrix4dArray: has=a && a.Get(&matrices,at); break;
-        case fb::InputTag::TokenArray: has=a && a.Get(&tokens,at); break;
-        case fb::InputTag::BoolArray: has=a && a.Get(&bools,at); break;
+        case fb::InputTag::Vec3dArray:
+            has = a && a.Get(&vectors, at);
+            break;
+        case fb::InputTag::Matrix4dArray:
+            has = a && a.Get(&matrices, at);
+            break;
+        case fb::InputTag::TokenArray:
+            has = a && a.Get(&tokens, at);
+            break;
+        case fb::InputTag::BoolArray:
+            has = a && a.Get(&bools, at);
+            break;
         default:
             *error = "input " + name + " is no array input";
             return false;
@@ -314,8 +323,7 @@ _ArrayDefaults(const RigExecBakedProgramImpl &program, double time,
                         ? _SameBytes(revision.topology->indices, ints)
                         : _SameBytes(revision.topology->weights, floats);
                 if (!same) {
-                    *error = "the layout of " +
-                             revision.moverPath.GetString() +
+                    *error = "the layout of " + revision.moverPath.GetString() +
                              " is not its inputs' values at the bake time";
                     return false;
                 }
@@ -348,16 +356,28 @@ _ArrayDefaults(const RigExecBakedProgramImpl &program, double time,
                     pairs.size());
                 break;
             case fb::InputTag::Vec3dArray:
-                value.array=pools->Vec3ds(reinterpret_cast<const double *>(vectors.cdata()),vectors.size()); break;
+                value.array = pools->Vec3ds(
+                    reinterpret_cast<const double *>(vectors.cdata()),
+                    vectors.size());
+                break;
             case fb::InputTag::Matrix4dArray:
-                value.array=pools->Matrices(reinterpret_cast<const double *>(matrices.cdata()),matrices.size()); break;
+                value.array = pools->Matrices(
+                    reinterpret_cast<const double *>(matrices.cdata()),
+                    matrices.size());
+                break;
             case fb::InputTag::TokenArray: {
-                std::vector<std::string> text; for(const auto &token:tokens) text.push_back(token.GetString());
-                value.array=pools->Tokens(text); break;
+                std::vector<std::string> text;
+                for (const auto &token : tokens)
+                    text.push_back(token.GetString());
+                value.array = pools->Tokens(text);
+                break;
             }
             case fb::InputTag::BoolArray: {
-                std::vector<uint8_t> bits; for(bool bit:bools) bits.push_back(bit?1:0);
-                value.array=pools->Bools(bits.data(),bits.size()); break;
+                std::vector<uint8_t> bits;
+                for (bool bit : bools)
+                    bits.push_back(bit ? 1 : 0);
+                value.array = pools->Bools(bits.data(), bits.size());
+                break;
             }
             default:
                 value.array = pools->Vec3fs(
@@ -368,8 +388,7 @@ _ArrayDefaults(const RigExecBakedProgramImpl &program, double time,
         }
         if (entry.chain >= 0) {
             const size_t c = size_t(entry.chain);
-            const RigExecBakedProgramImpl::GeomChain &chain =
-                program.chains[c];
+            const RigExecBakedProgramImpl::GeomChain &chain = program.chains[c];
             if (!has || !chain.haveBase ||
                 !_SameBytes(points, chain.lastBase) ||
                 value.array != geometry.chains[c].base) {
@@ -387,14 +406,13 @@ _ArrayDefaults(const RigExecBakedProgramImpl &program, double time,
     return true;
 }
 
-}  // namespace
+} // namespace
 
 std::string
 RigExecBakeValueKey(const fb::RigExecWireValue &value)
 {
     std::string key(1, char(value.tag));
-    key.append(reinterpret_cast<const char *>(&value.bits),
-               sizeof(value.bits));
+    key.append(reinterpret_cast<const char *>(&value.bits), sizeof(value.bits));
     switch (value.tag) {
     case fb::InputTag::Matrix4d:
         _AppendMember(value.matrix, &key);
@@ -403,7 +421,7 @@ RigExecBakeValueKey(const fb::RigExecWireValue &value)
         _AppendMember(value.vec3d, &key);
         break;
     case fb::InputTag::Vec3i:
-        _AppendMember(value.vec3i,&key);
+        _AppendMember(value.vec3i, &key);
         break;
     case fb::InputTag::Vec3f:
         _AppendMember(value.vec3f, &key);
@@ -431,14 +449,17 @@ RigExecBakePools::RigExecBakePools()
     Doubles(nullptr, 0);
     Vec2fs(&none, 0);
     Vec3fs(&none, 0);
-    Vec3ds(nullptr,0); Matrices(nullptr,0); Tokens({}); Bools(nullptr,0);
+    Vec3ds(nullptr, 0);
+    Matrices(nullptr, 0);
+    Tokens({});
+    Bools(nullptr, 0);
 }
 
 uint32_t
 RigExecBakePools::Value(const fb::RigExecWireValue &value)
 {
-    const auto found = _valueIds.emplace(RigExecBakeValueKey(value),
-                                         uint32_t(_values.size()));
+    const auto found =
+        _valueIds.emplace(RigExecBakeValueKey(value), uint32_t(_values.size()));
     if (found.second) {
         fb::RigExecWireValue out;
         out.tag = value.tag;
@@ -517,41 +538,79 @@ RigExecBakePools::Seed(const RigExecBakeInputs &inputs, std::string *error)
     return true;
 }
 
-uint32_t RigExecBakePools::Vec3ds(const double *data,size_t count) {
-    std::string key(1,char(13));
-    if(count) key.append(reinterpret_cast<const char *>(data),count*3*sizeof(double));
-    const auto found=_extraIds.find(key); if(found!=_extraIds.end()) return found->second;
+uint32_t
+RigExecBakePools::Vec3ds(const double *data, size_t count)
+{
+    std::string key(1, char(13));
+    if (count)
+        key.append(reinterpret_cast<const char *>(data),
+                   count * 3 * sizeof(double));
+    const auto found = _extraIds.find(key);
+    if (found != _extraIds.end())
+        return found->second;
     fb::RigExecWireVec3dArray row;
     row.v.resize(count);
-    for(size_t i=0;i<count;++i) std::copy(data+i*3,data+(i+1)*3,row.v[i].begin());
-    const uint32_t id=uint32_t(_vec3ds.size()); _vec3ds.push_back(std::move(row));
-    _extraIds.emplace(std::move(key),id); return id;
+    for (size_t i = 0; i < count; ++i)
+        std::copy(data + i * 3, data + (i + 1) * 3, row.v[i].begin());
+    const uint32_t id = uint32_t(_vec3ds.size());
+    _vec3ds.push_back(std::move(row));
+    _extraIds.emplace(std::move(key), id);
+    return id;
 }
-uint32_t RigExecBakePools::Matrices(const double *data,size_t count) {
-    std::string key(1,char(14));
-    if(count) key.append(reinterpret_cast<const char *>(data),count*16*sizeof(double));
-    const auto found=_extraIds.find(key); if(found!=_extraIds.end()) return found->second;
+uint32_t
+RigExecBakePools::Matrices(const double *data, size_t count)
+{
+    std::string key(1, char(14));
+    if (count)
+        key.append(reinterpret_cast<const char *>(data),
+                   count * 16 * sizeof(double));
+    const auto found = _extraIds.find(key);
+    if (found != _extraIds.end())
+        return found->second;
     fb::RigExecWireMatrix4dArray row;
     row.v.resize(count);
-    for(size_t i=0;i<count;++i) std::copy(data+i*16,data+(i+1)*16,row.v[i].begin());
-    const uint32_t id=uint32_t(_matrices.size()); _matrices.push_back(std::move(row));
-    _extraIds.emplace(std::move(key),id); return id;
+    for (size_t i = 0; i < count; ++i)
+        std::copy(data + i * 16, data + (i + 1) * 16, row.v[i].begin());
+    const uint32_t id = uint32_t(_matrices.size());
+    _matrices.push_back(std::move(row));
+    _extraIds.emplace(std::move(key), id);
+    return id;
 }
-uint32_t RigExecBakePools::Tokens(const std::vector<std::string> &data) {
-    std::string key(1,char(15));
-    for(const auto &text:data) { const uint64_t count=text.size();
-        key.append(reinterpret_cast<const char *>(&count),sizeof(count)); key.append(text); }
-    const auto found=_extraIds.find(key); if(found!=_extraIds.end()) return found->second;
-    fb::RigExecWireTokenArray row; row.v=data;
-    const uint32_t id=uint32_t(_tokens.size()); _tokens.push_back(std::move(row));
-    _extraIds.emplace(std::move(key),id); return id;
+uint32_t
+RigExecBakePools::Tokens(const std::vector<std::string> &data)
+{
+    std::string key(1, char(15));
+    for (const auto &text : data) {
+        const uint64_t count = text.size();
+        key.append(reinterpret_cast<const char *>(&count), sizeof(count));
+        key.append(text);
+    }
+    const auto found = _extraIds.find(key);
+    if (found != _extraIds.end())
+        return found->second;
+    fb::RigExecWireTokenArray row;
+    row.v = data;
+    const uint32_t id = uint32_t(_tokens.size());
+    _tokens.push_back(std::move(row));
+    _extraIds.emplace(std::move(key), id);
+    return id;
 }
-uint32_t RigExecBakePools::Bools(const uint8_t *data,size_t count) {
-    std::string key(1,char(16)); if(count) key.append(reinterpret_cast<const char *>(data),count);
-    const auto found=_extraIds.find(key); if(found!=_extraIds.end()) return found->second;
-    fb::RigExecWireBoolArray row; if(count) row.v.assign(data,data+count);
-    const uint32_t id=uint32_t(_bools.size()); _bools.push_back(std::move(row));
-    _extraIds.emplace(std::move(key),id); return id;
+uint32_t
+RigExecBakePools::Bools(const uint8_t *data, size_t count)
+{
+    std::string key(1, char(16));
+    if (count)
+        key.append(reinterpret_cast<const char *>(data), count);
+    const auto found = _extraIds.find(key);
+    if (found != _extraIds.end())
+        return found->second;
+    fb::RigExecWireBoolArray row;
+    if (count)
+        row.v.assign(data, data + count);
+    const uint32_t id = uint32_t(_bools.size());
+    _bools.push_back(std::move(row));
+    _extraIds.emplace(std::move(key), id);
+    return id;
 }
 
 void
@@ -563,8 +622,10 @@ RigExecBakePools::MoveInto(fb::RigExecWireFile *file)
     file->doubleArrays = std::move(_doubles);
     file->vec2fArrays = std::move(_vec2fs);
     file->vec3fArrays = std::move(_vec3fs);
-    file->vec3dArrays=std::move(_vec3ds); file->matrix4dArrays=std::move(_matrices);
-    file->tokenArrays=std::move(_tokens); file->boolArrays=std::move(_bools);
+    file->vec3dArrays = std::move(_vec3ds);
+    file->matrix4dArrays = std::move(_matrices);
+    file->tokenArrays = std::move(_tokens);
+    file->boolArrays = std::move(_bools);
     _values.clear();
     _ints.clear();
     _floats.clear();
@@ -726,8 +787,7 @@ RigExecBakeCaptureStatics(
                     }
                     wireSample.indices.assign(sample.layout->indices.begin(),
                                               sample.layout->indices.end());
-                    wireSample.pointCount =
-                        uint64_t(sample.layout->pointCount);
+                    wireSample.pointCount = uint64_t(sample.layout->pointCount);
                     wireSample.layoutValid = sample.layout->valid;
                 }
             }
@@ -738,8 +798,7 @@ RigExecBakeCaptureStatics(
         fb::RigExecWireChain &wire = geometry.chains[c];
         if (wire.revisions.size() != chain.revisions.size() ||
             wire.derived.size() != chain.derived.size()) {
-            return fail("the revisions of chain " +
-                        chain.target.GetString() +
+            return fail("the revisions of chain " + chain.target.GetString() +
                         " and the program disagree");
         }
         wire.haveBase = chain.haveBase;
@@ -832,8 +891,7 @@ RigExecBakeCaptureStatics(
             }
         }
         row.value = std::make_unique<fb::RigExecWirePathValue>();
-        if (!_EncodePathValue(candidate.value, paths, pools,
-                              row.value.get())) {
+        if (!_EncodePathValue(candidate.value, paths, pools, row.value.get())) {
             return fail("path read " + candidate.path.GetString() +
                         " enumerated with an unencodable value of type " +
                         candidate.value.GetTypeName());
@@ -847,8 +905,7 @@ RigExecBakeCaptureStatics(
     // A gather whose read answered nothing at the bake time is no key of
     // the enumeration; its row reads its input all the same.
     for (const RigExecBakeArrayRow &gather : inputs.arrayRows) {
-        if (gather.rest ||
-            !keys.emplace(gather.path, false).second) {
+        if (gather.rest || !keys.emplace(gather.path, false).second) {
             continue;
         }
         fb::RigExecWirePathRead row;
@@ -856,14 +913,14 @@ RigExecBakeCaptureStatics(
         row.read = std::make_unique<fb::RigExecWireInput>(gather.read);
         rows.push_back(std::move(row));
     }
-    std::sort(rows.begin(), rows.end(),
-              [](const fb::RigExecWirePathRead &a,
-                 const fb::RigExecWirePathRead &b) {
-                  return std::make_pair(a.path, a.rest) <
-                         std::make_pair(b.path, b.rest);
-              });
+    std::sort(
+        rows.begin(), rows.end(),
+        [](const fb::RigExecWirePathRead &a, const fb::RigExecWirePathRead &b) {
+            return std::make_pair(a.path, a.rest) <
+                   std::make_pair(b.path, b.rest);
+        });
     geometry.pathReads = std::move(rows);
     return true;
 }
 
-}  // namespace rigExec
+} // namespace rigExec

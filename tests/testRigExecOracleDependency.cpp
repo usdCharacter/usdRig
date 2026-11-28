@@ -1,14 +1,15 @@
-#include "rigExec/goldenPose.h"
-#include "rigExec/goldenSuite.h"
-#if defined(RIGEXEC_EXPLICIT_ORACLE_REGISTRATION) || defined(RIGEXEC_TEST_ORACLE_RECOVERY)
+#include "rigExec/api/goldenPose.h"
+#include "rigExec/api/goldenSuite.h"
+#if defined(RIGEXEC_EXPLICIT_ORACLE_REGISTRATION) ||                           \
+    defined(RIGEXEC_TEST_ORACLE_RECOVERY)
 #include "rigExecOracle/registerOracle.h"
 #endif
 #ifdef RIGEXEC_TEST_ORACLE_RECOVERY
-#include "rigExec/oracleDispatch.h"
+#include "rigExec/internal/oracleDispatch.h"
 #endif
 #ifndef RIGEXEC_ORACLE_GOLDEN_ONLY
-#include "rigExec/bakedProgram.h"
-#include "rigExec/frozenContext.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/api/frozenContext.h"
 #include "pxr/base/plug/registry.h"
 #endif
 
@@ -19,33 +20,48 @@
 
 using namespace rigExec;
 
-#define CHECK(expression) do { if (!(expression)) { \
-    std::fprintf(stderr, "failed: %s\n", #expression); return false; } } while (false)
+#define CHECK(expression)                                                      \
+    do {                                                                       \
+        if (!(expression)) {                                                   \
+            std::fprintf(stderr, "failed: %s\n", #expression);                 \
+            return false;                                                      \
+        }                                                                      \
+    } while (false)
 
 namespace {
-bool Missing(const std::string &error)
+bool
+Missing(const std::string &error)
 {
-    return error.find("RigExec oracle library is unavailable") != std::string::npos;
+    return error.find("RigExec oracle library is unavailable") !=
+           std::string::npos;
 }
 
-bool Missing(const RigExecRigPose &pose)
+bool
+Missing(const RigExecRigPose &pose)
 {
-    return !pose.valid && std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
-        [](const std::string &error) { return Missing(error); });
+    return !pose.valid &&
+           std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
+                       [](const std::string &error) { return Missing(error); });
 }
 
 template <class Fn>
-bool ThrowsMissing(Fn call)
+bool
+ThrowsMissing(Fn call)
 {
-    try { call(); }
-    catch (const std::runtime_error &error) { return Missing(error.what()); }
+    try {
+        call();
+    } catch (const std::runtime_error &error) {
+        return Missing(error.what());
+    }
     return false;
 }
 
-bool CheckGolden(bool available)
+bool
+CheckGolden(bool available)
 {
     std::string encoded = "untouched", error;
-    const bool result = RigExecEncodeGoldenValue(VtValue(1.0), &encoded, &error);
+    const bool result =
+        RigExecEncodeGoldenValue(VtValue(1.0), &encoded, &error);
     if (available) {
         CHECK(result && encoded == "double 3ff0000000000000");
         CHECK(RigExecGoldenDouble(1.0) == "3ff0000000000000");
@@ -72,7 +88,8 @@ bool CheckGolden(bool available)
 }
 
 #ifndef RIGEXEC_ORACLE_GOLDEN_ONLY
-bool CheckEvaluator(bool available, const char *resources)
+bool
+CheckEvaluator(bool available, const char *resources)
 {
     PlugRegistry::GetInstance().RegisterPlugins(resources);
     const auto stage = UsdStage::CreateInMemory();
@@ -93,7 +110,8 @@ def RigExecRoot "Rig"
     std::string error;
     CHECK(RigExecBindChainSampleInputs(evaluator, &bindings, &error));
     RigExecBurstSampleCache burst;
-    CHECK(RigExecBuildBurstSampleCache(*evaluator.GetBakedProgram(), bindings, {},
+    CHECK(RigExecBuildBurstSampleCache(
+        *evaluator.GetBakedProgram(), bindings, {},
         RigExecFrameCacheCompiledRigSignature(evaluator), &burst, &error));
     evaluator.cpuReference = true;
     const auto pose = evaluator.Evaluate(time);
@@ -103,19 +121,23 @@ def RigExecRoot "Rig"
     }
     CHECK(Missing(pose));
     RigExecRigPose direct;
-    CHECK(!const_cast<RigExecBakedProgram *>(evaluator.GetBakedProgram())->Run(time, &direct));
+    CHECK(!const_cast<RigExecBakedProgram *>(evaluator.GetBakedProgram())
+               ->Run(time, &direct));
     CHECK(Missing(direct));
     std::shared_ptr<const RigExecFrozenProgram> frozen;
     error.clear();
-    CHECK(!RigExecFreezeProgram(evaluator, &frozen, &error) && Missing(error) && !frozen);
+    CHECK(!RigExecFreezeProgram(evaluator, &frozen, &error) && Missing(error) &&
+          !frozen);
     RigExecFrameInputs sampled;
     sampled.time = UsdTimeCode(37);
     error.clear();
-    CHECK(!RigExecSampleFrameInputs(evaluator, time, {}, &sampled, &error) && Missing(error));
+    CHECK(!RigExecSampleFrameInputs(evaluator, time, {}, &sampled, &error) &&
+          Missing(error));
     CHECK(sampled.time == UsdTimeCode(37));
     error.clear();
     CHECK(!RigExecSampleFrameInputsWithBurstCache(evaluator, time, {}, &burst,
-        &sampled, &error) && Missing(error));
+                                                  &sampled, &error) &&
+          Missing(error));
     CHECK(sampled.time == UsdTimeCode(37));
 #ifdef RIGEXEC_TEST_ORACLE_RECOVERY
     // The same evaluator/time must recover without a scene edit or recompile.
@@ -126,7 +148,7 @@ def RigExecRoot "Rig"
     CHECK(RigExecFreezeProgram(evaluator, &frozen, &error) && frozen);
     CHECK(RigExecSampleFrameInputs(evaluator, time, {}, &sampled, &error));
     CHECK(RigExecSampleFrameInputsWithBurstCache(evaluator, time, {}, &burst,
-        &sampled, &error));
+                                                 &sampled, &error));
 #else
     evaluator.cpuReference = false;
     CHECK(evaluator.Evaluate(time).valid);
@@ -134,13 +156,16 @@ def RigExecRoot "Rig"
     return true;
 }
 #endif
-}
+} // namespace
 
-int main(int argc, char **argv)
+int
+main(int argc, char **argv)
 {
     if (argc == 2 && std::string(argv[1]) == "golden-suite") {
-        if (!ThrowsMissing([] { RigExecGoldenSuiteObserver::Create(SdfPath("/Rig")); }) ||
-            !ThrowsMissing([] { RigExecFinalizeGoldenSuite(); })) return 1;
+        if (!ThrowsMissing(
+                [] { RigExecGoldenSuiteObserver::Create(SdfPath("/Rig")); }) ||
+            !ThrowsMissing([] { RigExecFinalizeGoldenSuite(); }))
+            return 1;
         return 0;
     }
 #ifdef RIGEXEC_EXPLICIT_ORACLE_REGISTRATION
@@ -156,9 +181,11 @@ int main(int argc, char **argv)
 #else
     const bool available = false;
 #endif
-    if (!CheckGolden(available)) return 1;
+    if (!CheckGolden(available))
+        return 1;
 #ifndef RIGEXEC_ORACLE_GOLDEN_ONLY
-    if (argc != 2 || !CheckEvaluator(available, argv[1])) return 1;
+    if (argc != 2 || !CheckEvaluator(available, argv[1]))
+        return 1;
 #endif
     return 0;
 }

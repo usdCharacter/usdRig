@@ -30,7 +30,7 @@ namespace rigExec {
 struct RigExecImagingSnapshot;
 struct RigExecMoverRecord;
 struct RigExecPublishedPrim;
-struct RigExecRigPose;
+class RigExecFrameReader;
 struct RigExecValueOverride;
 
 /// The bridge-owned state a guide fill reads, built at the call site and
@@ -80,33 +80,34 @@ public:
 
     /// Publishes guide payloads (joints and aggregate solvers draw as
     /// guide geometry like OpenExec's IrJointScope) into the snapshot.
-    void _FillGuides(const RigExecGuideCall &call, const RigExecRigPose &pose,
+    void _FillGuides(const RigExecGuideCall &call,
+                     const RigExecFrameReader &reader,
                      RigExecImagingSnapshot *snapshot);
 
     /// Publishes the single synthesized guide shape each control draws at
     /// its posed frame, and the final joint frames pose readers and
     /// manipulators consume.
     void _FillControlGuides(const RigExecGuideCall &call,
-                            const RigExecRigPose &pose,
+                            const RigExecFrameReader &reader,
                             RigExecImagingSnapshot *snapshot);
 
     /// Publishes the cloth constraint attachments as wire links between
     /// the posed source and target samples.
     void _FillClothConstraintGuides(const RigExecGuideCall &call,
-                                    const RigExecRigPose &pose,
+                                    const RigExecFrameReader &reader,
                                     RigExecImagingSnapshot *snapshot);
 
     /// Publishes the wire (or solid) falloffMin/falloffMax iso-surfaces
     /// every placed influence volume draws, so a rigger can see the shape
     /// being placed rather than infer it from the deformation.
     void _FillVolumeGuides(const RigExecGuideCall &call,
-                           const RigExecRigPose &pose,
+                           const RigExecFrameReader &reader,
                            RigExecImagingSnapshot *snapshot);
 
     /// Copies the selected weight object's resolved field onto the
     /// geometry prim it weights.
     void _FillWeightOverlay(const RigExecGuideCall &call,
-                            const RigExecRigPose &pose,
+                            const RigExecFrameReader &reader,
                             RigExecImagingSnapshot *snapshot);
 
 private:
@@ -160,14 +161,16 @@ private:
 
     _GuideInputs &_GuideInputsFor(const RigExecGuideCall &call,
                                   const SdfPath &path);
-    void _ReadGuideStyleCached(_GuideInputs &inputs, const RigExecRigPose &pose,
+    void _ReadGuideStyleCached(_GuideInputs &inputs,
+                               const RigExecFrameReader &reader,
                                RigExecPublishedPrim *published);
     double _GuideRadius(_GuideInputs &inputs, UsdTimeCode time);
     void _ReadOpacityRule(_GuideInputs &inputs, UsdTimeCode time);
-    float _HeldOpacity(const _GuideInputs &inputs, const RigExecRigPose &pose,
-                       float fallback);
+    float _HeldOpacity(const _GuideInputs &inputs,
+                       const RigExecFrameReader &reader, float fallback);
     const std::map<SdfPath, std::vector<SdfPath>> &
-    _JointChildren(const RigExecGuideCall &call, const RigExecRigPose &pose);
+    _JointChildren(const RigExecGuideCall &call,
+                   const RigExecFrameReader &reader);
 
     /// Drops the guide caches if any stage edit has happened since they
     /// were filled. Called at the top of every fill that reads them.

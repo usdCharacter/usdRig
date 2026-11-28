@@ -4,7 +4,7 @@
 // only, never stage writes.
 #include "registry.h"
 
-#include "rigExec/parallel.h"
+#include "rigExec/internal/parallel.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec2f.h"
@@ -88,10 +88,7 @@ RigExecImagingRegistry::SetWeightOverlay(const std::string &weightPrimPath)
         std::lock_guard<std::mutex> lock(_mutex);
         scheduler = _scheduler;
     }
-    std::unique_lock<std::mutex> fenceLock;
-    if (scheduler) {
-        fenceLock = std::unique_lock<std::mutex>(scheduler->FenceMutex());
-    }
+    RigExecPublishFence fence(scheduler.get());
     {
         std::lock_guard<std::mutex> lock(_mutex);
         // An arbitrary caller-supplied string reaches SdfPath here and its

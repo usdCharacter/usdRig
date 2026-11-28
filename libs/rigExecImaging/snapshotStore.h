@@ -6,7 +6,7 @@
 #ifndef RIGEXEC_IMAGING_SNAPSHOT_STORE_H
 #define RIGEXEC_IMAGING_SNAPSHOT_STORE_H
 
-#include "rigExec/gpuDeformTranslation.h"
+#include "rigExec/internal/gpuDeformTranslation.h"
 
 #include "pxr/pxr.h"
 #include "pxr/base/gf/matrix4d.h"
@@ -284,8 +284,8 @@ struct RigExecPublishedPrim {
 
 class RigExecFrameTable;
 
-/// One complete immutable generation (consumers see complete
-/// RigExecSnapshot generations only).
+/// One complete immutable generation (consumers see complete generations
+/// only).
 struct RigExecImagingSnapshot {
     uint64_t generation = 0;
     std::map<SdfPath, RigExecPublishedPrim> prims;

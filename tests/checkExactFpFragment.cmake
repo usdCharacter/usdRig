@@ -41,7 +41,8 @@ if (NOT _expected_text STREQUAL _generated_text)
 endif ()
 
 
-foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
+foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes
+         opCoreSources)
     if (NOT EXISTS "${STAGED_DIR}/${_manifest}.txt")
         message(FATAL_ERROR
             "no staged ${STAGED_DIR}/${_manifest}.txt: build the rigexecSdkManifests target")
@@ -52,7 +53,8 @@ endforeach ()
 # order and byte for byte: an equal count in a different order, or a list
 # from an earlier generation, is a stale export.
 include("${SOURCE_DIR}/cmake/manifestRelocate.cmake")
-foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes)
+foreach (_manifest runtimeSources runtimeIncludes evalCoreSources evalCoreIncludes
+         opCoreSources)
     if (NOT EXISTS "${BINARY_DIR}/${_manifest}.txt")
         message(FATAL_ERROR
             "generated ${BINARY_DIR}/${_manifest}.txt is missing; the staged copy is stale")
@@ -75,7 +77,7 @@ endforeach ()
 # The manifests list translation units a separate consumer root builds;
 # CMake's precompiled-header support injects a synthetic cmake_pch.cxx
 # into a target's sources at generate time and it must stay out.
-foreach (_manifest runtimeSources evalCoreSources)
+foreach (_manifest runtimeSources evalCoreSources opCoreSources)
     file(STRINGS "${BINARY_DIR}/${_manifest}.txt" _built)
     foreach (_entry IN LISTS _built)
         if (_entry MATCHES "(^|/|\\\\)CMakeFiles/"
@@ -127,7 +129,7 @@ function (check_installed_entry entry manifest kind root manifest_dir)
     endif ()
 endfunction ()
 
-foreach (_manifest runtimeSources evalCoreSources)
+foreach (_manifest runtimeSources evalCoreSources opCoreSources)
     file(STRINGS "${BINARY_DIR}/${_manifest}.txt" _built)
     file(STRINGS "${STAGED_DIR}/${_manifest}.txt" _shipped)
     list(LENGTH _built _built_count)

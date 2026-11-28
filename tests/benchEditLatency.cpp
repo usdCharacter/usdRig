@@ -44,12 +44,12 @@
 // Environment is read and reported, never set: RIGEXEC_ENABLE_PARALLEL_EVAL,
 // RIGEXEC_BAKED_SCHEDULE, RIGEXEC_FRAME_CACHE and
 // Scalar reference checks use the same production graph.
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/parallel.h"
-#include "rigExec/profiler.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/valueAddress.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/parallel.h"
+#include "rigExec/api/profiler.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/valueAddress.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"

@@ -4,15 +4,14 @@ title: Getting started
 
 # Getting started
 
-usdRig builds against an **unmodified OpenUSD 26.08 installation with
-OpenExec**, and its RigExec engine loads into `usdview` as a set of plugins.
+usdRig builds against an **unmodified OpenUSD 26.08 installation**, and its RigExec engine loads into `usdview` as a set of plugins.
 This page takes you from a checkout to a character playing in the viewport.
 
 ## What you need
 
 | | |
 |---|---|
-| OpenUSD | **26.08**, built with OpenExec and `usdview` ([upstream build instructions](https://github.com/PixarAnimationStudios/OpenUSD/blob/v26.08/BUILDING.md)) |
+| OpenUSD | **26.08**, built with `usdview` ([upstream build instructions](https://github.com/PixarAnimationStudios/OpenUSD/blob/v26.08/BUILDING.md)) |
 | Build tools | CMake **3.26+**, Ninja, a C++17 compiler |
 | Python | The same version and architecture your OpenUSD was built with |
 
@@ -136,8 +135,7 @@ lives under the **RigExec** menu.
 RigExec compiles each rig into one operation graph. The viewport, the
 background frame-cache workers and `.rigexec` playback all run that graph;
 there is no evaluator mode to choose. A rig that cannot compile reports the
-reason instead of falling back to another evaluator. OpenExec answers only
-optional reference checks.
+reason instead of falling back to another evaluator.
 
 [Evaluation and independent checks](../concepts/baked-vs-dynamic.md) explains
 the compiled rig, frozen evaluation and those checks.

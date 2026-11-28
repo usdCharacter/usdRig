@@ -4,8 +4,8 @@
 #include "rigExecBake/computedCapture.h"
 #include "rigExecBake/pathTable.h"
 #include "rigExecBake/staticCapture.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecScene/providerRecordExport.h"
 
 #include <algorithm>
@@ -26,30 +26,62 @@ namespace {
     static_assert(uint8_t(RigExecBakedStepKind::name) ==                       \
                       uint8_t(RigExecWireStepKind::name),                      \
                   "wire step order drifted")
-_RIGEXEC_BAKE_PIN_STEP(ComposeSubtree);
-_RIGEXEC_BAKE_PIN_STEP(Solve);
-_RIGEXEC_BAKE_PIN_STEP(SolverCommit);
-_RIGEXEC_BAKE_PIN_STEP(Constraint);
-_RIGEXEC_BAKE_PIN_STEP(CommitDelta);
-_RIGEXEC_BAKE_PIN_STEP(PropagateChunk);
-_RIGEXEC_BAKE_PIN_STEP(CommitApply);
-_RIGEXEC_BAKE_PIN_STEP(ProviderMatrix);
+static_assert(uint8_t(RigExecBakedStepKind::Solve) ==
+                  uint8_t(RigExecWireStepKind::ReservedSolve),
+              "wire step order drifted");
+static_assert(uint8_t(RigExecBakedStepKind::SolverCommit) ==
+                  uint8_t(RigExecWireStepKind::ReservedSolverCommit),
+              "wire step order drifted");
+static_assert(uint8_t(RigExecBakedStepKind::Constraint) ==
+                  uint8_t(RigExecWireStepKind::ReservedConstraint),
+              "wire step order drifted");
+static_assert(uint8_t(RigExecBakedStepKind::CommitDelta) ==
+                      uint8_t(RigExecWireStepKind::ReservedCommitDelta) &&
+                  uint8_t(RigExecBakedStepKind::PropagateChunk) ==
+                      uint8_t(RigExecWireStepKind::ReservedPropagateChunk) &&
+                  uint8_t(RigExecBakedStepKind::CommitApply) ==
+                      uint8_t(RigExecWireStepKind::ReservedCommitApply),
+              "wire step order drifted");
+static_assert(uint8_t(RigExecBakedStepKind::ProviderMatrix) ==
+                  uint8_t(RigExecWireStepKind::ReservedProviderMatrix),
+              "wire step order drifted");
 _RIGEXEC_BAKE_PIN_STEP(SnapshotFinals);
-_RIGEXEC_BAKE_PIN_STEP(PoseInterpolator);
-_RIGEXEC_BAKE_PIN_STEP(VolumePlacements);
-_RIGEXEC_BAKE_PIN_STEP(WeightPacket);
+static_assert(uint8_t(RigExecBakedStepKind::PoseInterpolator) ==
+                  uint8_t(RigExecWireStepKind::ReservedPoseInterpolator),
+              "wire step order drifted");
+static_assert(uint8_t(RigExecBakedStepKind::VolumePlacements) ==
+                  uint8_t(RigExecWireStepKind::ReservedVolumePlacements),
+              "wire step order drifted");
+static_assert(uint8_t(RigExecBakedStepKind::WeightPacket) ==
+                  uint8_t(RigExecWireStepKind::ReservedWeightPacket),
+              "wire step order drifted");
 _RIGEXEC_BAKE_PIN_STEP(InfluenceFold);
 _RIGEXEC_BAKE_PIN_STEP(RevisionStatic);
 _RIGEXEC_BAKE_PIN_STEP(RevisionChunk);
 _RIGEXEC_BAKE_PIN_STEP(RevisionFuse);
 _RIGEXEC_BAKE_PIN_STEP(ChainStatus);
 _RIGEXEC_BAKE_PIN_STEP(Derived);
-_RIGEXEC_BAKE_PIN_STEP(FrameMatrix);
-_RIGEXEC_BAKE_PIN_STEP(PropertyRevision);
-_RIGEXEC_BAKE_PIN_STEP(RestCompose);
-_RIGEXEC_BAKE_PIN_STEP(LadderCompose);
+static_assert(uint8_t(RigExecBakedStepKind::FrameMatrix) ==
+                  uint8_t(RigExecWireStepKind::ReservedFrameMatrix),
+              "wire step order drifted");
+_RIGEXEC_BAKE_PIN_STEP(ReservedPropertyRevision);
+static_assert(uint8_t(RigExecBakedStepKind::RestCompose) ==
+                  uint8_t(RigExecWireStepKind::ReservedRestCompose),
+              "wire step order drifted");
+static_assert(uint8_t(RigExecBakedStepKind::LadderCompose) ==
+                  uint8_t(RigExecWireStepKind::ReservedLadderCompose),
+              "wire step order drifted");
 _RIGEXEC_BAKE_PIN_STEP(SkinTopology);
-_RIGEXEC_BAKE_PIN_STEP(ProviderRefresh);
+static_assert(uint8_t(RigExecBakedStepKind::SpaceExpression) ==
+                  uint8_t(RigExecWireStepKind::ReservedSpaceExpression),
+              "wire step order drifted");
+static_assert(uint8_t(RigExecBakedStepKind::ProviderRefresh) ==
+                  uint8_t(RigExecWireStepKind::ReservedProviderRefresh),
+              "wire step order drifted");
+_RIGEXEC_BAKE_PIN_STEP(ReservedOpGraph);
+_RIGEXEC_BAKE_PIN_STEP(OpNode);
+_RIGEXEC_BAKE_PIN_STEP(OpChainHead);
+_RIGEXEC_BAKE_PIN_STEP(OpChainRange);
 #undef _RIGEXEC_BAKE_PIN_STEP
 
 #define _RIGEXEC_BAKE_PIN_DOMAIN(name)                                         \
@@ -86,10 +118,12 @@ _RIGEXEC_BAKE_PIN_DOMAIN(FrameMatrix);
 _RIGEXEC_BAKE_PIN_DOMAIN(Rest);
 _RIGEXEC_BAKE_PIN_DOMAIN(Ladder);
 _RIGEXEC_BAKE_PIN_DOMAIN(SkinTopology);
+_RIGEXEC_BAKE_PIN_DOMAIN(OpValue);
+_RIGEXEC_BAKE_PIN_DOMAIN(OpGroupValue);
 #undef _RIGEXEC_BAKE_PIN_DOMAIN
 // The program's last enumerators are the wire's: a program kind or domain
 // appended without its wire value fails the build here.
-static_assert(uint8_t(RigExecBakedStepKind::ProviderRefresh) ==
+static_assert(uint8_t(RigExecBakedStepKind::OpChainRange) ==
                   uint8_t(RigExecWireStepKind::MAX),
               "the wire step kinds end before the program's");
 static_assert(RigExecBakedSlotDomainCount ==
@@ -679,17 +713,10 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
     }
     out->restsVary = solver.restsVary;
     out->restOverrides = _ToI32s(solver.restOverrides);
-    out->splineRestWeights = solver.splineRestWeights;
-    out->splineRestMode = uint8_t(solver.splineRestMode);
     out->degenerate = solver.degenerate;
     out->controls = _ToI32s(solver.controls);
     out->parentRelative = solver.parentRelative;
-    out->controlRests.reserve(solver.controlRests.size());
-    for (const std::array<GfVec3d, 4> &set : solver.controlRests) {
-        out->controlRests.push_back(_ToLandmarks(set));
-    }
     out->start = int32_t(solver.start);
-    out->startRest = _ToLandmarks(solver.startRest);
     out->startRead = solver.startRead;
     out->root = int32_t(solver.root);
     out->mid = int32_t(solver.mid);
@@ -699,11 +726,6 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
     for (size_t k = 0; k < 3; ++k) {
         out->ikRests.push_back(_ToLandmarks(solver.ikRests[k]));
     }
-    out->ikParams.upperLength = solver.ikParams.upperLength;
-    out->ikParams.lowerLength = solver.ikParams.lowerLength;
-    out->ikParams.stretch = solver.ikParams.stretch;
-    out->ikParams.softness = solver.ikParams.softness;
-    out->ikParams.preferredBendRadians = solver.ikParams.preferredBendRadians;
     // The registered fields, numbered as the collection numbers them.
     out->bend = read(0);
     out->upperOffset = read(1);
@@ -728,10 +750,7 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
     out->softDistancePolicy = solver.ikParams.softDistancePolicy;
     out->ikScaleSegments = solver.ikParams.scaleSegments;
     out->scaleCalibration = solver.ikParams.limb.scaleCalibration;
-    out->upperLengthBase = solver.upperLengthBase;
-    out->lowerLengthBase = solver.lowerLengthBase;
     out->spaceSlot = int32_t(solver.spaceSlot);
-    out->spaceRest = _ToLandmarks(solver.spaceRest);
     out->spaceRead = uint32_t(std::max(solver.spaceRead, 0));
     out->inA = int32_t(solver.inA);
     out->inB = int32_t(solver.inB);
@@ -746,21 +765,6 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
     }
     out->scaleMode = uint8_t(solver.scaleMode);
     out->blendRotationRejected = solver.blendRotationRejected;
-    auto rest = std::make_unique<fb::RigExecWireSplineIkRest>();
-    for (size_t i = 0; i < 4; ++i) {
-        rest->cvs[i] = _ToVec3d(solver.splineRest.cvs[i]);
-    }
-    rest->rootControl = _ToFrame(solver.splineRest.rootControl);
-    rest->midControl = _ToFrame(solver.splineRest.midControl);
-    rest->endControl = _ToFrame(solver.splineRest.endControl);
-    rest->joints.reserve(solver.splineRest.joints.size());
-    for (const RigExecPointFrame &joint : solver.splineRest.joints) {
-        rest->joints.push_back(_ToFrame(joint));
-    }
-    rest->segmentLengths = solver.splineRest.segmentLengths;
-    rest->restArcLength = solver.splineRest.restArcLength;
-    rest->volumeWeights = solver.splineRest.volumeWeights;
-    out->splineRest = std::move(rest);
     out->splineParams.preserveVolume = solver.splineParams.preserveVolume;
     out->splineParams.midFollowWeight = solver.splineParams.midFollowWeight;
     out->splineParams.roll = solver.splineParams.roll;
@@ -773,14 +777,7 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
     }
     out->splineCount = uint64_t(solver.splineCount);
     out->splineParamsVary = solver.splineParamsVary;
-    out->twistStartRest = _ToLandmarks(solver.twistStartRest);
-    out->twistEndRest = _ToLandmarks(solver.twistEndRest);
-    out->twistWeights = solver.twistWeights;
     out->ribbonPointsPath = _Path(solver.ribbonPointsPath);
-    out->ribbonRestPoints.reserve(solver.ribbonRestPoints.size());
-    for (const GfVec3f &p : solver.ribbonRestPoints) {
-        out->ribbonRestPoints.push_back(_ToVec3f(p));
-    }
     // The constant; the static capture puts a varying driver's run points
     // here instead.
     out->ribbonConstantPoints.reserve(solver.ribbonConstantPoints.size());
@@ -925,8 +922,10 @@ _FileFill::_Constraint(size_t index, fb::RigExecWireConstraint *out)
     out->twistDegrees = read(20);
     out->stretch = read(21);
     out->order = uint8_t(constraint.order);
-    out->aimAxisFallback = _ToVec3d(constraint.aimAxisFallback);
-    out->aimVectorAuthored = constraint.aimVectorAuthored;
+    // Build binds the aimAxis fallback into aimVector itself; the two
+    // fields choose for files written before it did.
+    out->aimAxisFallback = _ToVec3d(GfVec3d(1, 0, 0));
+    out->aimVectorAuthored = true;
     out->preserveInputUp = constraint.preserveInputUp;
     out->worldUpType = _Tok(constraint.worldUpType);
     out->sceneUp = _ToVec3d(constraint.sceneUp);
@@ -943,7 +942,10 @@ _FileFill::_Constraint(size_t index, fb::RigExecWireConstraint *out)
         (constraint.worldUpRotationOnly
              ? RigExecWireConstraintWorldUpRotationOnly
              : 0) |
-        (constraint.radialBlend ? RigExecWireConstraintRadialBlend : 0));
+        (constraint.radialBlend ? RigExecWireConstraintRadialBlend : 0) |
+        (constraint.singleChainIk && constraint.preserveJointOrientation
+             ? RigExecWireConstraintPreserveJointOrientation
+             : 0));
     out->singleChainIk = constraint.singleChainIk;
     out->ikMode = uint8_t(constraint.ikMode);
     out->poleModeObject = constraint.poleModeObject;
@@ -1050,112 +1052,23 @@ _FileFill::_Pose(fb::RigExecWireDomainPose *pose)
         out.weightEnd = int32_t(interp.weightEnd);
         out.poseSlots = _ToI32s(interp.poseSlots);
         out.disabledSlots = _ToI32s(interp.disabledSlots);
-        const RigExecRbfSolver &solver = interp.solver;
-        auto rbf = std::make_unique<fb::RigExecWireRbf>();
-        rbf->poses.reserve(solver.GetPoses().size());
-        for (const GfVec3d &p : solver.GetPoses()) {
-            rbf->poses.push_back(_ToVec3d(p));
-        }
-        rbf->translations.reserve(solver.GetTranslations().size());
-        for (const GfVec3d &t : solver.GetTranslations()) {
-            rbf->translations.push_back(_ToVec3d(t));
-        }
-        rbf->poseTypes.reserve(solver.GetPoseTypes().size());
-        for (RigExecRbfPoseType type : solver.GetPoseTypes()) {
-            rbf->poseTypes.push_back(uint8_t(type));
-        }
-        rbf->twistAxis = _ToVec3d(solver.GetTwistAxis());
-        rbf->kernel = uint8_t(solver.GetKernel());
-        rbf->radius = solver.GetRadius();
-        rbf->translationRadius = solver.GetTranslationRadius();
-        rbf->radii = solver.GetRadii();
-        rbf->translationRadii = solver.GetTranslationRadii();
-        rbf->regularization = solver.GetRegularization();
-        rbf->normalize = solver.GetNormalize();
-        rbf->enableRotation = solver.GetEnableRotation();
-        rbf->enableTranslation = solver.GetEnableTranslation();
-        rbf->regularizedSingular = solver.GetRegularizedSingular();
-        rbf->weights.resize(solver.GetWeights().size());
-        for (size_t k = 0; k < solver.GetWeights().size(); ++k) {
-            rbf->weights[k].v = solver.GetWeights()[k];
-        }
-        out.solver = std::move(rbf);
         out.enableTranslation = interp.enableTranslation;
         for (size_t k = 0; k < interp.valueInputs.size(); ++k) {
             out.valueInputs.push_back(
                 _RegisteredValue(_Family::Interpolator, i, 1 + k));
         }
-        if (interp.rigLogicSolve) {
-            const RigExecRbfMethodTable &table = interp.method;
-            auto method = std::make_unique<fb::RigExecWireRbfMethod>();
-            method->solverType = uint8_t(table.solverType);
-            method->distanceMethod = uint8_t(table.distanceMethod);
-            method->weightFunction = uint8_t(table.weightFunction);
-            method->normalizeMethod = uint8_t(table.normalizeMethod);
-            method->twistAxis = uint8_t(table.twistAxis);
-            method->rawCount = uint32_t(table.rawCount);
-            method->targetCount = uint32_t(table.targetCount);
-            method->radius = table.radius;
-            method->weightThreshold = table.weightThreshold;
-            method->targets = table.targets;
-            method->distanceTargets = table.distanceTargets;
-            method->targetScales = table.targetScales;
-            method->coefficients = table.coefficients;
-            out.method = std::move(method);
+        out.solve = interp.mapsSolve && interp.maps    ? 3
+                    : interp.mlSolve && interp.network ? 2
+                    : interp.rigLogicSolve             ? 1
+                                                       : 0;
+        if (out.solve == 1 || out.solve == 2) {
             out.extraDriverSlots = _ToI32s(interp.extraDriverSlots);
             out.extraParentSlots = _ToI32s(interp.extraParentSlots);
         }
-        if (interp.mlSolve && interp.network) {
-            const RigExecMlNetwork &net = *interp.network;
-            auto network = std::make_unique<fb::RigExecWireMlNetwork>();
-            network->inputCount = uint32_t(net.inputCount);
-            for (const RigExecMlLayer &layer : net.layers) {
-                network->layerSizes.push_back(int32_t(layer.outputCount));
-                network->layerActivations.push_back(uint8_t(layer.activation));
-                network->layerAlphas.push_back(layer.alpha);
-            }
-            const size_t biasBegin =
-                net.layers.empty() ? 0 : net.layers.front().biasOffset;
-            network->weights.assign(net.parameters.begin(),
-                                    net.parameters.begin() + biasBegin);
-            network->biases.assign(net.parameters.begin() + biasBegin,
-                                   net.parameters.end());
-            network->inputMean = net.inputMean;
-            network->inputScale = net.inputScale;
-            network->outputDefaults = net.defaults;
-            out.network = std::move(network);
-            out.extraDriverSlots = _ToI32s(interp.extraDriverSlots);
-            out.extraParentSlots = _ToI32s(interp.extraParentSlots);
+        if (out.solve == 2)
             out.mask = _Registered(_Family::Interpolator, i,
                                    1 + interp.valueInputs.size());
-        }
-        if (interp.mapsSolve && interp.maps) {
-            const RigExecAnimatedMapsTable &table = *interp.maps;
-            auto maps = std::make_unique<fb::RigExecWireAnimatedMaps>();
-            maps->inputCount = uint32_t(table.inputCount);
-            for (const RigExecConditionalRow &row : table.rows) {
-                maps->rowInputs.push_back(int32_t(row.input));
-                maps->rowFrom.push_back(row.from);
-                maps->rowTo.push_back(row.to);
-                maps->rowSlope.push_back(row.slope);
-                maps->rowCut.push_back(row.cut);
-            }
-            for (size_t begin : table.mapBegin) {
-                maps->mapBegin.push_back(uint32_t(begin));
-            }
-            // One byte per map only when some map is unclamped
-            // (rigExec:clampOutput false), so an all-clamped node writes
-            // the bytes it wrote before the field existed.
-            bool anyUnclamped = false;
-            for (size_t m = 0; m < table.MapCount(); ++m) {
-                anyUnclamped = anyUnclamped || !table.Clamps(m);
-            }
-            if (anyUnclamped) {
-                for (size_t m = 0; m < table.MapCount(); ++m) {
-                    maps->mapUnclamped.push_back(table.Clamps(m) ? 0 : 1);
-                }
-            }
-            out.maps = std::move(maps);
+        if (out.solve == 3) {
             out.primvarSlots = _ToI32s(interp.primvarSlots);
             out.primvarSources = _ToI32s(interp.primvarSources);
         }
@@ -1229,8 +1142,6 @@ _FileFill::_Pose(fb::RigExecWireDomainPose *pose)
                                        int32_t(pair.second));
         }
         out.closestPos = _ToI32s(commit.closestPos);
-        out.split = commit.split;
-        out.stagingBase = int32_t(commit.stagingBase);
         out.sources.reserve(commit.sources.size());
         for (const RigExecConstraintSource &source : commit.sources) {
             RigExecWireConstraintSource wire;
@@ -1681,6 +1592,8 @@ _FileFill::_Revision(const RigExecBakedProgramImpl::GeomRevision &revision,
     // with their influence keys (RigExecFormatIsKeyedRevision).
     out->chunked =
         revision.chunked && revision.role != RigExecBakedRevisionRole::Range;
+    out->rangeRole = revision.role == RigExecBakedRevisionRole::Range;
+    out->wholeRole = revision.opWhole;
     out->partitionCandidates = uint64_t(revision.partitionCandidates);
     out->partitionProducerMin = int32_t(revision.partitionProducerMin);
     out->partitionProducerMax = int32_t(revision.partitionProducerMax);
@@ -1779,7 +1692,7 @@ _FileFill::_Geometry(fb::RigExecWireDomainGeometry *geometry)
     geometry->chainChunkBegin = _ToI32s(program.chainChunkBegin);
     geometry->chainChunkEnd = _ToI32s(program.chainChunkEnd);
     // The step-backed objects in the program's order, then the envelope-
-    // only ones, each with its reads and oracle facts as collected.
+    // only ones, each with its reads and field facts as collected.
     geometry->weightObjects = _inputs.weightObjects;
     geometry->weightFields = _inputs.weightFields;
     for (size_t f = 0; f < geometry->weightFields.size(); ++f) {

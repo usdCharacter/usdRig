@@ -24,9 +24,9 @@ bump here, and update the pinned sidecars.
 
 | Contract | Value | Defined in | Enforced by |
 |---|---|---|---|
-| `.rigexec` format (writer) | **32** | `RigExecFormatVersion` in `libs/rigExecBinary/format.h` | every bake stamps it |
-| `.rigexec` format (reader) | **20 through 32** | `RigExecFormatOldestReadable` in `libs/rigExecBinary/format.h` | `libs/rigExecBinary/format.cpp` refuses others at open with a re-export suggestion; a `static_assert` pins the oldest readable, and `tests/testRigExecFormat.cpp` and `tests/testRigExecRuntimeLoader.cpp` pin the accepted range |
-| Mover plugin API | **8** | `RigExecMoverPluginApiVersion` in `libs/rigExec/movers/moverRegistry.h` | the loader (`moverRegistry.cpp`) rejects a plugin whose metadata `RigExecMoverPlugin` value differs; `cmake/rigExecMoverPlugin.cmake` stamps the same number into plugin metadata |
+| `.rigexec` format (writer) | **68** | `RigExecFormatVersion` in `libs/rigExecBinary/format.h` | every bake stamps it |
+| `.rigexec` format (reader) | **68** | `RigExecFormatOldestReadable` in `libs/rigExecBinary/format.h` | `libs/rigExecBinary/format.cpp` refuses others at open with a re-export suggestion; a `static_assert` pins the oldest readable, and `tests/testRigExecFormat.cpp` and `tests/testRigExecRuntimeLoader.cpp` pin the accepted range |
+| Mover plugin API | **8** | `RigExecMoverPluginApiVersion` in `libs/rigExec/api/moverRegistry.h` | the loader (`moverRegistry.cpp`) rejects a plugin whose metadata `RigExecMoverPlugin` value differs; `cmake/rigExecMoverPlugin.cmake` stamps the same number into plugin metadata |
 | External-mover wire type IDs | plain API4 IDs, pinned | `RigExecExternalInputType` in `libs/rigExecBinary/external.h` | the format's `InputTag` numeric inventory; IDs never renumber |
 
 Reader rules: a file older than the oldest readable version is refused with a
@@ -63,7 +63,7 @@ in usdRig history.
 | 17 | 2026-10-07 | unified evaluation: one operation graph in the file (jump from 10; 11–16 never reached `main`) |
 | 18 | 2026-10-08 | rebased unified graph work |
 | 19 | 2026-10-09 | range-pipelined revisions validated |
-| 20 | 2026-10-09 | role-flip rebuild; **oldest readable from here on** |
+| 20 | 2026-10-09 | role-flip rebuild |
 | 21 | 2026-10-09 | new movers, affine frames, extended deformer settings (the `rigexec-format-v4` merge); the only version `v0.1.0` wrote |
 | 22 | 2026-10-13 | GPU and shader deformers |
 | 23 | 2026-10-14 | rigs driven along BasisCurves paths |
@@ -76,8 +76,35 @@ in usdRig history.
 | 30 | 2026-11-04 | dual-quaternion parallelism |
 | 31 | 2026-11-04 | 2D skeletons as nested joints, capsule weights, generated skin rows |
 | 32 | 2026-11-13 | authored normals layout, compiled vertex-normal topology |
+| 33 | 2026-11-22 | the manifest: stable ids of revision, property and provider ops and value types |
+| 34 | 2026-11-22 | single-chain IK joint orientation |
+| 35 | 2026-11-23 | op nodes run through the op core |
+| 36 | 2026-11-24 | op nodes as steps of the common schedule |
+| 37 | 2026-11-25 | property revisions as op nodes reading the rig through lookups |
+| 38 | 2026-11-25 | volume placements as op nodes reading pose versions through lookups |
+| 39 | 2026-11-25 | weight packets as op nodes reading weight arrays through lookups |
+| 40 | 2026-11-25 | weight fields as op nodes reading weight objects through lookups |
+| 41 | 2026-11-26 | provider and frame-record matrices as op nodes reading rest frames and commit record gates through lookups |
+| 42 | 2026-11-26 | full-strength Range matrices as MoverTransform and MatrixDeform op nodes; op chains carry their members and written groups |
+| 43 | 2026-11-26 | pose commits as op nodes reading commit candidates and version lists through lookups |
+| 44 | 2026-11-26 | every Range matrix as op nodes, its weight packet read from the packet's node and its enabled state stored by its MatrixDeform |
+| 45 | 2026-11-27 | connected provider refreshes and provider arithmetic and affine operations as op nodes reading their inputs through lookups |
+| 46 | 2026-11-27 | every Range smooth as a Smooth op node; consecutive op revisions of a point chain share one range chain |
+| 47 | 2026-11-27 | Position, Rotation, Scale, Parent and Aim constraints, the MatrixMover and geometry-target deltas as op nodes reading their inputs through constraint lookups |
+| 48 | 2026-11-27 | every Range delta mush as a DeltaMush op node reading its inputs through revision lookups |
+| 49 | 2026-11-27 | provider values other than operation results answered by ProviderSelect op nodes reading their candidates through lookups; the SpaceExpression step retired |
+| 50 | 2026-11-27 | every Range lattice as a Lattice op node reading its cages through revision lookups |
+| 51 | 2026-11-27 | harmonics, single-chain IK and IK/FK match constraints as op nodes reading their inputs through constraint lookups |
+| 52 | 2026-11-27 | avar bindings, space checkpoints and pose interpolators as AvarInputs, SpaceCheckpoint and PoseInterpolator op nodes reading their inputs through lookups; their steps retired |
+| 53 | 2026-11-27 | the Constraint step retired: a constraint with no target has no step |
+| 54 | 2026-11-27 | sparse Range blend shapes as BlendShape op nodes reading their channel weights through revision lookups keyed to the vertex groups they reach |
+| 55 | 2026-11-27 | every solver kind as op nodes reading their inputs through solver lookups; the Solve step retired and the rest copies only it read deprecated |
+| 56 | 2026-11-27 | rests as RestCompose op nodes reading their inputs through lookups; the RestCompose step retired; pose interpolator rows name their solve and no longer store its tables |
+| 57 | 2026-11-27 | every Matrix, Smooth, DeltaMush and Lattice revision as op chain members: a chain holding one is a range chain of one vertex group when it is not cut (`Revision.range_role`); a matrix transform falls back to the identity (lookup source 11) |
+| 64 | 2026-11-27 | pose commits fed their candidates node to node by the solver, single-chain IK and harmonics op nodes; the commit candidates lookup retired |
+| 68 | 2026-11-27 | the remaining step 10 families as op nodes, first default-space ladders as LadderCompose op nodes (the LadderCompose step retired) and a pose interpolator node storing its status; **oldest readable from here on** |
 
-Versions 6 and 11–16 never appeared on `main`. Files written before version 20
+Versions 6 and 11–16 never appeared on `main`. Files written before version 68
 are outside every current reader: re-export them.
 
 ## Mover plugin API history
@@ -121,7 +148,7 @@ The known drifts as of this survey:
 - **usdRig_movers is one major API behind** (5 vs 8) and cannot load in a
   `v0.2.0` host until rebuilt — [usdRig_movers#3](https://github.com/usdCharacter/usdRig_movers/issues/3).
 - **usdRig_unreal's vendored runtime reads only up to format 24**, so `.rigexec`
-  files baked by current usdRig (writer 32) refuse to open there until the
+  files baked by current usdRig (writer 68) refuse to open there until the
   plugin re-vendors its libraries from a current usdRig commit.
 - Godot, Maya, iOS and Android follow their checkouts and have no drift while
   they build against the same usdRig they bake with.
@@ -134,7 +161,7 @@ When a record layout or handler ABI changes:
    if old files stop opening, raise `RigExecFormatOldestReadable`, its
    `static_assert` in `format.cpp`, and the range tests together.
 2. Plugin ABI: raise `RigExecMoverPluginApiVersion` in
-   `libs/rigExec/movers/moverRegistry.h` and
+   `libs/rigExec/api/moverRegistry.h` and
    `RIGEXEC_MOVER_PLUGIN_API_VERSION` in `cmake/rigExecMoverPlugin.cmake` in
    the same commit, and update the rebuild paragraph in
    [external movers](concepts/external-movers.md).

@@ -20,7 +20,10 @@
 #include "pxr/usd/usd/timeCode.h"
 #include "pxr/external/boost/python/extract.hpp"
 
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/frameReader.h"
+#include "rigExec/api/poseFrameReader.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/evaluatorTesting.h"
 #include "rigExecGpu/gpuDeformExecutor.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/rbf.h"
@@ -29,6 +32,7 @@
 #include "rigExecAuthoring/generateSkinWeights.h"
 #include "rigExecAuthoring/rigBuilder.h"
 #include "rigExecAuthoring/schemaAuthoring.h"
+#include "rigExecSchema/schemaNames.h"
 
 #include <array>
 #include <map>
@@ -168,6 +172,25 @@ std::string
 _PathStr(const SdfPath &p)
 {
     return p.IsEmpty() ? "" : p.GetString();
+}
+
+std::shared_ptr<rigExec::RigExecFrameReader>
+_PoseFrame(rigExec::RigExecRigPose pose)
+{
+    return std::make_shared<rigExec::RigExecPoseFrameReader>(
+        std::make_shared<const rigExec::RigExecRigPose>(std::move(pose)));
+}
+
+std::vector<std::string>
+_DomainPaths(const rigExec::RigExecFrameReader &frame,
+             rigExec::RigExecFrameDomain domain)
+{
+    std::vector<std::string> out;
+    const size_t count = frame.GetCount(domain);
+    out.reserve(count);
+    for (size_t i = 0; i < count; ++i)
+        out.push_back(_PathStr(frame.GetPath(domain, i)));
+    return out;
 }
 
 SdfPath
@@ -549,12 +572,13 @@ struct _Rig {
         }
     }
 
-    rigExec::RigExecRigPose Evaluate(double timeFrames) const
+    std::shared_ptr<rigExec::RigExecFrameReader>
+    Evaluate(double timeFrames) const
     {
         UsdTimeCode t =
             timeFrames < 0 ? UsdTimeCode::Default() : UsdTimeCode(timeFrames);
         py::gil_scoped_release release;
-        return evaluator->Evaluate(t);
+        return _PoseFrame(evaluator->Evaluate(t));
     }
 };
 
@@ -803,8 +827,8 @@ PYBIND11_MODULE(_rigexec, m)
         .def(
             "_evaluate_holding_gil",
             [](const _Rig &r, double time) {
-                return r.evaluator->Evaluate(time < 0 ? UsdTimeCode::Default()
-                                                      : UsdTimeCode(time));
+                return _PoseFrame(r.evaluator->Evaluate(
+                    time < 0 ? UsdTimeCode::Default() : UsdTimeCode(time)));
             },
             py::arg("time") = -1.0)
         .def_property(
@@ -889,7 +913,8 @@ PYBIND11_MODULE(_rigexec, m)
         .def_property_readonly(
             "skin_topology_cache_size",
             [](const _Rig &r) {
-                return r.evaluator->GetSkinTopologyCacheSize();
+                return rigExec::RigExecEvaluatorTesting::SkinTopologyCacheSize(
+                    *r.evaluator);
             },
             "How many skin layouts the compiled rig's topology cache holds "
             "answers\n"
@@ -1145,57 +1170,65 @@ PYBIND11_MODULE(_rigexec, m)
             "Every recorded scope in completion order, with the index of the\n"
             "thread that ran it. Use profile_summary for totals.");
 
-    py::class_<rigExec::RigExecRigPose>(m, "Pose",
-                                        "One evaluated generation of a rig.")
+    using _Frame = rigExec::RigExecFrameReader;
+    using _Domain = rigExec::RigExecFrameDomain;
+    py::class_<_Frame, std::shared_ptr<_Frame>>(
+        m, "Pose", "One evaluated generation of a rig.")
         .def_property_readonly("time",
-                               [](const rigExec::RigExecRigPose &p) {
-                                   return p.time.IsDefault()
-                                              ? -1.0
-                                              : p.time.GetValue();
+                               [](const _Frame &p) {
+                                   const UsdTimeCode time = p.GetTime();
+                                   return time.IsDefault() ? -1.0
+                                                           : time.GetValue();
                                })
-        .def_readonly("valid", &rigExec::RigExecRigPose::valid)
+        .def_property_readonly("valid", &_Frame::IsValid)
         .def_property_readonly("diagnostics",
-                               [](const rigExec::RigExecRigPose &p) {
-                                   return py::cast(p.diagnostics);
+                               [](const _Frame &p) {
+                                   std::vector<std::string> out;
+                                   out.reserve(p.GetDiagnosticCount());
+                                   for (size_t i = 0;
+                                        i < p.GetDiagnosticCount(); ++i)
+                                       out.push_back(p.GetDiagnostic(i));
+                                   return py::cast(out);
                                })
-        .def_readonly("reference_agreements",
-                      &rigExec::RigExecRigPose::referenceAgreements)
-        .def_readonly("reference_mismatches",
-                      &rigExec::RigExecRigPose::referenceMismatches)
-        .def_readonly("comparison_mismatches",
-                      &rigExec::RigExecRigPose::comparisonMismatches)
+        .def_property_readonly(
+            "reference_agreements",
+            [](const _Frame &p) { return p.GetCounters().referenceAgreements; })
+        .def_property_readonly(
+            "reference_mismatches",
+            [](const _Frame &p) { return p.GetCounters().referenceMismatches; })
+        .def_property_readonly("comparison_mismatches",
+                               [](const _Frame &p) {
+                                   return p.GetCounters().comparisonMismatches;
+                               })
 
         // Joint frames.
         .def(
             "joint_frame",
-            [](const rigExec::RigExecRigPose &p, std::string path, bool final) {
-                const auto &map =
-                    final ? p.jointFramesFinal : p.jointFramesBase;
-                auto it = map.find(SdfPath(path));
-                if (it == map.end()) {
+            [](const _Frame &p, std::string path, bool final) {
+                rigExec::RigExecPointFrame frame;
+                if (!p.FindPointFrame(final ? _Domain::JointFrameFinal
+                                            : _Domain::JointFrameBase,
+                                      SdfPath(path), &frame)) {
                     throw py::key_error("no joint frame for " + path);
                 }
-                return it->second;
+                return frame;
             },
             py::arg("path"), py::arg("final") = true,
             "The point frame of one joint ('base' before pose movers, 'final' "
             "after).")
         .def("joint_paths",
-             [](const rigExec::RigExecRigPose &p) {
-                 std::vector<std::string> out;
-                 for (const auto &kv : p.jointFramesFinal) {
-                     out.push_back(_PathStr(kv.first));
-                 }
-                 return out;
+             [](const _Frame &p) {
+                 return _DomainPaths(p, _Domain::JointFrameFinal);
              })
         .def(
             "joint_matrix",
-            [](const rigExec::RigExecRigPose &p, std::string path) {
-                auto it = p.jointMatricesFinal.find(SdfPath(path));
-                if (it == p.jointMatricesFinal.end()) {
+            [](const _Frame &p, std::string path) {
+                GfMatrix4d matrix;
+                if (!p.FindMatrix(_Domain::JointMatrix, SdfPath(path),
+                                  &matrix)) {
                     throw py::key_error("no joint matrix for " + path);
                 }
-                return _Mat4ToVec(it->second);
+                return _Mat4ToVec(matrix);
             },
             py::arg("path"),
             "The final rest-to-pose affine map of one joint (16 numbers, "
@@ -1205,12 +1238,15 @@ PYBIND11_MODULE(_rigexec, m)
         // projector publishes on its mesh, as moved properties.
         .def(
             "shader_matrix_keys",
-            [](const rigExec::RigExecRigPose &p) {
+            [](const _Frame &p) {
                 std::vector<std::pair<std::string, std::string>> out;
                 static const std::string prefix("primvars:");
-                for (const auto &[path, value] : p.movedProperties) {
+                const size_t count = p.GetCount(_Domain::MovedProperty);
+                for (size_t i = 0; i < count; ++i) {
+                    const SdfPath &path = p.GetPath(_Domain::MovedProperty, i);
                     const std::string &name = path.GetName();
-                    if (value.IsHolding<GfMatrix4d>() &&
+                    if (p.GetMovedKind(i) ==
+                            rigExec::RigExecMovedValueKind::Matrix &&
                         name.compare(0, prefix.size(), prefix) == 0) {
                         out.emplace_back(_PathStr(path.GetPrimPath()),
                                          name.substr(prefix.size()));
@@ -1222,51 +1258,47 @@ PYBIND11_MODULE(_rigexec, m)
             "evaluation.")
         .def(
             "shader_matrix",
-            [](const rigExec::RigExecRigPose &p, std::string mesh,
-               std::string primvar) {
-                const auto it =
-                    p.movedProperties.find(SdfPath(mesh).AppendProperty(
-                        TfToken("primvars:" + primvar)));
-                if (it == p.movedProperties.end() ||
-                    !it->second.IsHolding<GfMatrix4d>()) {
+            [](const _Frame &p, std::string mesh, std::string primvar) {
+                GfMatrix4d matrix;
+                if (!p.FindMovedValue(SdfPath(mesh).AppendProperty(
+                                          TfToken("primvars:" + primvar)),
+                                      &matrix)) {
                     throw py::key_error("no " + primvar + " on " + mesh);
                 }
-                return _Mat4ToVec(it->second.UncheckedGet<GfMatrix4d>());
+                return _Mat4ToVec(matrix);
             },
             py::arg("mesh"), py::arg("primvar"),
             "One published shader matrix (16 numbers, row-major).")
 
         // Control frames.
         .def("control_paths",
-             [](const rigExec::RigExecRigPose &p) {
-                 std::vector<std::string> out;
-                 for (const auto &kv : p.controlFrames)
-                     out.push_back(_PathStr(kv.first));
-                 return out;
+             [](const _Frame &p) {
+                 return _DomainPaths(p, _Domain::ControlFrame);
              })
         .def(
             "control_frame",
-            [](const rigExec::RigExecRigPose &p, std::string path) {
-                auto it = p.controlFrames.find(SdfPath(path));
-                if (it == p.controlFrames.end()) {
+            [](const _Frame &p, std::string path) {
+                rigExec::RigExecPointFrame frame;
+                if (!p.FindPointFrame(_Domain::ControlFrame, SdfPath(path),
+                                      &frame)) {
                     throw py::key_error("no control frame for " + path);
                 }
-                return it->second;
+                return frame;
             },
             py::arg("path"))
 
         .def(
             "control_matrices_bytes",
-            [](const rigExec::RigExecRigPose &p,
-               const std::vector<std::string> &paths) {
+            [](const _Frame &p, const std::vector<std::string> &paths) {
                 std::string out(paths.size() * 16 * sizeof(double), '\0');
                 double *cursor = reinterpret_cast<double *>(out.data());
                 for (const std::string &path : paths) {
-                    auto it = p.controlFrames.find(SdfPath(path));
-                    if (it == p.controlFrames.end()) {
+                    rigExec::RigExecPointFrame frame;
+                    if (!p.FindPointFrame(_Domain::ControlFrame, SdfPath(path),
+                                          &frame)) {
                         throw py::key_error("no control frame for " + path);
                     }
-                    const GfMatrix4d m = _FrameToMatrix(it->second);
+                    const GfMatrix4d m = _FrameToMatrix(frame);
                     std::copy(m.data(), m.data() + 16, cursor);
                     cursor += 16;
                 }
@@ -1279,57 +1311,54 @@ PYBIND11_MODULE(_rigexec, m)
 
         // Provider xforms.
         .def("provider_paths",
-             [](const rigExec::RigExecRigPose &p) {
-                 std::vector<std::string> out;
-                 for (const auto &kv : p.providerXforms)
-                     out.push_back(_PathStr(kv.first));
-                 return out;
+             [](const _Frame &p) {
+                 return _DomainPaths(p, _Domain::ProviderTransform);
              })
         .def(
             "provider_xform",
-            [](const rigExec::RigExecRigPose &p, std::string path) {
-                auto it = p.providerXforms.find(SdfPath(path));
-                if (it == p.providerXforms.end()) {
+            [](const _Frame &p, std::string path) {
+                GfMatrix4d matrix;
+                if (!p.FindMatrix(_Domain::ProviderTransform, SdfPath(path),
+                                  &matrix)) {
                     throw py::key_error("no provider xform for " + path);
                 }
-                return _Mat4ToVec(it->second);
+                return _Mat4ToVec(matrix);
             },
             py::arg("path"))
 
         // Solver frames.
         .def(
             "solver_frames",
-            [](const rigExec::RigExecRigPose &p, std::string path) {
-                auto it = p.solverFrames.find(SdfPath(path));
-                if (it == p.solverFrames.end()) {
+            [](const _Frame &p, std::string path) {
+                TfSpan<const rigExec::RigExecPointFrame> frames;
+                if (!p.FindSolverFrames(SdfPath(path), &frames)) {
                     throw py::key_error("no solver frames for " + path);
                 }
-                return py::cast(it->second);
+                return py::cast(std::vector<rigExec::RigExecPointFrame>(
+                    frames.begin(), frames.end()));
             },
             py::arg("path"))
 
         // Moved properties.
         .def(
             "moved_property",
-            [](const rigExec::RigExecRigPose &p, std::string path) {
-                auto it = p.movedProperties.find(SdfPath(path));
-                if (it == p.movedProperties.end()) {
+            [](const _Frame &p, std::string path) {
+                VtValue value;
+                if (!p.FindMovedValue(SdfPath(path), &value)) {
                     throw py::key_error("no moved property for " + path);
                 }
-                return _VtToPython(it->second);
+                return _VtToPython(value);
             },
             py::arg("path"),
             "The final computed value of one moved property, converted by held "
             "type.")
         .def(
             "moved_points_bytes",
-            [](const rigExec::RigExecRigPose &p, std::string path) {
-                auto it = p.movedProperties.find(SdfPath(path));
-                if (it == p.movedProperties.end() ||
-                    !it->second.IsHolding<VtVec3fArray>()) {
+            [](const _Frame &p, std::string path) {
+                VtVec3fArray a;
+                if (!p.FindMovedValue(SdfPath(path), &a)) {
                     throw py::key_error("no moved points for " + path);
                 }
-                const VtVec3fArray &a = it->second.UncheckedGet<VtVec3fArray>();
                 return py::bytes(reinterpret_cast<const char *>(a.cdata()),
                                  a.size() * sizeof(GfVec3f));
             },
@@ -1337,10 +1366,13 @@ PYBIND11_MODULE(_rigexec, m)
             "One moved point array as packed little-endian float32 xyz, for\n"
             "consumers that hand the buffer on without touching each point.")
         .def("moved_properties",
-             [](const rigExec::RigExecRigPose &p) {
+             [](const _Frame &p) {
                  py::dict out;
-                 for (const auto &kv : p.movedProperties) {
-                     out[py::cast(_PathStr(kv.first))] = _VtToPython(kv.second);
+                 const size_t count = p.GetCount(_Domain::MovedProperty);
+                 for (size_t i = 0; i < count; ++i) {
+                     out[py::cast(
+                         _PathStr(p.GetPath(_Domain::MovedProperty, i)))] =
+                         _VtToPython(p.GetMovedValue(i));
                  }
                  return out;
              })
@@ -1348,24 +1380,25 @@ PYBIND11_MODULE(_rigexec, m)
         // Weight fields.
         .def(
             "weight_field",
-            [](const rigExec::RigExecRigPose &p, std::string path) {
-                auto it = p.weightFields.find(SdfPath(path));
-                if (it == p.weightFields.end()) {
+            [](const _Frame &p, std::string path) {
+                size_t index = 0;
+                if (!p.FindIndex(_Domain::WeightField, SdfPath(path), &index)) {
                     throw py::key_error("no weight field for " + path);
                 }
-                const VtFloatArray &held = it->second.weights;
+                const VtFloatArray held = p.GetWeightFieldWeights(index);
                 return py::cast(std::vector<float>(held.cbegin(), held.cend()));
             },
             py::arg("path"),
             "The resolved dense weights of one consumed weight object.")
         .def(
             "weight_frame",
-            [](const rigExec::RigExecRigPose &p, std::string path) {
-                auto it = p.weightFrames.find(SdfPath(path));
-                if (it == p.weightFrames.end()) {
+            [](const _Frame &p, std::string path) {
+                GfMatrix4d matrix;
+                if (!p.FindMatrix(_Domain::WeightFrame, SdfPath(path),
+                                  &matrix)) {
                     throw py::key_error("no weight frame for " + path);
                 }
-                return _Mat4ToVec(it->second);
+                return _Mat4ToVec(matrix);
             },
             py::arg("path"));
 
@@ -2345,7 +2378,8 @@ PYBIND11_MODULE(_rigexec, m)
             "set_blend_shape",
             [](rigExec::RigExecBlendSampleHandle &h, py::object p) {
                 h.SetBlendShape(_PythonToDependencyPath(
-                    p, h.GetStage(), TfToken("BlendShape"), false));
+                    p, h.GetStage(), TfToken(rigExec::BlendShapeText::typeName),
+                    false));
             },
             py::arg("path"),
             "Point this sample at a UsdSkelBlendShape whose offsets (and\n"

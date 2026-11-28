@@ -14,10 +14,10 @@
 #include "rigExecExampleFixtures.h"
 #include "rigExecPoseCompare.h"
 
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/valueAddress.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/valueAddress.h"
 
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/plug/registry.h"
@@ -31,6 +31,8 @@
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/stage.h"
 
+#include <algorithm>
+#include <map>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -203,6 +205,39 @@ CheckDrag(const char *what, const MakeStage &make, const SdfPath &prim,
     }
 }
 
+/// A rig whose solver Build refuses, so every evaluator does: it compiles,
+/// its program does not build, and an evaluation is invalid and names
+/// \p reason.
+void
+CheckRefusedAtBuild(const char *what, const MakeStage &make,
+                    const std::string &reason)
+{
+    RigExecRigEvaluator rig(make(), kRigPath);
+    std::vector<std::string> errors;
+    if (!rig.Compile(&errors)) {
+        ++failures;
+        std::printf("FAIL %s: the fixture does not compile\n", what);
+        return;
+    }
+    const auto names = [&](const std::vector<std::string> &lines) {
+        return std::any_of(lines.begin(), lines.end(),
+                           [&](const std::string &line) {
+                               return line.find(reason) != std::string::npos;
+                           });
+    };
+    std::vector<std::string> reasons;
+    const bool built = RigExecBakedProgram::Build(&rig, &reasons) != nullptr;
+    const RigExecRigPose pose = rig.Evaluate(UsdTimeCode(2.0));
+    if (built || !names(reasons) || pose.valid || !names(pose.diagnostics)) {
+        ++failures;
+        std::printf("FAIL %s: not refused with \"%s\"\n", what, reason.c_str());
+        for (const std::string &line : reasons)
+            std::printf("    %s\n", line.c_str());
+        for (const std::string &line : pose.diagnostics)
+            std::printf("    %s\n", line.c_str());
+    }
+}
+
 // Authoring helpers.
 
 UsdPrim
@@ -333,10 +368,8 @@ MakeTwistRigWithOneSample()
     return stage;
 }
 
-/// rigExec:end wired to nothing. The computation's end frame is a REQUIRED
-/// input, so it publishes an empty aggregate and the joint falls back to its
-/// rest chain with the diagnostic that carries -- which the program has to
-/// reproduce rather than solve half a distribution.
+/// rigExec:end wired to nothing. The end frame is a REQUIRED input, so Build
+/// refuses the solver rather than publish half a distribution.
 UsdStageRefPtr
 MakeTwistRigWithNoEnd()
 {
@@ -559,7 +592,7 @@ MakeTwoBoneIkRig()
 }
 
 /// rigExec:joints reduced to two, so the solver binds two of the three chain
-/// slots and cannot measure its lower bone.
+/// slots and cannot measure its lower bone: Build refuses it.
 UsdStageRefPtr
 MakeTwoBoneIkRigWithTwoJoints()
 {
@@ -572,8 +605,8 @@ MakeTwoBoneIkRigWithTwoJoints()
 }
 
 /// rigExec:poleControl aimed at a plain Xform. It publishes no
-/// computePointFrame, so the pole input is unbound and the computation
-/// publishes nothing.
+/// computePointFrame, so the required pole input is unbound and Build
+/// refuses the solver.
 UsdStageRefPtr
 MakeTwoBoneIkRigWithANonProviderPole()
 {
@@ -629,7 +662,8 @@ MakeSplineIkRig()
     return stage;
 }
 
-/// A token no kernel implements, on each of the two the computation parses.
+/// A token no kernel implements, on each of the two the computation parses:
+/// Build refuses either.
 UsdStageRefPtr
 MakeSplineIkRigWithUnsupportedRestLength()
 {
@@ -637,6 +671,19 @@ MakeSplineIkRigWithUnsupportedRestLength()
     stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/SpineIk"))
         .GetAttribute(TfToken("rigExec:restLength"))
         .Set(TfToken("spring"));
+    return stage;
+}
+
+/// A spline IK whose rigExec:joints binds nothing: there is no chain to
+/// measure its rest curve from.
+UsdStageRefPtr
+MakeSplineIkRigWithNoJoints()
+{
+    const UsdStageRefPtr stage = MakeSplineIkRig();
+    const UsdPrim spline =
+        stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/SpineIk"));
+    SetTargets(spline, "rigExec:joints", {});
+    spline.GetAttribute(TfToken("rigExec:volumeWeights")).Clear();
     return stage;
 }
 
@@ -663,11 +710,9 @@ MakeSplineIkRigWithUnsupportedRootTangent()
 //     "rigExec:jointElements length 2 must equal rigExec:joints length 3"
 // (the last one authored as a CUSTOM array, since RigExecTwoBoneIk does not
 // declare jointElements -- its positions are its elements).
-// The bake's `degenerate` for all four is therefore defensive rather than
-// reachable. It stays, because the computations check them at runtime and
-// the two paths should answer the same hypothetical the same way; this
-// comment is so the next reader does not spend an afternoon trying to
-// author one.
+// Build refuses each of the four as well (a degenerate solver), but compile
+// answers first; this comment is so the next reader does not spend an
+// afternoon trying to author one.
 
 /// An IK/FK blend over the two-bone leg: example 03's shape, with an FK
 /// chain over the same three joints and a blend in front of both.
@@ -734,8 +779,23 @@ MakeFkChainWithANonProviderControl()
     return stage;
 }
 
+/// The FK chain shortened as above while the IK keeps three frames: a blend
+/// of two counts is refused at Build rather than publishing nothing.
+UsdStageRefPtr
+MakeBlendRigWithUnequalInputs()
+{
+    const UsdStageRefPtr stage = MakeBlendRig();
+    const UsdPrim marker = Define(stage, "/Asset/Geom/Marker", "Xform");
+    SetTargets(stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/LegFK")),
+               "rigExec:controls",
+               {SdfPath("/Asset/Rig/Controls/FkHip"), marker.GetPath(),
+                SdfPath("/Asset/Rig/Controls/FkHip/FkKnee/FkAnkle")});
+    return stage;
+}
+
 /// rigExec:rotationBlend authored to the one thing the schema does not
-/// allow: the computation rejects the token rather than substituting for it.
+/// allow: with both inputs bound, Build refuses the token rather than
+/// substituting for it.
 UsdStageRefPtr
 MakeBlendRigWithLinearRotation()
 {
@@ -769,13 +829,9 @@ MakeBlendRigWithANonSolverInput()
 /// Both at once: an unsupported rigExec:rotationBlend AND an input that
 /// publishes no aggregate.
 ///
-/// The ORDER of the computation's two checks is the whole fixture. It
-/// returns the surviving input before it ever looks at the token, so the
-/// blend passes the FK chain through and poses the three joints -- while a
-/// bake that treated the token as a whole-solver degeneracy publishes
-/// nothing and drops all three to their rest chains. Each half alone is
-/// above, and each half alone agrees; only the conjunction tells the two
-/// orderings apart.
+/// With one input unbound the blend is a pass-through of the other and never
+/// reads the token: it poses the three joints with the FK chain, where the
+/// linear-rotation blend with both inputs is refused at Build.
 UsdStageRefPtr
 MakeBlendRigWithLinearRotationAndANonSolverInput()
 {
@@ -822,12 +878,53 @@ CheckRibbonPointsOverrideIsRefused()
     // Two reasons refuse it and either is enough -- the path is folded, and
     // it is in no binding table -- which is the point: no future rewiring
     // of one of them can make this drag placeable quietly.
-    // The control: rigExec:sampleCount is a per-frame input of the same
-    // solver and IS placeable, so a program that refused everything would
-    // pass the line above while saying nothing.
+    // The control: rigExec:sampleCount, an input of the same solver, IS
+    // placeable, so a program that refused everything would pass the line
+    // above while saying nothing. It fixes the frame count, so the run it
+    // stands on rebuilds (CheckSampleCountDragRecompiles).
     CHECK(program->SetOverrides({RigExecValueOverride{
         SdfPath("/Asset/Rig/Solvers/SpineRibbon"), TfToken(),
         TfToken("rigExec:sampleCount"), VtValue(int(4))}}));
+}
+
+/// rigExec:sampleCount fixes the ribbon's frame count, which Build reads once:
+/// a drag on it rebuilds the program with the dragged count, and the release
+/// rebuilds it with the authored one. No run solves at a count Build did not
+/// read.
+void
+CheckSampleCountDragRecompiles()
+{
+    const char *const what = "a drag on rigExec:sampleCount";
+    RigExecRigEvaluator rig(MakeAnimatedRibbonRig(), kRigPath);
+    std::vector<std::string> errors;
+    if (!rig.Compile(&errors)) {
+        ++failures;
+        std::printf("FAIL %s: the fixture does not compile\n", what);
+        return;
+    }
+    const SdfPath ribbon("/Asset/Rig/Solvers/SpineRibbon");
+    const auto frames = [&](const RigExecRigPose &pose) {
+        const auto found = pose.solverFrames.find(ribbon);
+        return found == pose.solverFrames.end() ? size_t(0)
+                                                : found->second.size();
+    };
+    const RigExecRigPose settled = rig.Evaluate(UsdTimeCode(2.0));
+    const size_t builds = rig.GetBakedProgramBuildCount();
+    CHECK(settled.valid && frames(settled) == 5);
+    rig.SetInteractiveOverrides({RigExecValueOverride{
+        ribbon, TfToken(), TfToken("rigExec:sampleCount"), VtValue(int(4))}});
+    const RigExecRigPose held = rig.Evaluate(UsdTimeCode(2.0));
+    CHECK(held.valid && frames(held) == 4);
+    CHECK(rig.GetBakedProgramBuildCount() == builds + 1);
+    const RigExecRigPose heldLater = rig.Evaluate(UsdTimeCode(3.0));
+    CHECK(heldLater.valid && frames(heldLater) == 4);
+    CHECK(rig.GetBakedProgramBuildCount() == builds + 1);
+    rig.ClearInteractiveOverrides();
+    const RigExecRigPose freed = rig.Evaluate(UsdTimeCode(2.0));
+    CHECK(freed.valid && frames(freed) == 5);
+    CHECK(rig.GetBakedProgramBuildCount() == builds + 2);
+    rigExecTest::ComparePose(&failures, std::string(what) + " released",
+                             settled, freed);
 }
 
 /// A ribbon whose rigExec:driverCurve names a prim that has no `points` at
@@ -994,20 +1091,6 @@ CheckRibbonPointsEdit(const char *what, bool editDefault)
     }
 }
 
-// TestRefreshSolverRestsOnBuildStateIsIdentity.
-//
-// The Solve step rebuilds a solver's rest description (RefreshSolverRests)
-// only on a run on which one of its own rests moved. Skipping it is sound
-// only if a refresh over unchanged rests reproduces, bit for bit, the
-// description the solver already holds. Each refresh is compared with the
-// description the solver holds now and, wherever the solver's rests are
-// bit-identical to the ones Build measured from, with the Build description.
-// A run that already refreshed the solver makes the first comparison a
-// determinism check only; the second is the one a per-solver skip relies on,
-// including on a run that moved another solver's rests. A rest ref read LIVE
-// from `fin` differs from Build's authored rest by design and refreshes
-// every run, so each field fed by one is excluded.
-
 using SolverDesc = RigExecBakedProgramImpl::Solver;
 using RestPoints = std::array<GfVec3d, 4>;
 
@@ -1034,309 +1117,6 @@ SameBits(const RestPoints &a, const RestPoints &b)
             return false;
     }
     return true;
-}
-
-bool
-SameBits(const RigExecPointFrame &a, const RigExecPointFrame &b)
-{
-    return a.flags == b.flags && SameBits(a.points, b.points);
-}
-
-template <class T>
-bool
-SameBits(const std::vector<T> &a, const std::vector<T> &b)
-{
-    if (a.size() != b.size())
-        return false;
-    for (size_t i = 0; i < a.size(); ++i) {
-        if (!SameBits(a[i], b[i]))
-            return false;
-    }
-    return true;
-}
-
-bool
-SameBits(const RigExecSplineIkRest &a, const RigExecSplineIkRest &b)
-{
-    return SameBits(std::vector<GfVec3d>(a.cvs.begin(), a.cvs.end()),
-                    std::vector<GfVec3d>(b.cvs.begin(), b.cvs.end())) &&
-           SameBits(a.rootControl, b.rootControl) &&
-           SameBits(a.midControl, b.midControl) &&
-           SameBits(a.endControl, b.endControl) &&
-           SameBits(a.joints, b.joints) &&
-           SameBits(a.segmentLengths, b.segmentLengths) &&
-           SameBits(a.restArcLength, b.restArcLength) &&
-           SameBits(a.volumeWeights, b.volumeWeights);
-}
-
-std::string
-Describe(double v)
-{
-    char text[64];
-    std::snprintf(text, sizeof(text), "%.17g (%a)", v, v);
-    return text;
-}
-
-std::string
-Describe(const RestPoints &p)
-{
-    std::string out;
-    for (const GfVec3d &v : p) {
-        char text[160];
-        std::snprintf(text, sizeof(text), "(%.17g %.17g %.17g)", v[0], v[1],
-                      v[2]);
-        out += text;
-    }
-    return out;
-}
-
-/// Field-by-field comparison of one held description with its refresh.
-struct RestDiff {
-    std::string where;
-    /// False counts mismatches without failing the test.
-    bool report = true;
-    size_t compared = 0;
-    size_t excluded = 0;
-    size_t differing = 0;
-
-    /// \p live excludes the field; \p detail is printed only on a mismatch.
-    void Field(const std::string &field, bool live, bool same,
-               const std::function<std::string()> &detail = {})
-    {
-        if (live) {
-            ++excluded;
-            return;
-        }
-        ++compared;
-        if (same)
-            return;
-        ++differing;
-        if (!report)
-            return;
-        ++failures;
-        std::printf("FAIL %s: %s differs from the refresh%s%s\n", where.c_str(),
-                    field.c_str(), detail ? ": " : "",
-                    detail ? detail().c_str() : "");
-    }
-};
-
-/// Compares every field RefreshSolverRests writes, over \p held and
-/// \p refreshed, into \p diff.
-void
-CompareRestDescription(const SolverDesc &held, const SolverDesc &refreshed,
-                       RestDiff *diff)
-{
-    const auto liveRef = [&held](size_t k) {
-        return k < held.restIsLive.size() && held.restIsLive[k];
-    };
-    // Whether a live ref feeds element \p e of an element-remapped table.
-    const auto liveElement = [&](int e) {
-        for (size_t k = 0; k < held.restRefs.size(); ++k) {
-            if (held.restRefs[k].second == e && liveRef(k))
-                return true;
-        }
-        return false;
-    };
-    const auto points = [](const RestPoints &a, const RestPoints &b) {
-        return [&a, &b] {
-            return "held " + Describe(a) + " refreshed " + Describe(b);
-        };
-    };
-    const auto scalar = [](double a, double b) {
-        return [a, b] {
-            return "held " + Describe(a) + " refreshed " + Describe(b);
-        };
-    };
-
-    diff->Field("jointRests.size", false,
-                held.jointRests.size() == refreshed.jointRests.size());
-    for (size_t k = 0;
-         k < held.jointRests.size() && k < refreshed.jointRests.size(); ++k) {
-        diff->Field("jointRests[" + std::to_string(k) + "]", liveRef(k),
-                    SameBits(held.jointRests[k], refreshed.jointRests[k]),
-                    points(held.jointRests[k], refreshed.jointRests[k]));
-    }
-
-    if (held.type == "RigExecFkChain") {
-        diff->Field("controlRests.size", false,
-                    held.controlRests.size() == refreshed.controlRests.size());
-        for (size_t k = 0;
-             k < held.controlRests.size() && k < refreshed.controlRests.size();
-             ++k) {
-            diff->Field(
-                "controlRests[" + std::to_string(k) + "]", false,
-                SameBits(held.controlRests[k], refreshed.controlRests[k]),
-                points(held.controlRests[k], refreshed.controlRests[k]));
-        }
-        diff->Field("startRest", false,
-                    SameBits(held.startRest, refreshed.startRest),
-                    points(held.startRest, refreshed.startRest));
-    } else if (held.type == "RigExecTwoBoneIk") {
-        bool anyLive = false;
-        for (int e = 0; e < 3; ++e) {
-            const bool live = liveElement(e);
-            anyLive = anyLive || live;
-            diff->Field(
-                "ikRests[" + std::to_string(e) + "]", live,
-                SameBits(held.ikRests[size_t(e)], refreshed.ikRests[size_t(e)]),
-                points(held.ikRests[size_t(e)], refreshed.ikRests[size_t(e)]));
-        }
-        // Measured from ikRests, so a live element excludes them too.
-        diff->Field("upperLengthBase", anyLive,
-                    SameBits(held.upperLengthBase, refreshed.upperLengthBase),
-                    scalar(held.upperLengthBase, refreshed.upperLengthBase));
-        diff->Field("lowerLengthBase", anyLive,
-                    SameBits(held.lowerLengthBase, refreshed.lowerLengthBase),
-                    scalar(held.lowerLengthBase, refreshed.lowerLengthBase));
-        diff->Field(
-            "ikParams.upperLength", anyLive,
-            SameBits(held.ikParams.upperLength, refreshed.ikParams.upperLength),
-            scalar(held.ikParams.upperLength, refreshed.ikParams.upperLength));
-        diff->Field(
-            "ikParams.lowerLength", anyLive,
-            SameBits(held.ikParams.lowerLength, refreshed.ikParams.lowerLength),
-            scalar(held.ikParams.lowerLength, refreshed.ikParams.lowerLength));
-        if (held.spaceSlot >= 0) {
-            diff->Field("spaceRest", false,
-                        SameBits(held.spaceRest, refreshed.spaceRest),
-                        points(held.spaceRest, refreshed.spaceRest));
-        }
-    } else if (held.type == "RigExecSplineIk") {
-        bool anyLive = false;
-        diff->Field("splineJointRests.size", false,
-                    held.splineJointRests.size() ==
-                        refreshed.splineJointRests.size());
-        diff->Field("splineRestFrames.size", false,
-                    held.splineRestFrames.size() ==
-                        refreshed.splineRestFrames.size());
-        for (size_t e = 0; e < held.splineJointRests.size() &&
-                           e < refreshed.splineJointRests.size();
-             ++e) {
-            const bool live = liveElement(int(e));
-            anyLive = anyLive || live;
-            diff->Field("splineJointRests[" + std::to_string(e) + "]", live,
-                        SameBits(held.splineJointRests[e],
-                                 refreshed.splineJointRests[e]),
-                        points(held.splineJointRests[e],
-                               refreshed.splineJointRests[e]));
-        }
-        for (size_t e = 0; e < held.splineRestFrames.size() &&
-                           e < refreshed.splineRestFrames.size();
-             ++e) {
-            diff->Field("splineRestFrames[" + std::to_string(e) + "]",
-                        liveElement(int(e)),
-                        SameBits(held.splineRestFrames[e],
-                                 refreshed.splineRestFrames[e]),
-                        points(held.splineRestFrames[e].points,
-                               refreshed.splineRestFrames[e].points));
-        }
-        diff->Field("splineRootRest", false,
-                    SameBits(held.splineRootRest, refreshed.splineRootRest),
-                    points(held.splineRootRest.points,
-                           refreshed.splineRootRest.points));
-        diff->Field(
-            "splineMidRest", false,
-            SameBits(held.splineMidRest, refreshed.splineMidRest),
-            points(held.splineMidRest.points, refreshed.splineMidRest.points));
-        diff->Field(
-            "splineEndRest", false,
-            SameBits(held.splineEndRest, refreshed.splineEndRest),
-            points(held.splineEndRest.points, refreshed.splineEndRest.points));
-        // Built from the joint rest frames, so a live element excludes it.
-        diff->Field("splineRest", anyLive,
-                    SameBits(held.splineRest, refreshed.splineRest),
-                    scalar(held.splineRest.restArcLength,
-                           refreshed.splineRest.restArcLength));
-        if (held.spaceSlot >= 0) {
-            diff->Field("spaceRest", false,
-                        SameBits(held.spaceRest, refreshed.spaceRest),
-                        points(held.spaceRest, refreshed.spaceRest));
-        }
-    } else if (held.type == "RigExecTwistDistribution") {
-        diff->Field("twistStartRest", false,
-                    SameBits(held.twistStartRest, refreshed.twistStartRest),
-                    points(held.twistStartRest, refreshed.twistStartRest));
-        diff->Field("twistEndRest", false,
-                    SameBits(held.twistEndRest, refreshed.twistEndRest),
-                    points(held.twistEndRest, refreshed.twistEndRest));
-    }
-}
-
-/// Field counts over one fixture.
-struct RestCounts {
-    /// Against the description the solver holds.
-    size_t compared = 0;
-    size_t excluded = 0;
-    /// Against the Build description, where the rests are Build's.
-    size_t sinceBuild = 0;
-    /// The subset of `sinceBuild` on a run on which the rest tier moved a
-    /// rest: another solver's, since this one's are still Build's.
-    size_t sinceBuildRecomposed = 0;
-};
-
-/// Whether \p s measures from bit-identical rests in \p a and \p b. Both
-/// programs must number their slots alike.
-bool
-SameRestInputs(const SolverDesc &s, const RigExecBakedProgramImpl &a,
-               const RigExecBakedProgramImpl &b)
-{
-    for (const int slot : s.restSlots) {
-        if (!SameBits(a.restPts[size_t(slot)], b.restPts[size_t(slot)]) ||
-            !SameBits(a.restFrames[size_t(slot)], b.restFrames[size_t(slot)])) {
-            return false;
-        }
-    }
-    return true;
-}
-
-/// Compares the refresh of every solver of \p program that measures from a
-/// rest with the description it holds and, where its rests are still
-/// \p build's, with \p build's description. Returns how many solvers it
-/// compared.
-size_t
-CompareProgramRests(const std::string &where,
-                    const RigExecBakedProgram &program,
-                    const RigExecBakedProgramImpl *build, RestCounts *counts)
-{
-    const RigExecBakedProgramImpl &B =
-        rigExec::RigExecBakedProgramAccess::StepGraph(program);
-    size_t solvers = 0;
-    for (size_t i = 0; i < B.solvers.size(); ++i) {
-        const SolverDesc &held = B.solvers[i];
-        if (held.restSlots.empty())
-            continue;
-        ++solvers;
-        const std::string name = where + " " + held.path.GetString() + " (" +
-                                 held.type.GetString() + ")";
-        const SolverDesc refreshed =
-            RigExecBakedProgramTesting::RefreshedSolverRests(program, i);
-        RestDiff diff;
-        diff.where = name;
-        CompareRestDescription(held, refreshed, &diff);
-        counts->compared += diff.compared;
-        counts->excluded += diff.excluded;
-        if (!build)
-            continue;
-        if (i >= build->solvers.size() || build->solvers[i].path != held.path ||
-            build->solvers[i].restSlots != held.restSlots ||
-            build->paths != B.paths) {
-            ++failures;
-            std::printf("FAIL %s: the run's program and the Build reference "
-                        "disagree about the solver or its slots\n",
-                        name.c_str());
-            continue;
-        }
-        if (!SameRestInputs(held, B, *build))
-            continue;
-        RestDiff since;
-        since.where = name + " against Build";
-        CompareRestDescription(build->solvers[i], refreshed, &since);
-        counts->sinceBuild += since.compared;
-        if (!B.restMoved.empty()) {
-            counts->sinceBuildRecomposed += since.compared;
-        }
-    }
-    return solvers;
 }
 
 SdfPath
@@ -1370,138 +1150,6 @@ CompileFixture(const char *what, const UsdStageRefPtr &stage)
         return nullptr;
     }
     return evaluator;
-}
-
-/// Returns the fields compared against the Build description on a run
-/// that moved another rest.
-size_t
-TestRefreshSolverRestsOnBuildStateIsIdentity(const char *what,
-                                             const MakeStage &make)
-{
-    RestCounts counts;
-
-    // After Build, before any run: against the Build-path description. The
-    // program stays as the reference for the runs below.
-    const UsdStageRefPtr buildStage = make();
-    const auto buildEvaluator = CompileFixture(what, buildStage);
-    if (!buildEvaluator)
-        return 0;
-    std::vector<std::string> reasons;
-    const std::unique_ptr<RigExecBakedProgram> built =
-        RigExecBakedProgram::Build(buildEvaluator.get(), &reasons);
-    if (!built) {
-        ++failures;
-        std::printf("FAIL %s: the rig does not bake\n", what);
-        for (const std::string &reason : reasons) {
-            std::printf("    %s\n", reason.c_str());
-        }
-        return 0;
-    }
-    if (CompareProgramRests(std::string(what) + " after Build", *built, nullptr,
-                            &counts) == 0) {
-        ++failures;
-        std::printf("FAIL %s: no solver measures from a rest\n", what);
-        return 0;
-    }
-    const RigExecBakedProgramImpl &build =
-        rigExec::RigExecBakedProgramAccess::StepGraph(*built);
-
-    // After runs: settled, under a drag on a rest channel, and released.
-    const UsdStageRefPtr stage = make();
-    const auto evaluator = CompileFixture(what, stage);
-    if (!evaluator)
-        return 0;
-
-    const std::vector<double> frames{1, 3, 7};
-    const auto runAndCompare = [&](const std::string &phase) {
-        for (const double frame : frames) {
-            const std::string where = std::string(what) + " " + phase +
-                                      " frame " + std::to_string(int(frame));
-            const size_t before = evaluator->GetBakedGenerationCount();
-            const RigExecRigPose pose = evaluator->Evaluate(UsdTimeCode(frame));
-            const RigExecBakedProgram *program = evaluator->GetBakedProgram();
-            if (!pose.valid || !program ||
-                evaluator->GetBakedGenerationCount() != before + 1) {
-                ++failures;
-                std::printf("FAIL %s: the generation did not come from the "
-                            "program\n",
-                            where.c_str());
-                continue;
-            }
-            CompareProgramRests(where, *program, &build, &counts);
-        }
-    };
-    runAndCompare("settled");
-
-    // The drag lands on a rest slot the first such solver reads from its
-    // authored rest, not through a live ref.
-    const RigExecBakedProgram *program = evaluator->GetBakedProgram();
-    size_t draggedSolver = 0;
-    int slot = -1;
-    if (program) {
-        const auto &solvers =
-            rigExec::RigExecBakedProgramAccess::StepGraph(*program).solvers;
-        for (size_t i = 0; i < solvers.size() && slot < 0; ++i) {
-            const SolverDesc &s = solvers[i];
-            std::set<int> live;
-            for (size_t k = 0; k < s.restRefs.size() && k < s.restIsLive.size();
-                 ++k) {
-                if (s.restIsLive[k])
-                    live.insert(s.restRefs[k].first);
-            }
-            for (const int candidate : s.restSlots) {
-                if (!live.count(candidate)) {
-                    slot = candidate;
-                    draggedSolver = i;
-                    break;
-                }
-            }
-        }
-    }
-    if (slot < 0) {
-        ++failures;
-        std::printf("FAIL %s: no authored solver rest to drag\n", what);
-        return counts.sinceBuildRecomposed;
-    }
-    const SdfPath dragged =
-        rigExec::RigExecBakedProgramAccess::StepGraph(*program)
-            .paths[size_t(slot)];
-    double authored = 0.0;
-    if (const UsdAttribute a =
-            stage->GetPrimAtPath(dragged).GetAttribute(TfToken("rest:tx"))) {
-        a.Get(&authored, UsdTimeCode(frames.front()));
-    }
-    evaluator->SetInteractiveOverrides({RigExecValueOverride{
-        dragged, TfToken(), TfToken("rest:tx"), VtValue(authored + 0.5)}});
-    runAndCompare("dragging " + dragged.GetString() + ".rest:tx");
-    // The drag has to reach the dragged solver's description, or its half
-    // is vacuous.
-    program = evaluator->GetBakedProgram();
-    RestDiff moved;
-    moved.report = false;
-    if (program) {
-        CompareRestDescription(
-            build.solvers[draggedSolver],
-            rigExec::RigExecBakedProgramAccess::StepGraph(*program)
-                .solvers[draggedSolver],
-            &moved);
-    }
-    if (moved.differing == 0) {
-        ++failures;
-        std::printf("FAIL %s: the drag on %s.rest:tx moved no rest of %s\n",
-                    what, dragged.GetString().c_str(),
-                    build.solvers[draggedSolver].path.GetText());
-    }
-    evaluator->ClearInteractiveOverrides();
-    runAndCompare("released");
-
-    std::printf("%s: %zu rest field(s) compared with the held description, "
-                "%zu live field(s) excluded, %zu compared with Build's "
-                "(%zu on a run that moved a rest); the drag moved %zu "
-                "field(s)\n",
-                what, counts.compared, counts.excluded, counts.sinceBuild,
-                counts.sinceBuildRecomposed, moved.differing);
-    return counts.sinceBuildRecomposed;
 }
 
 /// The rigs whose solvers measure from a rest, R0's table.
@@ -1727,15 +1375,14 @@ TestASpaceRestMoveReachesTheSolve(const std::string &examples)
 
 // TestASolverRefreshesOnlyForItsOwnRests.
 //
-// The Solve step refreshes a solver's rest description only on a run on
-// which a rest it measures from moved: one of its `restSlots`, the space
-// slot among them. On computed_ik_space a keyed rest on the leg's Hip joint
-// moves LegIK's rests and no other solver's, and a keyed rest on the Master
-// control moves ArmIK's space rest alone (and TailIK's, whose space and
-// spline controls sit under Master). Either way the ladder varies, which is
-// the case where a program-wide gate would refresh every solver on every
-// run. Counters are Solver::restRefreshes, which excludes the cone
-// verifier's second pass.
+// A solver's rests move only on a run on which a rest it measures from
+// moved: one of its `restSlots`, the space slot among them, and its op
+// node runs on each such run. On computed_ik_space a keyed rest on the
+// leg's Hip joint moves LegIK's rests and no other solver's, and a keyed
+// rest on the Master control moves ArmIK's space rest alone (and TailIK's,
+// whose space and spline controls sit under Master). Either way the ladder
+// varies, which is the case where a program-wide gate would move every
+// solver's rests on every run.
 
 const SdfPath kIkSpaceHipJoint("/IkSpaceAsset/Rig/Joints/Hip");
 const SdfPath kIkSpaceArmIk("/IkSpaceAsset/Rig/Solvers/ArmIK");
@@ -1776,49 +1423,72 @@ CheckOwnRestRefreshes(const char *what, const MakeStage &make,
     EvaluatorPair pair;
     if (!MakeEvaluatorPair(what, make, &pair))
         return;
+    // Per solver: runs on which one of its rest slots moved, and on which
+    // its op node ran with them.
+    std::map<SdfPath, long long> moved, ran;
+    bool varying = true;
     RigExecRigPose dynamic;
     for (const double frame : {1.0, 5.0, 10.0}) {
         GenerationsAgree(std::string(what) + " frame " +
                              std::to_string(int(frame)),
                          &pair, frame, &dynamic);
+        const RigExecBakedProgram *program = pair.baked->GetBakedProgram();
+        if (!program) {
+            ++failures;
+            std::printf("FAIL %s: no baked program\n", what);
+            return;
+        }
+        const RigExecBakedProgramImpl &B =
+            rigExec::RigExecBakedProgramAccess::StepGraph(*program);
+        varying = varying && B.ladderVarying;
+        for (const auto *paths : {&refreshing, &still})
+            for (const SdfPath &path : *paths)
+                for (size_t si = 0; si < B.solvers.size(); ++si) {
+                    if (B.solvers[si].path != path)
+                        continue;
+                    bool rest = false;
+                    for (const int slot : B.solvers[si].restSlots)
+                        rest = rest ||
+                               std::find(B.restMoved.begin(), B.restMoved.end(),
+                                         slot) != B.restMoved.end();
+                    if (!rest)
+                        continue;
+                    ++moved[path];
+                    for (size_t c = 0; c < B.opGraph.ops.size(); ++c) {
+                        const RigExecBakedStepIdentity id =
+                            RigExecBakedIdentityOf(
+                                B, B.steps[B.opGraph.ops[c].originalIndex]);
+                        if (id.kind == RigExecBakedStepKind::Solve &&
+                            id.object == int(si) &&
+                            c < B.opExecution.ran.size() &&
+                            B.opExecution.ran[c])
+                            ++ran[path];
+                    }
+                }
     }
-    const RigExecBakedProgram *program = pair.baked->GetBakedProgram();
-    if (!program) {
-        ++failures;
-        std::printf("FAIL %s: no baked program\n", what);
-        return;
-    }
-    const RigExecBakedProgramImpl &B =
-        rigExec::RigExecBakedProgramAccess::StepGraph(*program);
-    if (!B.ladderVarying) {
+    if (!varying) {
         ++failures;
         std::printf("FAIL %s: the ladder does not vary, so the case says "
                     "nothing\n",
                     what);
     }
-    const auto refreshesOf = [&B](const SdfPath &path) -> long long {
-        for (const SolverDesc &s : B.solvers) {
-            if (s.path == path)
-                return (long long)s.restRefreshes;
-        }
-        return -1;
-    };
     for (const SdfPath &path : refreshing) {
-        const long long n = refreshesOf(path);
-        std::printf("%s: %s refreshed %lld time(s)\n", what, path.GetText(), n);
-        if (n <= 0) {
+        std::printf("%s: %s ran on %lld of %lld rest move(s)\n", what,
+                    path.GetText(), ran[path], moved[path]);
+        if (moved[path] <= 0 || ran[path] != moved[path]) {
             ++failures;
-            std::printf("FAIL %s: %s never refreshed its rests\n", what,
-                        path.GetText());
+            std::printf("FAIL %s: %s did not run on every move of its "
+                        "rests\n",
+                        what, path.GetText());
         }
     }
     for (const SdfPath &path : still) {
-        const long long n = refreshesOf(path);
-        std::printf("%s: %s refreshed %lld time(s)\n", what, path.GetText(), n);
-        if (n != 0) {
+        std::printf("%s: %s saw %lld rest move(s)\n", what, path.GetText(),
+                    moved[path]);
+        if (moved[path] != 0) {
             ++failures;
-            std::printf("FAIL %s: %s refreshed although none of its rests "
-                        "moved\n",
+            std::printf("FAIL %s: a rest of %s moved although none of its "
+                        "rests is keyed\n",
                         what, path.GetText());
         }
     }
@@ -2034,6 +1704,30 @@ SchemaResourceDir(const std::string &examplesDir)
 #endif
 }
 
+/// A ribbon's rigExec:sampleCount connected to an avar would change the
+/// solver's frame count from frame to frame: compile refuses the solver.
+void
+CheckConnectedSampleCountIsRefused()
+{
+    const UsdStageRefPtr stage = MakeRibbonRig();
+    const UsdPrim control =
+        Define(stage, "/Asset/Rig/Controls/Samples", "RigExecControl");
+    control.CreateAttribute(TfToken("avars:count"), SdfValueTypeNames->Int)
+        .Set(6);
+    stage->GetPrimAtPath(SdfPath("/Asset/Rig/Solvers/SpineRibbon"))
+        .GetAttribute(TfToken("rigExec:sampleCount"))
+        .SetConnections(
+            {control.GetPath().AppendProperty(TfToken("avars:count"))});
+    RigExecRigEvaluator rig(stage, kRigPath);
+    std::vector<std::string> errors;
+    rig.Compile(&errors);
+    bool named = false;
+    for (const std::string &e : errors)
+        named = named || e.find("rigExec:sampleCount must not be time-sampled "
+                                "or connected") != std::string::npos;
+    CHECK(named);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2089,8 +1783,9 @@ main(int argc, char **argv)
                               MakeTwistRigWithUnauthoredWeights, frames, true);
     CheckEvaluatorConsistency("twist distribution with one sample",
                               MakeTwistRigWithOneSample, frames, true);
-    CheckEvaluatorConsistency("twist distribution with no end",
-                              MakeTwistRigWithNoEnd, frames, true);
+    CheckRefusedAtBuild("twist distribution with no end", MakeTwistRigWithNoEnd,
+                        "twist distribution needs start and end frames that "
+                        "are pose providers: /Asset/Rig/Solvers/SpineTwist");
 
     CheckEvaluatorConsistency("ribbon on a keyed driver curve",
                               MakeAnimatedRibbonRig, frames, true);
@@ -2102,32 +1797,47 @@ main(int argc, char **argv)
                               MakeRibbonRigWithNoDriver, frames, true);
 
     CheckEvaluatorConsistency("two-bone ik", MakeTwoBoneIkRig, frames, true);
-    CheckEvaluatorConsistency("two-bone ik binding two joints",
-                              MakeTwoBoneIkRigWithTwoJoints, frames, true);
+    CheckRefusedAtBuild("two-bone ik binding two joints",
+                        MakeTwoBoneIkRigWithTwoJoints,
+                        "two-bone IK joints do not bind all three chain "
+                        "slots: /Asset/Rig/Solvers/LegIK");
 
-    CheckEvaluatorConsistency("two-bone ik with a non-provider pole",
-                              MakeTwoBoneIkRigWithANonProviderPole, frames,
-                              true);
+    CheckRefusedAtBuild("two-bone ik with a non-provider pole",
+                        MakeTwoBoneIkRigWithANonProviderPole,
+                        "two-bone IK needs root, effector and pole controls "
+                        "that are pose providers: /Asset/Rig/Solvers/LegIK");
     CheckEvaluatorConsistency("fk chain with a non-provider control",
                               MakeFkChainWithANonProviderControl, frames, true);
 
     CheckEvaluatorConsistency("spline ik", MakeSplineIkRig, frames, true);
-    CheckEvaluatorConsistency("spline ik with an unsupported restLength",
-                              MakeSplineIkRigWithUnsupportedRestLength, frames,
-                              true);
-    CheckEvaluatorConsistency("spline ik with an unsupported rootTangent",
-                              MakeSplineIkRigWithUnsupportedRootTangent, frames,
-                              true);
+    CheckRefusedAtBuild("spline ik with an unsupported restLength",
+                        MakeSplineIkRigWithUnsupportedRestLength,
+                        "spline IK rigExec:restLength is neither curve nor "
+                        "chain: /Asset/Rig/Solvers/SpineIk");
+    CheckRefusedAtBuild("spline ik with an unsupported rootTangent",
+                        MakeSplineIkRigWithUnsupportedRootTangent,
+                        "spline IK rigExec:rootTangent is neither aim nor "
+                        "rigid: /Asset/Rig/Solvers/SpineIk");
+    CheckRefusedAtBuild("spline ik with no joints", MakeSplineIkRigWithNoJoints,
+                        "spline IK rigExec:joints binds no joints: "
+                        "/Asset/Rig/Solvers/SpineIk");
 
     CheckEvaluatorConsistency("ik/fk blend", MakeBlendRig, frames, true);
-    CheckEvaluatorConsistency("ik/fk blend with a linear rotation blend",
-                              MakeBlendRigWithLinearRotation, frames, true);
+    CheckRefusedAtBuild("ik/fk blend with a linear rotation blend",
+                        MakeBlendRigWithLinearRotation,
+                        "frame blend rigExec:rotationBlend is not "
+                        "shortestArc: /Asset/Rig/Solvers/Blend");
     CheckEvaluatorConsistency("ik/fk blend with a non-solver input",
                               MakeBlendRigWithANonSolverInput, frames, true);
     CheckEvaluatorConsistency(
         "ik/fk blend with a linear rotation blend AND a non-solver "
         "input",
         MakeBlendRigWithLinearRotationAndANonSolverInput, frames, true);
+
+    CheckRefusedAtBuild("ik/fk blend of unequal counts",
+                        MakeBlendRigWithUnequalInputs,
+                        "frame blend inputs publish 2 and 3 frames; a blend "
+                        "needs equal counts: /Asset/Rig/Solvers/Blend");
 
     CheckEvaluatorConsistency("guide-only ribbon", MakeGuideOnlyRibbonRig,
                               frames, true);
@@ -2165,16 +1875,14 @@ main(int argc, char **argv)
             };
             check("ik/fk blend after another frame", MakeBlendRig, frame5);
             check("ik/fk blend after a drag on its ik", MakeBlendRig, footDrag);
-            check("linear-rotation blend after another frame",
-                  MakeBlendRigWithLinearRotation, frame5);
-            check("linear-rotation blend after a drag on its ik",
-                  MakeBlendRigWithLinearRotation, footDrag);
             check("guide-only blend after another frame", MakeGuideOnlyBlendRig,
                   frame5);
             check("guide-only blend after a drag on an input",
                   MakeGuideOnlyBlendRig, turnsDrag);
         }
     }
+
+    CheckConnectedSampleCountIsRefused();
 
     // The drags: one per per-frame input this group added to a solver.
     CheckDrag("a drag on inputs:twistTurns", MakeTwistRig,
@@ -2183,6 +1891,7 @@ main(int argc, char **argv)
     CheckDrag("a drag on rigExec:sampleCount", MakeAnimatedRibbonRig,
               SdfPath("/Asset/Rig/Solvers/SpineRibbon"), "rigExec:sampleCount",
               VtValue(int(4)));
+    CheckSampleCountDragRecompiles();
     CheckDrag("a drag on a guide-only solver's turns", MakeGuideOnlyBlendRig,
               SdfPath("/Asset/Rig/Solvers/SecondTwist"), "inputs:twistTurns",
               VtValue(0.2));
@@ -2194,22 +1903,6 @@ main(int argc, char **argv)
     CheckRibbonPointsEdit("an edit to a driver curve time sample",
                           /* editDefault = */ false);
     CheckRibbonPointsCreatedAfterTheBake();
-
-    // Every fixture whose solvers measure from a rest.
-    {
-        size_t recomposed = 0;
-        for (const auto &[what, make] : RestFixtureRigs(argv[1])) {
-            recomposed += TestRefreshSolverRestsOnBuildStateIsIdentity(
-                what.c_str(), make);
-        }
-        // A skipped refresh while another solver's rests move is the case
-        // the per-solver gate exists for, so it has to have been exercised.
-        if (recomposed == 0) {
-            ++failures;
-            std::printf("FAIL no solver kept Build's rests on a run that "
-                        "moved another rest\n");
-        }
-    }
 
     TestASpaceRestMoveReachesTheSolve(argv[1]);
     TestASolverRefreshesOnlyForItsOwnRests(argv[1]);

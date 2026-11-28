@@ -1,14 +1,16 @@
 // .rigexec baking.
 #include "rigExecBake/bake.h"
 #include "rigExecBake/computedCapture.h"
+#include "rigExecBake/opGraph.h"
 #include "rigExecBake/pathTable.h"
 #include "rigExecBake/revisionReads.h"
 #include "rigExecBake/serialize.h"
 #include "rigExecBake/staticCapture.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/movers/moverRegistry.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/moverRegistry.h"
+#include "rigExec/api/rigEvaluator.h"
 #include "rigExecBinary/format.h"
+#include "rigExecBinary/manifest.h"
 #include "rigExecBinary/generated/presentation_generated.h"
 
 #include "pxr/base/vt/array.h"
@@ -49,7 +51,8 @@ public:
             const auto &revisions = program.chains[c].revisions;
             for (size_t r = 0; r < revisions.size(); ++r) {
                 const auto &revision = revisions[r];
-                if (revision.op != RigExecRevisionOp::External) {
+                if (revision.op != RigExecRevisionOp::External ||
+                    revision.OpNodes()) {
                     continue;
                 }
                 const TfToken type = revision.moverPrim.GetTypeName();
@@ -89,7 +92,8 @@ public:
                          " could not encode its immutable compiled rig";
                 return false;
             }
-            if (!parameters.valid || parameters.externalData.IsEmpty()) {
+            const VtValue &data = revision.external.data;
+            if (!parameters.valid || data.IsEmpty()) {
                 continue;
             }
             char number[32];
@@ -97,9 +101,8 @@ public:
             auto *compiledRig = entry.handler->encodeExternalCompiledData
                                     ? &sampledCompiledRig
                                     : &entry.compiledRig;
-            if (!entry.handler->encodeExternal(parameters.externalData,
-                                               revision.binding, compiledRig,
-                                               &entry.frame)) {
+            if (!entry.handler->encodeExternal(data, revision.binding,
+                                               compiledRig, &entry.frame)) {
                 *error = "external mover " + revision.moverPath.GetString() +
                          " could not encode its payload at time " +
                          _FormatDouble(time, number, sizeof(number));
@@ -360,7 +363,7 @@ RigExecBakeToBinary(RigExecRigEvaluator &evaluator, const RigExecBakeOpts &opts,
 
     // The input list, from the standing program: the slots every read
     // takes, with their values at the bake time as the defaults, every read
-    // in its table field, and the facts the oracle needs. Facts of an
+    // in its table field, and the facts the weight field needs. Facts of an
     // animated attribute hold their value at the bake time, which
     // RigExecBakeStaticReport names. Paths and tokens intern in the order
     // this visits them, then the tables', so two bakes write the same ids.
@@ -405,6 +408,9 @@ RigExecBakeToBinary(RigExecRigEvaluator &evaluator, const RigExecBakeOpts &opts,
     external.Fill(program, bakeTime, inputs.GetInputs(), &paths, &pools,
                   &file.externalMovers);
     file.formatVersion = RigExecFormatVersion;
+    file.manifest = RigExecManifestBuild(RigExecManifestCurrent());
+    if (!RigExecBakeOpGraph(program, &file, &why))
+        return Fail("cannot build the .rigexec file: " + why);
     file.rig = paths.Path(evaluator.GetRigPath());
     file.bakeTime = bakeTime;
     file.compileDiagnostics = compileErrors;

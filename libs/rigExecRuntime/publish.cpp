@@ -62,12 +62,16 @@ _RrEpilogueLists(const RrProgram &program, std::vector<char> *aliveSolver,
     geometrySteps->clear();
     for (uint32_t i = 0; i < steps.size(); ++i) {
         const RigExecWireStepKind kind = steps[i].kind;
-        if (kind == RigExecWireStepKind::Solve && steps[i].object >= 0 &&
-            size_t(steps[i].object) < aliveSolver->size())
-            (*aliveSolver)[size_t(steps[i].object)] = 1;
+        if (const int64_t solver = RrSolveOf(&program, steps[i]);
+            solver >= 0 && size_t(solver) < aliveSolver->size())
+            (*aliveSolver)[size_t(solver)] = 1;
         if (kind == RigExecWireStepKind::RevisionStatic ||
             kind == RigExecWireStepKind::ChainStatus ||
-            kind == RigExecWireStepKind::Derived)
+            kind == RigExecWireStepKind::Derived ||
+            (kind == RigExecWireStepKind::OpChainHead &&
+             std::find(program.revisionStaticStep.begin(),
+                       program.revisionStaticStep.end(),
+                       int32_t(i)) != program.revisionStaticStep.end()))
             geometrySteps->push_back(i);
     }
 }
@@ -100,13 +104,12 @@ _RrAppendBlock(const RrProgram &program, RrStepLines block, const Visit &visit,
         // independently of the canonical execution graph's interleaving.
         std::vector<size_t> property;
         visit([&](size_t i) {
-            if (steps[i].kind == RigExecWireStepKind::PropertyRevision &&
+            if (RrPropertyPartOf(&program, steps[i], nullptr, nullptr) &&
                 _RrHoldsOutput(store, i))
                 property.push_back(i);
         });
         std::sort(property.begin(), property.end(), [&](size_t a, size_t b) {
-            return std::make_pair(steps[a].object, steps[a].part) <
-                   std::make_pair(steps[b].object, steps[b].part);
+            return steps[a].object < steps[b].object;
         });
         for (size_t i : property) {
             diagnostics(i);
@@ -119,15 +122,15 @@ _RrAppendBlock(const RrProgram &program, RrStepLines block, const Visit &visit,
     case RrStepLines::Walk:
         visit([&](size_t i) {
             const RigExecWireStepKind kind = steps[i].kind;
-            if (kind != RigExecWireStepKind::PropertyRevision &&
-                kind != RigExecWireStepKind::PoseInterpolator &&
+            if (!RrPropertyPartOf(&program, steps[i], nullptr, nullptr) &&
+                RrInterpolatorOf(program.inputState, steps[i]) < 0 &&
                 !_RrPublishedGeometryKind(kind))
                 diagnostics(i);
         });
         return;
     case RrStepLines::Interpolator:
         visit([&](size_t i) {
-            if (steps[i].kind == RigExecWireStepKind::PoseInterpolator)
+            if (RrInterpolatorOf(program.inputState, steps[i]) >= 0)
                 diagnostics(i);
         });
         return;
@@ -436,14 +439,22 @@ RrPublishGeometry(RrProgram *program, std::vector<std::string> *poseDiagnostics)
     // shows only where two steps name one key, and the later step's stands.
     for (const uint32_t index : program->epilogue.geometrySteps) {
         const RigExecWireStep &step = steps[index];
-        if (step.kind == RigExecWireStepKind::RevisionStatic) {
-            const auto &entry = geo.revisionIndex[size_t(step.object)];
+        if (step.kind == RigExecWireStepKind::RevisionStatic ||
+            step.kind == RigExecWireStepKind::OpChainHead) {
+            const int32_t object =
+                step.kind == RigExecWireStepKind::RevisionStatic
+                    ? step.object
+                    : int32_t(std::find(program->revisionStaticStep.begin(),
+                                        program->revisionStaticStep.end(),
+                                        int32_t(index)) -
+                              program->revisionStaticStep.begin());
+            const auto &entry = geo.revisionIndex[size_t(object)];
             const size_t chain = size_t(entry.first);
             if (!store.chainPublish[chain].haveBase) {
                 continue;
             }
             const RrRevisionPublish &publish =
-                store.revisionPublish[size_t(step.object)];
+                store.revisionPublish[size_t(object)];
             if (!publish.weightFieldPublished) {
                 continue;
             }

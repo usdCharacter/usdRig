@@ -8,9 +8,10 @@
 #include "bridgeSnapshot.h"
 
 #include "rigExecMath/pointFrame.h"
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/frameCacheSparsity.h"
-#include "rigExec/parallel.h"
+#include "rigExec/api/poseFrameReader.h"
+#include "rigExecPlayback/backgroundScheduler.h"
+#include "rigExec/internal/frameCacheSparsity.h"
+#include "rigExec/internal/parallel.h"
 #include "rigExecScene/authoredRestSpace.h"
 
 #include "pxr/base/tf/diagnostic.h"
@@ -262,9 +263,10 @@ RigExecImagingBridge::AppendAuthoredGuides(UsdTimeCode time,
                                 _evaluator->GetCompiledRigSignature(),
                                 _evaluator->GetMoverOrder(),
                                 _interactiveOverrides, _weightOverlay);
-    _guides->_FillGuides(call, authored, snapshot);
-    _guides->_FillControlGuides(call, authored, snapshot);
-    _guides->_FillVolumeGuides(call, authored, snapshot);
+    const RigExecPoseFrameReader reader(authored);
+    _guides->_FillGuides(call, reader, snapshot);
+    _guides->_FillControlGuides(call, reader, snapshot);
+    _guides->_FillVolumeGuides(call, reader, snapshot);
     // Manipulators must not mistake authored placements for evaluated frames.
     for (auto &[path, prim] : snapshot->prims) {
         prim.hasControlFrame = false;
@@ -354,7 +356,8 @@ RigExecImagingBridge::_PublishPoseSnapshot(UsdTimeCode time,
     _StampGeneration(time, snapshot.get());
     const RigExecSnapshotCall snapCall =
         _MakeSnapshotCall(_stage, *_evaluator, time);
-    _snapshot->_Build(snapCall, pose, RigExecSnapshotBuildMode::Displayed,
+    const RigExecPoseFrameReader reader(pose);
+    _snapshot->_Build(snapCall, reader, RigExecSnapshotBuildMode::Displayed,
                       snapshot.get());
     // Joints and aggregate solvers publish guide payloads (drawn by the
     // results scene index like OpenExec's IrJointScope guides).
@@ -365,11 +368,11 @@ RigExecImagingBridge::_PublishPoseSnapshot(UsdTimeCode time,
                                     _evaluator->GetCompiledRigSignature(),
                                     _evaluator->GetMoverOrder(),
                                     _interactiveOverrides, _weightOverlay);
-        _guides->_FillGuides(call, pose, snapshot.get());
-        _guides->_FillControlGuides(call, pose, snapshot.get());
-        _guides->_FillVolumeGuides(call, pose, snapshot.get());
-        _guides->_FillClothConstraintGuides(call, pose, snapshot.get());
-        _guides->_FillWeightOverlay(call, pose, snapshot.get());
+        _guides->_FillGuides(call, reader, snapshot.get());
+        _guides->_FillControlGuides(call, reader, snapshot.get());
+        _guides->_FillVolumeGuides(call, reader, snapshot.get());
+        _guides->_FillClothConstraintGuides(call, reader, snapshot.get());
+        _guides->_FillWeightOverlay(call, reader, snapshot.get());
     }
     snapshot->generation = ++_generation;
 
@@ -418,13 +421,13 @@ RigExecImagingBridge::WarmFrameOnCallingThread(UsdTimeCode time)
         return false;
     }
     _cache->NoteEditSerial(*_evaluator);
-    RigExecRigPose pose;
+    std::shared_ptr<const RigExecRigPose> pose;
     {
         RigExecProfileScope scope(MutableProfiler(), "Imaging.WarmEvaluate",
                                   "imaging");
-        pose = _evaluator->Evaluate(time);
+        pose = std::make_shared<RigExecRigPose>(_evaluator->Evaluate(time));
     }
-    return pose.valid &&
+    return pose->valid &&
            _cache->MemoizeLive(RigExecCacheCall(*_evaluator, *_sampling, time,
                                                 _evaluationOverrides,
                                                 _upstreamInputs),
@@ -448,11 +451,8 @@ RigExecImagingBridge::SnapshotAtTimeWithoutPublishing(
                           _cache->mode() != RigExecFrameCacheMode::Off;
     const RigExecCacheCall cacheCall(*_evaluator, *_sampling, time,
                                      _evaluationOverrides, _upstreamInputs);
-    RigExecRigPose pose;
+    std::shared_ptr<const RigExecRigPose> pose;
     if (useCache && _cache->QueryLookup(cacheCall, &pose)) {
-        // Stored for an earlier visit: re-stamped as the published serve
-        // restamps through the cache's typed outcome.
-        pose.time = time;
         if (_cache->verifyRequested()) {
             // RIGEXEC_FRAME_CACHE_VERIFY=1: proven against a live
             // evaluation, and a mismatch answers (and repairs the entry
@@ -461,8 +461,8 @@ RigExecImagingBridge::SnapshotAtTimeWithoutPublishing(
             if (evaluated) {
                 *evaluated = true;
             }
-            const RigExecShadowVerdict verdict =
-                RigExecVerifyHitWithLive(pose, [&live]() { return live; });
+            RigExecShadowVerdict verdict =
+                RigExecVerifyHitWithLive(*pose, [&live]() { return live; });
             if (!verdict.match && verdict.mismatches > 0) {
                 TF_WARN("rigExec: frame-cache entry at %s mismatches live "
                         "evaluation (points at frame); answering live and "
@@ -471,7 +471,8 @@ RigExecImagingBridge::SnapshotAtTimeWithoutPublishing(
                             ? "default"
                             : std::to_string(time.GetValue()).c_str(),
                         verdict.report.c_str());
-                pose = verdict.poseToServe;
+                pose = std::make_shared<RigExecRigPose>(
+                    std::move(verdict.poseToServe));
                 _cache->MemoizeLive(cacheCall, pose);
             }
         }
@@ -479,13 +480,13 @@ RigExecImagingBridge::SnapshotAtTimeWithoutPublishing(
         if (!evaluate) {
             return false;
         }
-        pose = _evaluator->Evaluate(time);
+        pose = std::make_shared<RigExecRigPose>(_evaluator->Evaluate(time));
         if (evaluated) {
             *evaluated = true;
         }
-        if (!pose.valid) {
-            if (diagnostic && !pose.diagnostics.empty()) {
-                *diagnostic = pose.diagnostics.front();
+        if (!pose->valid) {
+            if (diagnostic && !pose->diagnostics.empty()) {
+                *diagnostic = pose->diagnostics.front();
             }
             return false;
         }
@@ -496,8 +497,8 @@ RigExecImagingBridge::SnapshotAtTimeWithoutPublishing(
     auto querySnapshot = std::make_shared<RigExecImagingSnapshot>();
     const RigExecSnapshotCall snapCall =
         _MakeSnapshotCall(_stage, *_evaluator, time);
-    _snapshot->_Build(snapCall, pose, RigExecSnapshotBuildMode::Query,
-                      querySnapshot.get());
+    _snapshot->_Build(snapCall, RigExecPoseFrameReader(*pose),
+                      RigExecSnapshotBuildMode::Query, querySnapshot.get());
     *snapshot = std::move(querySnapshot);
     return true;
 }
@@ -560,12 +561,12 @@ RigExecImagingBridge::EvaluateAndPublishResult(UsdTimeCode time)
         }
     }
     // 1. Evaluation always completes before publication.
-    const RigExecRigPose pose = [&] {
+    const std::shared_ptr<const RigExecRigPose> pose = [&] {
         RigExecProfileScope scope(MutableProfiler(), "Imaging.Evaluate",
                                   "imaging");
-        return _evaluator->Evaluate(time);
+        return std::make_shared<RigExecRigPose>(_evaluator->Evaluate(time));
     }();
-    if (!pose.valid) {
+    if (!pose->valid) {
         // A rig that cannot evaluate STOPS DRIVING THE SCENE.
         // Returning here without publishing would leave the last good
         // generation current, and every consumer would keep serving it (a
@@ -589,7 +590,7 @@ RigExecImagingBridge::EvaluateAndPublishResult(UsdTimeCode time)
     // 2-4. Snapshot publication, shared with the hit path so the two cannot
     // publish differently; then memoization into the frame cache (reads
     // on and no drag -- see step 0).
-    _PublishPoseSnapshot(time, pose, &result);
+    _PublishPoseSnapshot(time, *pose, &result);
     if (useCache) {
         _cache->MemoizeLive(RigExecCacheCall(*_evaluator, *_sampling, time,
                                              _evaluationOverrides,
@@ -614,8 +615,8 @@ RigExecImagingBridge::_PublishServedPose(UsdTimeCode time,
                                       "imaging");
             live = _evaluator->Evaluate(time);
         }
-        const RigExecShadowVerdict verdict =
-            RigExecVerifyHitWithLive(serve.pose, [&live]() { return live; });
+        RigExecShadowVerdict verdict =
+            RigExecVerifyHitWithLive(*serve.pose, [&live]() { return live; });
         if (!verdict.match && verdict.mismatches > 0) {
             TF_WARN("rigExec: frame-cache hit at %s mismatches live "
                     "evaluation; serving live and repairing the entry:\n%s",
@@ -627,7 +628,8 @@ RigExecImagingBridge::_PublishServedPose(UsdTimeCode time,
                 _cache->MemoizeLive(RigExecCacheCall(*_evaluator, *_sampling,
                                                      time, _evaluationOverrides,
                                                      _upstreamInputs),
-                                    verdict.poseToServe);
+                                    std::make_shared<RigExecRigPose>(
+                                        std::move(verdict.poseToServe)));
             }
             result->cacheHit = false;
             return;
@@ -635,14 +637,14 @@ RigExecImagingBridge::_PublishServedPose(UsdTimeCode time,
         // A match serves the cached pose (proven identical); an unverified
         // shadow (live failed) serves it too, advisory-only. Either way the
         // evaluator ran, so cacheHit stays false.
-        _PublishPoseSnapshot(time, serve.pose, result);
+        _PublishPoseSnapshot(time, *serve.pose, result);
         result->cacheHit = false;
         return;
     }
-    // The cache already recorded the provenance alias and re-stamped the
-    // pose for this frame; publication runs through the single snapshot
-    // path, and no evaluator ran.
-    _PublishPoseSnapshot(time, serve.pose, result);
+    // The cache already recorded the provenance alias and timed the pose
+    // for this frame; publication runs through the single snapshot path,
+    // and no evaluator ran.
+    _PublishPoseSnapshot(time, *serve.pose, result);
     result->cacheHit = true;
 }
 

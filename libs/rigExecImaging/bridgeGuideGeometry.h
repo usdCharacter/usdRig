@@ -22,7 +22,7 @@
 
 namespace rigExec {
 
-struct RigExecRigPose;
+class RigExecFrameReader;
 
 // Guide names are interned before frame publication.
 extern const TfToken _tControlType;
@@ -108,8 +108,8 @@ TfToken _ReadGuidePurpose(const UsdPrim &prim);
 // cannot supply one. A property-mover result for the source wins over its
 // authored value; a value the rig published on the attribute itself wins
 // over both.
-bool _ReadConnectedValue(const UsdAttribute &attr, const RigExecRigPose &pose,
-                         VtValue *held);
+bool _ReadConnectedValue(const UsdAttribute &attr,
+                         const RigExecFrameReader &frame, VtValue *held);
 
 // The scalar a float OR double VtValue holds, or nothing when it holds
 // neither or the value is not finite.
@@ -117,7 +117,7 @@ bool _HeldScalar(const VtValue &held, double *value);
 
 // The prim's authored guide styling (purpose, color, opacity) into
 // \p published at the pose's time, resolving connected values.
-void _ReadGuideStyle(const UsdPrim &prim, const RigExecRigPose &pose,
+void _ReadGuideStyle(const UsdPrim &prim, const RigExecFrameReader &frame,
                      RigExecPublishedPrim *published);
 
 // The volume's rigid ASSET-space placement, or nothing when it cannot

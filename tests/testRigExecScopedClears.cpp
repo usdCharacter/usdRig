@@ -18,11 +18,13 @@
 // Registered plain (baked and dynamic in turn), under the parity entries,
 // and under RIGEXEC_VERIFY_SCOPED_CLEARS=1, where every evaluator is shadowed
 // by one that drops the caches whole and the two poses are compared.
-#include "rigExec/inputReplay.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/profiler.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/api/evaluationObserver.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/api/profiler.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/evaluatorTesting.h"
 
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/plug/registry.h"
@@ -129,7 +131,7 @@ ChainPartsRan(const RigExecRigEvaluator &evaluator, const SdfPath &target)
         return parts;
     const auto &B = rigExec::RigExecBakedProgramAccess::StepGraph(*program);
     for (const auto &entry : evaluator.GetLastOpTrace()) {
-        if (entry.kind != "PropertyRevision")
+        if (entry.kind != "OpNode")
             continue;
         CHECK(entry.step < B.opGraph.ops.size());
         if (entry.step >= B.opGraph.ops.size())
@@ -139,16 +141,15 @@ ChainPartsRan(const RigExecRigEvaluator &evaluator, const SdfPath &target)
         if (body >= B.steps.size())
             continue;
         const auto &step = B.steps[body];
-        CHECK(step.kind == RigExecBakedStepKind::PropertyRevision);
-        CHECK(step.object >= 0 &&
-              size_t(step.object) < B.propertyChains.size());
-        if (step.object < 0 || size_t(step.object) >= B.propertyChains.size())
+        size_t chainIndex = 0, part = 0;
+        CHECK(RigExecBakedPropertyPartOf(B, step, &chainIndex, &part));
+        if (!RigExecBakedPropertyPartOf(B, step, &chainIndex, &part))
             continue;
-        const auto &chain = B.propertyChains[size_t(step.object)];
+        const auto &chain = B.propertyChains[chainIndex];
         if (chain.target != target)
             continue;
-        CHECK(step.part >= 0 && size_t(step.part) <= chain.revisions.size());
-        CHECK(parts.insert(step.part).second);
+        CHECK(part >= 1 && part <= chain.revisions.size());
+        CHECK(parts.insert(int(part)).second);
     }
     return parts;
 }
@@ -396,7 +397,7 @@ TestAnInputsMethodEditOnASkinMover()
     const VtVec3fArray linear = Deformed(pose, kSkinTarget);
     CHECK(linear.size() == kSkinPoints);
     CHECK(evaluator->GetBakedProgram() != nullptr);
-    CHECK(evaluator->GetSkinTopologyCacheSize() > 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(*evaluator) > 0);
 
     // The mesh the layout deforms, and the mover's own envelope: neither is
     // a layout input, so the layout stays cached -- the case "the notice
@@ -404,11 +405,11 @@ TestAnInputsMethodEditOnASkinMover()
     stage->GetPrimAtPath(kSkinTarget.GetPrimPath())
         .GetAttribute(TfToken("foo"))
         .Set(1.0f);
-    CHECK(evaluator->GetSkinTopologyCacheSize() > 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(*evaluator) > 0);
     stage->GetPrimAtPath(kSkin)
         .GetAttribute(TfToken("inputs:defaultWeight"))
         .Set(1.0f);
-    CHECK(evaluator->GetSkinTopologyCacheSize() > 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(*evaluator) > 0);
     pose = evaluator->Evaluate(UsdTimeCode::Default());
     CHECK(Deformed(pose, kSkinTarget) == linear);
     CheckAgreesWithFresh(std::string("skin, unrelated edits, ") + "graph",
@@ -419,12 +420,12 @@ TestAnInputsMethodEditOnASkinMover()
     stage->GetPrimAtPath(kSkin)
         .GetAttribute(TfToken("inputs:method"))
         .Set(TfToken("dualQuaternion"));
-    CHECK(evaluator->GetSkinTopologyCacheSize() == 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(*evaluator) == 0);
     pose = evaluator->Evaluate(UsdTimeCode::Default());
     const VtVec3fArray dual = Deformed(pose, kSkinTarget);
     CHECK(dual.size() == kSkinPoints);
     CHECK(dual != linear);
-    CHECK(evaluator->GetSkinTopologyCacheSize() > 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(*evaluator) > 0);
     CheckAgreesWithFresh(std::string("skin, inputs:method, ") + "graph", stage,
                          pose);
 
@@ -437,7 +438,7 @@ TestAnInputsMethodEditOnASkinMover()
     stage->GetPrimAtPath(kSkin)
         .GetAttribute(TfToken("rigExec:jointWeights"))
         .Set(weights);
-    CHECK(evaluator->GetSkinTopologyCacheSize() == 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(*evaluator) == 0);
     pose = evaluator->Evaluate(UsdTimeCode::Default());
     CHECK(Deformed(pose, kSkinTarget) != dual);
     CheckAgreesWithFresh(std::string("skin, weight paint, ") + "graph", stage,
@@ -519,7 +520,7 @@ TestABlendSampleEdit()
         CHECK(points[2] == GfVec3f(1, 1, 1));
         CHECK(points[0] == GfVec3f(1, 0, 0));
     }
-    CHECK(evaluator->GetBlendSampleCacheSize() == 2);
+    CHECK(RigExecEvaluatorTesting::BlendSampleCacheSize(*evaluator) == 2);
 
     // One shape's offsets: that sample's cached shape goes, the other's
     // stays. Offsets are topology, so the program rebuilds.
@@ -529,12 +530,12 @@ TestABlendSampleEdit()
         .Set(VtVec3fArray{GfVec3f(0, 0, 2)});
     CHECK(evaluator->GetLastNoticeDisposition() ==
           RigExecNoticeDisposition::Stale);
-    CHECK(evaluator->GetBlendSampleCacheSize() == 1);
+    CHECK(RigExecEvaluatorTesting::BlendSampleCacheSize(*evaluator) == 1);
     pose = evaluator->Evaluate(UsdTimeCode::Default());
     CHECK(evaluator->GetBakedProgramBuildCount() == builds + 1);
     points = Deformed(pose, kBlendTarget);
     CHECK(points.size() == 4 && points[2] == GfVec3f(1, 1, 2));
-    CHECK(evaluator->GetBlendSampleCacheSize() == 2);
+    CHECK(RigExecEvaluatorTesting::BlendSampleCacheSize(*evaluator) == 2);
     CheckAgreesWithFresh(std::string("blend shape offsets, ") + "graph", stage,
                          pose);
 
@@ -542,7 +543,7 @@ TestABlendSampleEdit()
     stage->GetPrimAtPath(SdfPath("/Asset/Rig/Channels/Push/Full"))
         .GetAttribute(TfToken("rigExec:activation"))
         .Set(0.5f);
-    CHECK(evaluator->GetBlendSampleCacheSize() == 1);
+    CHECK(RigExecEvaluatorTesting::BlendSampleCacheSize(*evaluator) == 1);
     pose = evaluator->Evaluate(UsdTimeCode::Default());
     CheckAgreesWithFresh(std::string("blend sample activation, ") + "graph",
                          stage, pose);
@@ -551,7 +552,7 @@ TestABlendSampleEdit()
     stage->GetPrimAtPath(kBlendTarget.GetPrimPath())
         .GetAttribute(TfToken("points"))
         .Set(VtVec3fArray{{0, 0, 0}, {2, 0, 0}, {2, 2, 0}, {0, 2, 0}});
-    CHECK(evaluator->GetBlendSampleCacheSize() == 0);
+    CHECK(RigExecEvaluatorTesting::BlendSampleCacheSize(*evaluator) == 0);
     pose = evaluator->Evaluate(UsdTimeCode::Default());
     points = Deformed(pose, kBlendTarget);
     CHECK(points.size() == 4 && points[2] == GfVec3f(2, 2, 2));
@@ -625,6 +626,95 @@ TestASparseLayoutIsBuiltOncePerCompiledRig()
     CHECK(evaluator->GetBakedProgramBuildCount() == builds);
 }
 
+// Records the points an evaluator reports, in order.
+class Recorder : public RigExecEvaluationObserver {
+public:
+    explicit Recorder(std::vector<std::string> *log) : _log(log)
+    {
+    }
+    void CompileStarting(RigExecRigEvaluator &,
+                         std::vector<std::string> *) override
+    {
+        _log->push_back("compile starting");
+    }
+    void CompileFinished(RigExecRigEvaluator &, bool compiled,
+                         std::vector<std::string> *) override
+    {
+        _log->push_back(compiled ? "compiled" : "compile failed");
+    }
+    void FrameStarting(RigExecRigEvaluator &, UsdTimeCode) override
+    {
+        _log->push_back("frame starting");
+    }
+    void FrameEvaluated(RigExecRigEvaluator &, UsdTimeCode,
+                        RigExecRigPose &pose) override
+    {
+        _log->push_back("frame evaluated");
+        pose.diagnostics.push_back("observed");
+    }
+    void FrameEnded(RigExecRigEvaluator &) override
+    {
+        _log->push_back("frame ended");
+    }
+    void OptionsChanging(RigExecRigEvaluator &, bool,
+                         bool publishWeightFields) override
+    {
+        _log->push_back(publishWeightFields ? "options publish"
+                                            : "options quiet");
+    }
+    void BakedRoleModeChanging(RigExecRigEvaluator &, RigExecBakedRoleMode,
+                               const std::set<SdfPath> &) override
+    {
+        _log->push_back("baked role mode");
+    }
+    void InteractiveOverridesChanging(
+        RigExecRigEvaluator &evaluator,
+        const std::vector<RigExecValueOverride> *overrides) override
+    {
+        // Still the old set: the call comes before the change.
+        _log->push_back(
+            evaluator.GetInteractiveOverrides().empty()
+                ? (overrides ? "overrides set" : "overrides cleared")
+                : "overrides changed late");
+    }
+    void
+    UpstreamInputsChanging(RigExecRigEvaluator &,
+                           const std::vector<RigExecValueOverride> &) override
+    {
+        _log->push_back("upstream");
+    }
+
+private:
+    std::vector<std::string> *_log;
+};
+
+// An installed observer is told of each point in the order the calls made
+// them, and what it adds to a pose reaches the caller.
+void
+TestObserverPoints()
+{
+    const UsdStageRefPtr stage = Open(kChainFixture);
+    RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+    std::vector<std::string> log;
+    evaluator.AddEvaluationObserver(std::make_unique<Recorder>(&log));
+    CHECK(evaluator.Compile());
+    evaluator.SetPublishWeightFields(true);
+    evaluator.SetBakedRoleMode(RigExecBakedRoleMode::Live, {});
+    evaluator.SetInteractiveOverrides({});
+    evaluator.ClearInteractiveOverrides();
+    evaluator.SetUpstreamInputs({});
+    const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
+    CHECK((log == std::vector<std::string>{"compile starting", "compiled",
+                                           "options publish", "baked role mode",
+                                           "overrides set", "overrides cleared",
+                                           "upstream", "frame starting",
+                                           "frame evaluated", "frame ended"}));
+    if (log.size() != 10)
+        for (const std::string &line : log)
+            std::printf("    observed: %s\n", line.c_str());
+    CHECK(std::find(pose.diagnostics.begin(), pose.diagnostics.end(),
+                    "observed") != pose.diagnostics.end());
+}
 } // namespace
 
 int
@@ -636,6 +726,7 @@ main()
         TestAnInputsMethodEditOnASkinMover();
         TestABlendSampleEdit();
         TestASparseLayoutIsBuiltOncePerCompiledRig();
+        TestObserverPoints();
     }
     if (failures) {
         std::printf("testRigExecScopedClears: %d failure(s)\n", failures);

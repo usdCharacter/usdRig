@@ -412,6 +412,42 @@ struct WindowedOp;
 struct WindowedOpBuilder;
 struct RigExecWireWindowedOp;
 
+struct ManifestEntry;
+struct ManifestEntryBuilder;
+struct RigExecWireManifestEntry;
+
+struct Manifest;
+struct ManifestBuilder;
+struct RigExecWireManifest;
+
+struct OpNodeInput;
+struct OpNodeInputBuilder;
+struct RigExecWireOpNodeInput;
+
+struct OpNode;
+struct OpNodeBuilder;
+struct RigExecWireOpNode;
+
+struct OpGraphOutput;
+struct OpGraphOutputBuilder;
+struct RigExecWireOpGraphOutput;
+
+struct OpChain;
+struct OpChainBuilder;
+struct RigExecWireOpChain;
+
+struct OpLookup;
+struct OpLookupBuilder;
+struct RigExecWireOpLookup;
+
+struct OpHostOutput;
+struct OpHostOutputBuilder;
+struct RigExecWireOpHostOutput;
+
+struct OpGraph;
+struct OpGraphBuilder;
+struct RigExecWireOpGraph;
+
 struct File;
 struct FileBuilder;
 struct RigExecWireFile;
@@ -635,6 +671,24 @@ inline const ::flatbuffers::TypeTable *ProviderRoutedInputTypeTable();
 inline const ::flatbuffers::TypeTable *ProviderProgramTypeTable();
 
 inline const ::flatbuffers::TypeTable *WindowedOpTypeTable();
+
+inline const ::flatbuffers::TypeTable *ManifestEntryTypeTable();
+
+inline const ::flatbuffers::TypeTable *ManifestTypeTable();
+
+inline const ::flatbuffers::TypeTable *OpNodeInputTypeTable();
+
+inline const ::flatbuffers::TypeTable *OpNodeTypeTable();
+
+inline const ::flatbuffers::TypeTable *OpGraphOutputTypeTable();
+
+inline const ::flatbuffers::TypeTable *OpChainTypeTable();
+
+inline const ::flatbuffers::TypeTable *OpLookupTypeTable();
+
+inline const ::flatbuffers::TypeTable *OpHostOutputTypeTable();
+
+inline const ::flatbuffers::TypeTable *OpGraphTypeTable();
 
 inline const ::flatbuffers::TypeTable *FileTypeTable();
 
@@ -1007,11 +1061,15 @@ enum class SlotDomain : uint8_t {
   ConstraintInputs = 36,
   SwitchFrame = 37,
   RequiredStageFramesAdmission = 38,
+  /// Format 36: an op value or a range chain's plan, and one vertex group
+  /// of an op value a range chain member writes.
+  OpValue = 39,
+  OpGroupValue = 40,
   MIN = Avars,
-  MAX = RequiredStageFramesAdmission
+  MAX = OpGroupValue
 };
 
-inline const SlotDomain (&EnumValuesSlotDomain())[39] {
+inline const SlotDomain (&EnumValuesSlotDomain())[41] {
   static const SlotDomain values[] = {
     SlotDomain::Avars,
     SlotDomain::PoseBase,
@@ -1051,13 +1109,15 @@ inline const SlotDomain (&EnumValuesSlotDomain())[39] {
     SlotDomain::ChainInput,
     SlotDomain::ConstraintInputs,
     SlotDomain::SwitchFrame,
-    SlotDomain::RequiredStageFramesAdmission
+    SlotDomain::RequiredStageFramesAdmission,
+    SlotDomain::OpValue,
+    SlotDomain::OpGroupValue
   };
   return values;
 }
 
 inline const char * const *EnumNamesSlotDomain() {
-  static const char * const names[40] = {
+  static const char * const names[42] = {
     "Avars",
     "PoseBase",
     "PoseFin",
@@ -1097,13 +1157,15 @@ inline const char * const *EnumNamesSlotDomain() {
     "ConstraintInputs",
     "SwitchFrame",
     "RequiredStageFramesAdmission",
+    "OpValue",
+    "OpGroupValue",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameSlotDomain(SlotDomain e) {
-  if (::flatbuffers::IsOutRange(e, SlotDomain::Avars, SlotDomain::RequiredStageFramesAdmission)) return "";
+  if (::flatbuffers::IsOutRange(e, SlotDomain::Avars, SlotDomain::OpGroupValue)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesSlotDomain()[index];
 }
@@ -1111,113 +1173,143 @@ inline const char *EnumNameSlotDomain(SlotDomain e) {
 /// RigExecBakedStepKind, in the same order. SnapshotFinals (8) is reserved:
 /// never written, and Open refuses a file that holds one.
 enum class StepKind : uint8_t {
-  ComposeSubtree = 0,
-  Solve = 1,
-  SolverCommit = 2,
-  Constraint = 3,
-  CommitDelta = 4,
-  PropagateChunk = 5,
-  CommitApply = 6,
-  ProviderMatrix = 7,
+  /// Reserved. Open refuses it.
+  ReservedSolve = 1,
+  /// Reserved. Open refuses it.
+  ReservedSolverCommit = 2,
+  /// Reserved. Open refuses it.
+  ReservedConstraint = 3,
+  /// Reserved. Open refuses them.
+  ReservedCommitDelta = 4,
+  ReservedPropagateChunk = 5,
+  ReservedCommitApply = 6,
+  /// Reserved. Open refuses it.
+  ReservedProviderMatrix = 7,
   SnapshotFinals = 8,
-  PoseInterpolator = 9,
-  VolumePlacements = 10,
-  WeightPacket = 11,
+  /// Reserved. Open refuses it.
+  ReservedPoseInterpolator = 9,
+  /// Reserved. Open refuses it.
+  ReservedVolumePlacements = 10,
+  /// Reserved. Open refuses it.
+  ReservedWeightPacket = 11,
   InfluenceFold = 12,
   RevisionStatic = 13,
   RevisionChunk = 14,
   RevisionFuse = 15,
   ChainStatus = 16,
   Derived = 17,
-  FrameMatrix = 18,
-  PropertyRevision = 19,
-  RestCompose = 20,
-  LadderCompose = 21,
+  /// Reserved. Open refuses it.
+  ReservedFrameMatrix = 18,
+  /// Reserved. Open refuses it.
+  ReservedPropertyRevision = 19,
+  /// Reserved. Open refuses it.
+  ReservedRestCompose = 20,
+  /// Reserved. Open refuses it.
+  ReservedLadderCompose = 21,
   SkinTopology = 22,
-  WeightField = 23,
-  SpaceExpression = 24,
+  /// Reserved. Open refuses it.
+  ReservedWeightField = 23,
+  /// Reserved. Open refuses it.
+  ReservedSpaceExpression = 24,
   ChainInputs = 25,
-  AvarInputs = 26,
-  SpaceCheckpoint = 27,
-  ProviderRefresh = 28,
-  MIN = ComposeSubtree,
-  MAX = ProviderRefresh
+  /// Reserved. Open refuses it.
+  ReservedAvarInputs = 26,
+  /// Reserved. Open refuses it.
+  ReservedSpaceCheckpoint = 27,
+  /// Reserved. Open refuses it.
+  ReservedProviderRefresh = 28,
+  /// Reserved. Open refuses it.
+  ReservedOpGraph = 29,
+  /// Format 36: File.op_graph's nodes as steps: one node that does not run
+  /// in ranges, a range chain's head, and one (segment, vertex group) of
+  /// a range chain (part = segment * groups + group).
+  OpNode = 30,
+  OpChainHead = 31,
+  OpChainRange = 32,
+  MIN = ReservedSolve,
+  MAX = OpChainRange
 };
 
-inline const StepKind (&EnumValuesStepKind())[29] {
+inline const StepKind (&EnumValuesStepKind())[32] {
   static const StepKind values[] = {
-    StepKind::ComposeSubtree,
-    StepKind::Solve,
-    StepKind::SolverCommit,
-    StepKind::Constraint,
-    StepKind::CommitDelta,
-    StepKind::PropagateChunk,
-    StepKind::CommitApply,
-    StepKind::ProviderMatrix,
+    StepKind::ReservedSolve,
+    StepKind::ReservedSolverCommit,
+    StepKind::ReservedConstraint,
+    StepKind::ReservedCommitDelta,
+    StepKind::ReservedPropagateChunk,
+    StepKind::ReservedCommitApply,
+    StepKind::ReservedProviderMatrix,
     StepKind::SnapshotFinals,
-    StepKind::PoseInterpolator,
-    StepKind::VolumePlacements,
-    StepKind::WeightPacket,
+    StepKind::ReservedPoseInterpolator,
+    StepKind::ReservedVolumePlacements,
+    StepKind::ReservedWeightPacket,
     StepKind::InfluenceFold,
     StepKind::RevisionStatic,
     StepKind::RevisionChunk,
     StepKind::RevisionFuse,
     StepKind::ChainStatus,
     StepKind::Derived,
-    StepKind::FrameMatrix,
-    StepKind::PropertyRevision,
-    StepKind::RestCompose,
-    StepKind::LadderCompose,
+    StepKind::ReservedFrameMatrix,
+    StepKind::ReservedPropertyRevision,
+    StepKind::ReservedRestCompose,
+    StepKind::ReservedLadderCompose,
     StepKind::SkinTopology,
-    StepKind::WeightField,
-    StepKind::SpaceExpression,
+    StepKind::ReservedWeightField,
+    StepKind::ReservedSpaceExpression,
     StepKind::ChainInputs,
-    StepKind::AvarInputs,
-    StepKind::SpaceCheckpoint,
-    StepKind::ProviderRefresh
+    StepKind::ReservedAvarInputs,
+    StepKind::ReservedSpaceCheckpoint,
+    StepKind::ReservedProviderRefresh,
+    StepKind::ReservedOpGraph,
+    StepKind::OpNode,
+    StepKind::OpChainHead,
+    StepKind::OpChainRange
   };
   return values;
 }
 
 inline const char * const *EnumNamesStepKind() {
-  static const char * const names[30] = {
-    "ComposeSubtree",
-    "Solve",
-    "SolverCommit",
-    "Constraint",
-    "CommitDelta",
-    "PropagateChunk",
-    "CommitApply",
-    "ProviderMatrix",
+  static const char * const names[33] = {
+    "ReservedSolve",
+    "ReservedSolverCommit",
+    "ReservedConstraint",
+    "ReservedCommitDelta",
+    "ReservedPropagateChunk",
+    "ReservedCommitApply",
+    "ReservedProviderMatrix",
     "SnapshotFinals",
-    "PoseInterpolator",
-    "VolumePlacements",
-    "WeightPacket",
+    "ReservedPoseInterpolator",
+    "ReservedVolumePlacements",
+    "ReservedWeightPacket",
     "InfluenceFold",
     "RevisionStatic",
     "RevisionChunk",
     "RevisionFuse",
     "ChainStatus",
     "Derived",
-    "FrameMatrix",
-    "PropertyRevision",
-    "RestCompose",
-    "LadderCompose",
+    "ReservedFrameMatrix",
+    "ReservedPropertyRevision",
+    "ReservedRestCompose",
+    "ReservedLadderCompose",
     "SkinTopology",
-    "WeightField",
-    "SpaceExpression",
+    "ReservedWeightField",
+    "ReservedSpaceExpression",
     "ChainInputs",
-    "AvarInputs",
-    "SpaceCheckpoint",
-    "ProviderRefresh",
+    "ReservedAvarInputs",
+    "ReservedSpaceCheckpoint",
+    "ReservedProviderRefresh",
+    "ReservedOpGraph",
+    "OpNode",
+    "OpChainHead",
+    "OpChainRange",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameStepKind(StepKind e) {
-  if (::flatbuffers::IsOutRange(e, StepKind::ComposeSubtree, StepKind::ProviderRefresh)) return "";
-  const size_t index = static_cast<size_t>(e);
+  if (::flatbuffers::IsOutRange(e, StepKind::ReservedSolve, StepKind::OpChainRange)) return "";
+  const size_t index = static_cast<size_t>(e) - static_cast<size_t>(StepKind::ReservedSolve);
   return EnumNamesStepKind()[index];
 }
 
@@ -2001,33 +2093,41 @@ enum class ConstraintFlags : uint8_t {
   WorldUpRotationOnly = 2,
   /// rigExec:weightBlend = "radial" on a transform-domain matrix mover.
   RadialBlend = 4,
+  /// rigExec:orientationMode = "preserve" on a SingleChainIK constraint
+  /// (format 34).
+  PreserveJointOrientation = 8,
   NONE = 0,
-  ANY = 7
+  ANY = 15
 };
 FLATBUFFERS_DEFINE_BITMASK_OPERATORS(ConstraintFlags, uint8_t)
 
-inline const ConstraintFlags (&EnumValuesConstraintFlags())[3] {
+inline const ConstraintFlags (&EnumValuesConstraintFlags())[4] {
   static const ConstraintFlags values[] = {
     ConstraintFlags::BlendShear,
     ConstraintFlags::WorldUpRotationOnly,
-    ConstraintFlags::RadialBlend
+    ConstraintFlags::RadialBlend,
+    ConstraintFlags::PreserveJointOrientation
   };
   return values;
 }
 
 inline const char * const *EnumNamesConstraintFlags() {
-  static const char * const names[5] = {
+  static const char * const names[9] = {
     "BlendShear",
     "WorldUpRotationOnly",
     "",
     "RadialBlend",
+    "",
+    "",
+    "",
+    "PreserveJointOrientation",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameConstraintFlags(ConstraintFlags e) {
-  if (::flatbuffers::IsOutRange(e, ConstraintFlags::BlendShear, ConstraintFlags::RadialBlend)) return "";
+  if (::flatbuffers::IsOutRange(e, ConstraintFlags::BlendShear, ConstraintFlags::PreserveJointOrientation)) return "";
   const size_t index = static_cast<size_t>(e) - static_cast<size_t>(ConstraintFlags::BlendShear);
   return EnumNamesConstraintFlags()[index];
 }
@@ -3091,8 +3191,7 @@ struct SlotRange::Traits {
 
 /// One provider frame as one writer of its stack (a constraint or a solver
 /// commit) left it, for an AtPrim read phase on rigExec:transform. Its
-/// FrameMatrix step (object = this record's index) writes the matrix and a
-/// valid byte on every run.
+/// FrameMatrix op step writes the matrix and a valid byte on every run.
 FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) FrameRecord FLATBUFFERS_FINAL_CLASS {
  private:
   uint32_t slot_;
@@ -5432,7 +5531,7 @@ inline ::flatbuffers::Offset<Constants> CreateConstantsDirect(
 
 struct RigExecWireStep : public ::flatbuffers::NativeTable {
   typedef Step TableType;
-  rigExec::fb::StepKind kind = rigExec::fb::StepKind::ComposeSubtree;
+  rigExec::fb::StepKind kind = rigExec::fb::StepKind::OpNode;
   int32_t object = -1;
   int32_t part = -1;
   std::vector<rigExec::fb::SlotRange> reads{};
@@ -5494,18 +5593,16 @@ struct Step FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_SEMANTICPREDECESSORKEYS = 52
   };
   rigExec::fb::StepKind kind() const {
-    return static_cast<rigExec::fb::StepKind>(GetField<uint8_t>(VT_KIND, 0));
+    return static_cast<rigExec::fb::StepKind>(GetField<uint8_t>(VT_KIND, 30));
   }
   /// What the step works on, by kind: a compose group, a solver, a commit,
-  /// a provider slot (ProviderMatrix; VolumePlacements, the volume's slot),
-  /// a pose interpolator, a weight object, a revision id, a chain, a
-  /// derived id, or a pose.frame_records index (FrameMatrix).
+  /// a pose interpolator, a revision id, a chain, or a
+  /// derived id.
   int32_t object() const {
     return GetField<int32_t>(VT_OBJECT, -1);
   }
   /// The part of it: a RevisionChunk's vertex chunk, a PropagateChunk's
-  /// pair chunk, a ProviderMatrix's phase (1 final, 0 base), 1 for the
-  /// per-volume VolumePlacements step; -1 where unused.
+  /// pair chunk; -1 where unused.
   int32_t part() const {
     return GetField<int32_t>(VT_PART, -1);
   }
@@ -5627,7 +5724,7 @@ struct StepBuilder {
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
   void add_kind(rigExec::fb::StepKind kind) {
-    fbb_.AddElement<uint8_t>(Step::VT_KIND, static_cast<uint8_t>(kind), 0);
+    fbb_.AddElement<uint8_t>(Step::VT_KIND, static_cast<uint8_t>(kind), 30);
   }
   void add_object(int32_t object) {
     fbb_.AddElement<int32_t>(Step::VT_OBJECT, object, -1);
@@ -5712,7 +5809,7 @@ struct StepBuilder {
 
 inline ::flatbuffers::Offset<Step> CreateStep(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    rigExec::fb::StepKind kind = rigExec::fb::StepKind::ComposeSubtree,
+    rigExec::fb::StepKind kind = rigExec::fb::StepKind::OpNode,
     int32_t object = -1,
     int32_t part = -1,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::SlotRange *>> reads = 0,
@@ -5771,7 +5868,7 @@ struct Step::Traits {
 
 inline ::flatbuffers::Offset<Step> CreateStepDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    rigExec::fb::StepKind kind = rigExec::fb::StepKind::ComposeSubtree,
+    rigExec::fb::StepKind kind = rigExec::fb::StepKind::OpNode,
     int32_t object = -1,
     int32_t part = -1,
     const std::vector<rigExec::fb::SlotRange> *reads = nullptr,
@@ -7615,17 +7712,14 @@ struct RigExecWirePoseInterpolator : public ::flatbuffers::NativeTable {
   int32_t weightEnd = 0;
   std::vector<int32_t> poseSlots{};
   std::vector<int32_t> disabledSlots{};
-  std::unique_ptr<rigExec::fb::RigExecWireRbf> solver{};
   bool enableTranslation = false;
   std::vector<rigExec::fb::RigExecWireInput> valueInputs{};
-  std::unique_ptr<rigExec::fb::RigExecWireRbfMethod> method{};
   std::vector<int32_t> extraDriverSlots{};
   std::vector<int32_t> extraParentSlots{};
-  std::unique_ptr<rigExec::fb::RigExecWireMlNetwork> network{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> mask{};
-  std::unique_ptr<rigExec::fb::RigExecWireAnimatedMaps> maps{};
   std::vector<int32_t> primvarSlots{};
   std::vector<int32_t> primvarSources{};
+  uint8_t solve = 0;
   RigExecWirePoseInterpolator() = default;
   RigExecWirePoseInterpolator(const RigExecWirePoseInterpolator &o);
   RigExecWirePoseInterpolator(RigExecWirePoseInterpolator&&) FLATBUFFERS_NOEXCEPT = default;
@@ -7649,17 +7743,14 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_WEIGHTEND = 16,
     VT_POSESLOTS = 18,
     VT_DISABLEDSLOTS = 20,
-    VT_SOLVER = 22,
     VT_ENABLETRANSLATION = 24,
     VT_VALUEINPUTS = 26,
-    VT_METHOD = 28,
     VT_EXTRADRIVERSLOTS = 30,
     VT_EXTRAPARENTSLOTS = 32,
-    VT_NETWORK = 34,
     VT_MASK = 36,
-    VT_MAPS = 38,
     VT_PRIMVARSLOTS = 40,
-    VT_PRIMVARSOURCES = 42
+    VT_PRIMVARSOURCES = 42,
+    VT_SOLVE = 44
   };
   uint32_t path() const {
     return GetField<uint32_t>(VT_PATH, 0);
@@ -7689,9 +7780,6 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<int32_t> *disabledSlots() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_DISABLEDSLOTS);
   }
-  const rigExec::fb::Rbf *solver() const {
-    return GetPointer<const rigExec::fb::Rbf *>(VT_SOLVER);
-  }
   /// Whether the solve measures the driver's translation as well.
   bool enableTranslation() const {
     return GetField<uint8_t>(VT_ENABLETRANSLATION, 0) != 0;
@@ -7699,10 +7787,6 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// A numeric driver's dials, one per axis, at most three.
   const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>> *valueInputs() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>> *>(VT_VALUEINPUTS);
-  }
-  /// Present for a RigLogic solve, which replaces `solver`'s pose solve.
-  const rigExec::fb::RbfMethod *method() const {
-    return GetPointer<const rigExec::fb::RbfMethod *>(VT_METHOD);
   }
   /// A RigLogic solve's frame drivers after the first, and each one's
   /// measuring ancestor (-1 for none), parallel. Provider slots.
@@ -7712,19 +7796,9 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<int32_t> *extraParentSlots() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_EXTRAPARENTSLOTS);
   }
-  /// Present for a RigExecMlMover, whose network replaces every solve: its
-  /// row is the frame drivers' rotations, then every value input.
-  const rigExec::fb::MlNetwork *network() const {
-    return GetPointer<const rigExec::fb::MlNetwork *>(VT_NETWORK);
-  }
   /// The ML mover's inputs:mask; registered after the value inputs.
   const rigExec::fb::Input *mask() const {
     return GetPointer<const rigExec::fb::Input *>(VT_MASK);
-  }
-  /// Present for a RigExecAnimatedMaps node: its value inputs are its
-  /// rows' inputs and pose_slots its maps' outputs:value.
-  const rigExec::fb::AnimatedMaps *maps() const {
-    return GetPointer<const rigExec::fb::AnimatedMaps *>(VT_MAPS);
   }
   /// Animated maps: pose weight slots republishing a map as a mesh
   /// primvar, and the map (an index into pose_slots) each one copies.
@@ -7733,6 +7807,13 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   const ::flatbuffers::Vector<int32_t> *primvarSources() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_PRIMVARSOURCES);
+  }
+  /// Format 56: the solve its op node runs: 0 an RBF over the driver's
+  /// frame or dials, 1 a RigLogic RBF method, 2 an ML network (reads
+  /// `mask`), 3 animated maps (its value inputs are the rows' inputs and
+  /// pose_slots its maps' outputs:value).
+  uint8_t solve() const {
+    return GetField<uint8_t>(VT_SOLVE, 0);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -7749,28 +7830,21 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVector(poseSlots()) &&
            VerifyOffset(verifier, VT_DISABLEDSLOTS) &&
            verifier.VerifyVector(disabledSlots()) &&
-           VerifyOffsetRequired(verifier, VT_SOLVER) &&
-           verifier.VerifyTable(solver()) &&
            VerifyField<uint8_t>(verifier, VT_ENABLETRANSLATION, 1) &&
            VerifyOffset(verifier, VT_VALUEINPUTS) &&
            verifier.VerifyVector(valueInputs()) &&
            verifier.VerifyVectorOfTables(valueInputs()) &&
-           VerifyOffset(verifier, VT_METHOD) &&
-           verifier.VerifyTable(method()) &&
            VerifyOffset(verifier, VT_EXTRADRIVERSLOTS) &&
            verifier.VerifyVector(extraDriverSlots()) &&
            VerifyOffset(verifier, VT_EXTRAPARENTSLOTS) &&
            verifier.VerifyVector(extraParentSlots()) &&
-           VerifyOffset(verifier, VT_NETWORK) &&
-           verifier.VerifyTable(network()) &&
            VerifyOffset(verifier, VT_MASK) &&
            verifier.VerifyTable(mask()) &&
-           VerifyOffset(verifier, VT_MAPS) &&
-           verifier.VerifyTable(maps()) &&
            VerifyOffset(verifier, VT_PRIMVARSLOTS) &&
            verifier.VerifyVector(primvarSlots()) &&
            VerifyOffset(verifier, VT_PRIMVARSOURCES) &&
            verifier.VerifyVector(primvarSources()) &&
+           VerifyField<uint8_t>(verifier, VT_SOLVE, 1) &&
            verifier.EndTable();
   }
   RigExecWirePoseInterpolator *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -7809,17 +7883,11 @@ struct PoseInterpolatorBuilder {
   void add_disabledSlots(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> disabledSlots) {
     fbb_.AddOffset(PoseInterpolator::VT_DISABLEDSLOTS, disabledSlots);
   }
-  void add_solver(::flatbuffers::Offset<rigExec::fb::Rbf> solver) {
-    fbb_.AddOffset(PoseInterpolator::VT_SOLVER, solver);
-  }
   void add_enableTranslation(bool enableTranslation) {
     fbb_.AddElement<uint8_t>(PoseInterpolator::VT_ENABLETRANSLATION, static_cast<uint8_t>(enableTranslation), 0);
   }
   void add_valueInputs(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>>> valueInputs) {
     fbb_.AddOffset(PoseInterpolator::VT_VALUEINPUTS, valueInputs);
-  }
-  void add_method(::flatbuffers::Offset<rigExec::fb::RbfMethod> method) {
-    fbb_.AddOffset(PoseInterpolator::VT_METHOD, method);
   }
   void add_extraDriverSlots(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> extraDriverSlots) {
     fbb_.AddOffset(PoseInterpolator::VT_EXTRADRIVERSLOTS, extraDriverSlots);
@@ -7827,20 +7895,17 @@ struct PoseInterpolatorBuilder {
   void add_extraParentSlots(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> extraParentSlots) {
     fbb_.AddOffset(PoseInterpolator::VT_EXTRAPARENTSLOTS, extraParentSlots);
   }
-  void add_network(::flatbuffers::Offset<rigExec::fb::MlNetwork> network) {
-    fbb_.AddOffset(PoseInterpolator::VT_NETWORK, network);
-  }
   void add_mask(::flatbuffers::Offset<rigExec::fb::Input> mask) {
     fbb_.AddOffset(PoseInterpolator::VT_MASK, mask);
-  }
-  void add_maps(::flatbuffers::Offset<rigExec::fb::AnimatedMaps> maps) {
-    fbb_.AddOffset(PoseInterpolator::VT_MAPS, maps);
   }
   void add_primvarSlots(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSlots) {
     fbb_.AddOffset(PoseInterpolator::VT_PRIMVARSLOTS, primvarSlots);
   }
   void add_primvarSources(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSources) {
     fbb_.AddOffset(PoseInterpolator::VT_PRIMVARSOURCES, primvarSources);
+  }
+  void add_solve(uint8_t solve) {
+    fbb_.AddElement<uint8_t>(PoseInterpolator::VT_SOLVE, solve, 0);
   }
   explicit PoseInterpolatorBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
@@ -7850,7 +7915,6 @@ struct PoseInterpolatorBuilder {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<PoseInterpolator>(end);
     fbb_.Required(o, PoseInterpolator::VT_ENABLED);
-    fbb_.Required(o, PoseInterpolator::VT_SOLVER);
     return o;
   }
 };
@@ -7866,28 +7930,21 @@ inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolator(
     int32_t weightEnd = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> poseSlots = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> disabledSlots = 0,
-    ::flatbuffers::Offset<rigExec::fb::Rbf> solver = 0,
     bool enableTranslation = false,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>>> valueInputs = 0,
-    ::flatbuffers::Offset<rigExec::fb::RbfMethod> method = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> extraDriverSlots = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> extraParentSlots = 0,
-    ::flatbuffers::Offset<rigExec::fb::MlNetwork> network = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> mask = 0,
-    ::flatbuffers::Offset<rigExec::fb::AnimatedMaps> maps = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSlots = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSources = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSources = 0,
+    uint8_t solve = 0) {
   PoseInterpolatorBuilder builder_(_fbb);
   builder_.add_primvarSources(primvarSources);
   builder_.add_primvarSlots(primvarSlots);
-  builder_.add_maps(maps);
   builder_.add_mask(mask);
-  builder_.add_network(network);
   builder_.add_extraParentSlots(extraParentSlots);
   builder_.add_extraDriverSlots(extraDriverSlots);
-  builder_.add_method(method);
   builder_.add_valueInputs(valueInputs);
-  builder_.add_solver(solver);
   builder_.add_disabledSlots(disabledSlots);
   builder_.add_poseSlots(poseSlots);
   builder_.add_weightEnd(weightEnd);
@@ -7896,6 +7953,7 @@ inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolator(
   builder_.add_parentSlot(parentSlot);
   builder_.add_driverSlot(driverSlot);
   builder_.add_path(path);
+  builder_.add_solve(solve);
   builder_.add_enableTranslation(enableTranslation);
   builder_.add_allowNegativeWeights(allowNegativeWeights);
   return builder_.Finish();
@@ -7917,17 +7975,14 @@ inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolatorDirect(
     int32_t weightEnd = 0,
     const std::vector<int32_t> *poseSlots = nullptr,
     const std::vector<int32_t> *disabledSlots = nullptr,
-    ::flatbuffers::Offset<rigExec::fb::Rbf> solver = 0,
     bool enableTranslation = false,
     const std::vector<::flatbuffers::Offset<rigExec::fb::Input>> *valueInputs = nullptr,
-    ::flatbuffers::Offset<rigExec::fb::RbfMethod> method = 0,
     const std::vector<int32_t> *extraDriverSlots = nullptr,
     const std::vector<int32_t> *extraParentSlots = nullptr,
-    ::flatbuffers::Offset<rigExec::fb::MlNetwork> network = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> mask = 0,
-    ::flatbuffers::Offset<rigExec::fb::AnimatedMaps> maps = 0,
     const std::vector<int32_t> *primvarSlots = nullptr,
-    const std::vector<int32_t> *primvarSources = nullptr) {
+    const std::vector<int32_t> *primvarSources = nullptr,
+    uint8_t solve = 0) {
   auto poseSlots__ = poseSlots ? _fbb.CreateVector<int32_t>(*poseSlots) : 0;
   auto disabledSlots__ = disabledSlots ? _fbb.CreateVector<int32_t>(*disabledSlots) : 0;
   auto valueInputs__ = valueInputs ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Input>>(*valueInputs) : 0;
@@ -7946,17 +8001,14 @@ inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolatorDirect(
       weightEnd,
       poseSlots__,
       disabledSlots__,
-      solver,
       enableTranslation,
       valueInputs__,
-      method,
       extraDriverSlots__,
       extraParentSlots__,
-      network,
       mask,
-      maps,
       primvarSlots__,
-      primvarSources__);
+      primvarSources__,
+      solve);
 }
 
 ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolator(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWirePoseInterpolator *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -8724,38 +8776,29 @@ struct RigExecWireSolver : public ::flatbuffers::NativeTable {
   std::vector<::rigExec::RigExecWireLandmarks> jointRests{};
   bool restsVary = false;
   std::vector<int32_t> restOverrides{};
-  std::vector<double> splineRestWeights{};
-  uint8_t splineRestMode = 0;
   bool degenerate = false;
   std::vector<int32_t> controls{};
   bool parentRelative = false;
-  std::vector<::rigExec::RigExecWireLandmarks> controlRests{};
   int32_t start = -1;
-  ::rigExec::RigExecWireLandmarks startRest{};
   uint32_t startRead = 0;
   int32_t root = -1;
   int32_t mid = -1;
   int32_t end = -1;
   int32_t pole = -1;
   std::vector<::rigExec::RigExecWireLandmarks> ikRests{};
-  ::rigExec::RigExecWireTwoBoneIkParams ikParams{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> bend{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> upperOffset{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> lowerOffset{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> stretch{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> softness{};
-  double upperLengthBase{};
-  double lowerLengthBase{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> ikSpace{};
   int32_t spaceSlot = -1;
-  ::rigExec::RigExecWireLandmarks spaceRest{};
   uint32_t spaceRead = 0;
   int32_t inA = -1;
   int32_t inB = -1;
   std::unique_ptr<rigExec::fb::RigExecWireInput> blendWeight{};
   uint8_t scaleMode = 0;
   bool blendRotationRejected = false;
-  std::unique_ptr<rigExec::fb::RigExecWireSplineIkRest> splineRest{};
   ::rigExec::RigExecWireSplineIkParams splineParams{};
   std::vector<::rigExec::RigExecWireLandmarks> splineJointRests{};
   uint64_t splineCount = 0;
@@ -8765,12 +8808,8 @@ struct RigExecWireSolver : public ::flatbuffers::NativeTable {
   std::unique_ptr<rigExec::fb::RigExecWireInput> twist{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> minLengthRatio{};
   bool splineParamsVary = false;
-  ::rigExec::RigExecWireLandmarks twistStartRest{};
-  ::rigExec::RigExecWireLandmarks twistEndRest{};
-  std::vector<double> twistWeights{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> twistTurns{};
   uint32_t ribbonPointsPath = 0;
-  std::vector<::rigExec::RigExecWireVec3f> ribbonRestPoints{};
   std::vector<::rigExec::RigExecWireVec3f> ribbonConstantPoints{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> ribbonSampleCount{};
   std::vector<::rigExec::RigExecWireIntPair> outputs{};
@@ -8802,7 +8841,10 @@ struct RigExecWireSolver : public ::flatbuffers::NativeTable {
   RigExecWireSolver &operator=(RigExecWireSolver o) FLATBUFFERS_NOEXCEPT;
 };
 
-/// One solver's epoch description. *_read fields are fin versions.
+/// One solver's epoch description. *_read fields are fin versions. The
+/// deprecated fields (format 55) were the rest copies and parameters the
+/// retired Solve step read; its op nodes read their rests through lookups
+/// and keep their parameters in their payloads.
 struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef RigExecWireSolver NativeTableType;
   typedef SolverBuilder Builder;
@@ -8821,38 +8863,29 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_JOINTRESTS = 18,
     VT_RESTSVARY = 20,
     VT_RESTOVERRIDES = 22,
-    VT_SPLINERESTWEIGHTS = 24,
-    VT_SPLINERESTMODE = 26,
     VT_DEGENERATE = 28,
     VT_CONTROLS = 30,
     VT_PARENTRELATIVE = 32,
-    VT_CONTROLRESTS = 34,
     VT_START = 36,
-    VT_STARTREST = 38,
     VT_STARTREAD = 40,
     VT_ROOT = 42,
     VT_MID = 44,
     VT_END = 46,
     VT_POLE = 48,
     VT_IKRESTS = 50,
-    VT_IKPARAMS = 52,
     VT_BEND = 54,
     VT_UPPEROFFSET = 56,
     VT_LOWEROFFSET = 58,
     VT_STRETCH = 60,
     VT_SOFTNESS = 62,
-    VT_UPPERLENGTHBASE = 64,
-    VT_LOWERLENGTHBASE = 66,
     VT_IKSPACE = 68,
     VT_SPACESLOT = 70,
-    VT_SPACEREST = 72,
     VT_SPACEREAD = 74,
     VT_INA = 76,
     VT_INB = 78,
     VT_BLENDWEIGHT = 80,
     VT_SCALEMODE = 82,
     VT_BLENDROTATIONREJECTED = 84,
-    VT_SPLINEREST = 86,
     VT_SPLINEPARAMS = 88,
     VT_SPLINEJOINTRESTS = 90,
     VT_SPLINECOUNT = 92,
@@ -8862,12 +8895,8 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_TWIST = 100,
     VT_MINLENGTHRATIO = 102,
     VT_SPLINEPARAMSVARY = 104,
-    VT_TWISTSTARTREST = 106,
-    VT_TWISTENDREST = 108,
-    VT_TWISTWEIGHTS = 110,
     VT_TWISTTURNS = 112,
     VT_RIBBONPOINTSPATH = 114,
-    VT_RIBBONRESTPOINTS = 116,
     VT_RIBBONCONSTANTPOINTS = 118,
     VT_RIBBONSAMPLECOUNT = 120,
     VT_OUTPUTS = 122,
@@ -8927,13 +8956,6 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<int32_t> *restOverrides() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_RESTOVERRIDES);
   }
-  const ::flatbuffers::Vector<double> *splineRestWeights() const {
-    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_SPLINERESTWEIGHTS);
-  }
-  /// SplineIkRestLength.
-  uint8_t splineRestMode() const {
-    return GetField<uint8_t>(VT_SPLINERESTMODE, 0);
-  }
   bool degenerate() const {
     return GetField<uint8_t>(VT_DEGENERATE, 0) != 0;
   }
@@ -8943,16 +8965,10 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   bool parentRelative() const {
     return GetField<uint8_t>(VT_PARENTRELATIVE, 0) != 0;
   }
-  const ::flatbuffers::Vector<const rigExec::fb::Landmarks *> *controlRests() const {
-    return GetPointer<const ::flatbuffers::Vector<const rigExec::fb::Landmarks *> *>(VT_CONTROLRESTS);
-  }
   /// rigExec:startFrame provider slot (-1: absolute), its rest landmarks
   /// and the bound fin version (FkChain, Skeleton2d).
   int32_t start() const {
     return GetField<int32_t>(VT_START, -1);
-  }
-  const rigExec::fb::Landmarks *startRest() const {
-    return GetStruct<const rigExec::fb::Landmarks *>(VT_STARTREST);
   }
   uint32_t startRead() const {
     return GetField<uint32_t>(VT_STARTREAD, 0);
@@ -8973,9 +8989,6 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<const rigExec::fb::Landmarks *> *ikRests() const {
     return GetPointer<const ::flatbuffers::Vector<const rigExec::fb::Landmarks *> *>(VT_IKRESTS);
   }
-  const rigExec::fb::TwoBoneIkParams *ikParams() const {
-    return GetStruct<const rigExec::fb::TwoBoneIkParams *>(VT_IKPARAMS);
-  }
   const rigExec::fb::Input *bend() const {
     return GetPointer<const rigExec::fb::Input *>(VT_BEND);
   }
@@ -8991,12 +9004,6 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const rigExec::fb::Input *softness() const {
     return GetPointer<const rigExec::fb::Input *>(VT_SOFTNESS);
   }
-  const rigExec::fb::F64 *upperLengthBase() const {
-    return GetStruct<const rigExec::fb::F64 *>(VT_UPPERLENGTHBASE);
-  }
-  const rigExec::fb::F64 *lowerLengthBase() const {
-    return GetStruct<const rigExec::fb::F64 *>(VT_LOWERLENGTHBASE);
-  }
   /// rigExec:spaceMatrix: the explicit factor of the space a TwoBoneIk
   /// measures its chain in.
   const rigExec::fb::Input *ikSpace() const {
@@ -9007,9 +9014,6 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// version.
   int32_t spaceSlot() const {
     return GetField<int32_t>(VT_SPACESLOT, -1);
-  }
-  const rigExec::fb::Landmarks *spaceRest() const {
-    return GetStruct<const rigExec::fb::Landmarks *>(VT_SPACEREST);
   }
   uint32_t spaceRead() const {
     return GetField<uint32_t>(VT_SPACEREAD, 0);
@@ -9029,9 +9033,6 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   bool blendRotationRejected() const {
     return GetField<uint8_t>(VT_BLENDROTATIONREJECTED, 0) != 0;
-  }
-  const rigExec::fb::SplineIkRest *splineRest() const {
-    return GetPointer<const rigExec::fb::SplineIkRest *>(VT_SPLINEREST);
   }
   const rigExec::fb::SplineIkParams *splineParams() const {
     return GetStruct<const rigExec::fb::SplineIkParams *>(VT_SPLINEPARAMS);
@@ -9060,23 +9061,11 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   bool splineParamsVary() const {
     return GetField<uint8_t>(VT_SPLINEPARAMSVARY, 0) != 0;
   }
-  const rigExec::fb::Landmarks *twistStartRest() const {
-    return GetStruct<const rigExec::fb::Landmarks *>(VT_TWISTSTARTREST);
-  }
-  const rigExec::fb::Landmarks *twistEndRest() const {
-    return GetStruct<const rigExec::fb::Landmarks *>(VT_TWISTENDREST);
-  }
-  const ::flatbuffers::Vector<double> *twistWeights() const {
-    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_TWISTWEIGHTS);
-  }
   const rigExec::fb::Input *twistTurns() const {
     return GetPointer<const rigExec::fb::Input *>(VT_TWISTTURNS);
   }
   uint32_t ribbonPointsPath() const {
     return GetField<uint32_t>(VT_RIBBONPOINTSPATH, 0);
-  }
-  const ::flatbuffers::Vector<const rigExec::fb::Vec3f *> *ribbonRestPoints() const {
-    return GetPointer<const ::flatbuffers::Vector<const rigExec::fb::Vec3f *> *>(VT_RIBBONRESTPOINTS);
   }
   /// The driver points at bake_time.
   const ::flatbuffers::Vector<const rigExec::fb::Vec3f *> *ribbonConstantPoints() const {
@@ -9182,17 +9171,11 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint8_t>(verifier, VT_RESTSVARY, 1) &&
            VerifyOffset(verifier, VT_RESTOVERRIDES) &&
            verifier.VerifyVector(restOverrides()) &&
-           VerifyOffset(verifier, VT_SPLINERESTWEIGHTS) &&
-           verifier.VerifyVector(splineRestWeights()) &&
-           VerifyField<uint8_t>(verifier, VT_SPLINERESTMODE, 1) &&
            VerifyField<uint8_t>(verifier, VT_DEGENERATE, 1) &&
            VerifyOffset(verifier, VT_CONTROLS) &&
            verifier.VerifyVector(controls()) &&
            VerifyField<uint8_t>(verifier, VT_PARENTRELATIVE, 1) &&
-           VerifyOffset(verifier, VT_CONTROLRESTS) &&
-           verifier.VerifyVector(controlRests()) &&
            VerifyField<int32_t>(verifier, VT_START, 4) &&
-           VerifyField<rigExec::fb::Landmarks>(verifier, VT_STARTREST, 8) &&
            VerifyField<uint32_t>(verifier, VT_STARTREAD, 4) &&
            VerifyField<int32_t>(verifier, VT_ROOT, 4) &&
            VerifyField<int32_t>(verifier, VT_MID, 4) &&
@@ -9200,7 +9183,6 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<int32_t>(verifier, VT_POLE, 4) &&
            VerifyOffset(verifier, VT_IKRESTS) &&
            verifier.VerifyVector(ikRests()) &&
-           VerifyField<rigExec::fb::TwoBoneIkParams>(verifier, VT_IKPARAMS, 8) &&
            VerifyOffsetRequired(verifier, VT_BEND) &&
            verifier.VerifyTable(bend()) &&
            VerifyOffsetRequired(verifier, VT_UPPEROFFSET) &&
@@ -9211,12 +9193,9 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyTable(stretch()) &&
            VerifyOffsetRequired(verifier, VT_SOFTNESS) &&
            verifier.VerifyTable(softness()) &&
-           VerifyField<rigExec::fb::F64>(verifier, VT_UPPERLENGTHBASE, 8) &&
-           VerifyField<rigExec::fb::F64>(verifier, VT_LOWERLENGTHBASE, 8) &&
            VerifyOffsetRequired(verifier, VT_IKSPACE) &&
            verifier.VerifyTable(ikSpace()) &&
            VerifyField<int32_t>(verifier, VT_SPACESLOT, 4) &&
-           VerifyField<rigExec::fb::Landmarks>(verifier, VT_SPACEREST, 8) &&
            VerifyField<uint32_t>(verifier, VT_SPACEREAD, 4) &&
            VerifyField<int32_t>(verifier, VT_INA, 4) &&
            VerifyField<int32_t>(verifier, VT_INB, 4) &&
@@ -9224,8 +9203,6 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyTable(blendWeight()) &&
            VerifyField<uint8_t>(verifier, VT_SCALEMODE, 1) &&
            VerifyField<uint8_t>(verifier, VT_BLENDROTATIONREJECTED, 1) &&
-           VerifyOffsetRequired(verifier, VT_SPLINEREST) &&
-           verifier.VerifyTable(splineRest()) &&
            VerifyField<rigExec::fb::SplineIkParams>(verifier, VT_SPLINEPARAMS, 8) &&
            VerifyOffset(verifier, VT_SPLINEJOINTRESTS) &&
            verifier.VerifyVector(splineJointRests()) &&
@@ -9241,15 +9218,9 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffsetRequired(verifier, VT_MINLENGTHRATIO) &&
            verifier.VerifyTable(minLengthRatio()) &&
            VerifyField<uint8_t>(verifier, VT_SPLINEPARAMSVARY, 1) &&
-           VerifyField<rigExec::fb::Landmarks>(verifier, VT_TWISTSTARTREST, 8) &&
-           VerifyField<rigExec::fb::Landmarks>(verifier, VT_TWISTENDREST, 8) &&
-           VerifyOffset(verifier, VT_TWISTWEIGHTS) &&
-           verifier.VerifyVector(twistWeights()) &&
            VerifyOffsetRequired(verifier, VT_TWISTTURNS) &&
            verifier.VerifyTable(twistTurns()) &&
            VerifyField<uint32_t>(verifier, VT_RIBBONPOINTSPATH, 4) &&
-           VerifyOffset(verifier, VT_RIBBONRESTPOINTS) &&
-           verifier.VerifyVector(ribbonRestPoints()) &&
            VerifyOffset(verifier, VT_RIBBONCONSTANTPOINTS) &&
            verifier.VerifyVector(ribbonConstantPoints()) &&
            VerifyOffsetRequired(verifier, VT_RIBBONSAMPLECOUNT) &&
@@ -9336,12 +9307,6 @@ struct SolverBuilder {
   void add_restOverrides(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> restOverrides) {
     fbb_.AddOffset(Solver::VT_RESTOVERRIDES, restOverrides);
   }
-  void add_splineRestWeights(::flatbuffers::Offset<::flatbuffers::Vector<double>> splineRestWeights) {
-    fbb_.AddOffset(Solver::VT_SPLINERESTWEIGHTS, splineRestWeights);
-  }
-  void add_splineRestMode(uint8_t splineRestMode) {
-    fbb_.AddElement<uint8_t>(Solver::VT_SPLINERESTMODE, splineRestMode, 0);
-  }
   void add_degenerate(bool degenerate) {
     fbb_.AddElement<uint8_t>(Solver::VT_DEGENERATE, static_cast<uint8_t>(degenerate), 0);
   }
@@ -9351,14 +9316,8 @@ struct SolverBuilder {
   void add_parentRelative(bool parentRelative) {
     fbb_.AddElement<uint8_t>(Solver::VT_PARENTRELATIVE, static_cast<uint8_t>(parentRelative), 0);
   }
-  void add_controlRests(::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Landmarks *>> controlRests) {
-    fbb_.AddOffset(Solver::VT_CONTROLRESTS, controlRests);
-  }
   void add_start(int32_t start) {
     fbb_.AddElement<int32_t>(Solver::VT_START, start, -1);
-  }
-  void add_startRest(const rigExec::fb::Landmarks *startRest) {
-    fbb_.AddStruct(Solver::VT_STARTREST, startRest);
   }
   void add_startRead(uint32_t startRead) {
     fbb_.AddElement<uint32_t>(Solver::VT_STARTREAD, startRead, 0);
@@ -9378,9 +9337,6 @@ struct SolverBuilder {
   void add_ikRests(::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Landmarks *>> ikRests) {
     fbb_.AddOffset(Solver::VT_IKRESTS, ikRests);
   }
-  void add_ikParams(const rigExec::fb::TwoBoneIkParams *ikParams) {
-    fbb_.AddStruct(Solver::VT_IKPARAMS, ikParams);
-  }
   void add_bend(::flatbuffers::Offset<rigExec::fb::Input> bend) {
     fbb_.AddOffset(Solver::VT_BEND, bend);
   }
@@ -9396,20 +9352,11 @@ struct SolverBuilder {
   void add_softness(::flatbuffers::Offset<rigExec::fb::Input> softness) {
     fbb_.AddOffset(Solver::VT_SOFTNESS, softness);
   }
-  void add_upperLengthBase(const rigExec::fb::F64 *upperLengthBase) {
-    fbb_.AddStruct(Solver::VT_UPPERLENGTHBASE, upperLengthBase);
-  }
-  void add_lowerLengthBase(const rigExec::fb::F64 *lowerLengthBase) {
-    fbb_.AddStruct(Solver::VT_LOWERLENGTHBASE, lowerLengthBase);
-  }
   void add_ikSpace(::flatbuffers::Offset<rigExec::fb::Input> ikSpace) {
     fbb_.AddOffset(Solver::VT_IKSPACE, ikSpace);
   }
   void add_spaceSlot(int32_t spaceSlot) {
     fbb_.AddElement<int32_t>(Solver::VT_SPACESLOT, spaceSlot, -1);
-  }
-  void add_spaceRest(const rigExec::fb::Landmarks *spaceRest) {
-    fbb_.AddStruct(Solver::VT_SPACEREST, spaceRest);
   }
   void add_spaceRead(uint32_t spaceRead) {
     fbb_.AddElement<uint32_t>(Solver::VT_SPACEREAD, spaceRead, 0);
@@ -9428,9 +9375,6 @@ struct SolverBuilder {
   }
   void add_blendRotationRejected(bool blendRotationRejected) {
     fbb_.AddElement<uint8_t>(Solver::VT_BLENDROTATIONREJECTED, static_cast<uint8_t>(blendRotationRejected), 0);
-  }
-  void add_splineRest(::flatbuffers::Offset<rigExec::fb::SplineIkRest> splineRest) {
-    fbb_.AddOffset(Solver::VT_SPLINEREST, splineRest);
   }
   void add_splineParams(const rigExec::fb::SplineIkParams *splineParams) {
     fbb_.AddStruct(Solver::VT_SPLINEPARAMS, splineParams);
@@ -9459,23 +9403,11 @@ struct SolverBuilder {
   void add_splineParamsVary(bool splineParamsVary) {
     fbb_.AddElement<uint8_t>(Solver::VT_SPLINEPARAMSVARY, static_cast<uint8_t>(splineParamsVary), 0);
   }
-  void add_twistStartRest(const rigExec::fb::Landmarks *twistStartRest) {
-    fbb_.AddStruct(Solver::VT_TWISTSTARTREST, twistStartRest);
-  }
-  void add_twistEndRest(const rigExec::fb::Landmarks *twistEndRest) {
-    fbb_.AddStruct(Solver::VT_TWISTENDREST, twistEndRest);
-  }
-  void add_twistWeights(::flatbuffers::Offset<::flatbuffers::Vector<double>> twistWeights) {
-    fbb_.AddOffset(Solver::VT_TWISTWEIGHTS, twistWeights);
-  }
   void add_twistTurns(::flatbuffers::Offset<rigExec::fb::Input> twistTurns) {
     fbb_.AddOffset(Solver::VT_TWISTTURNS, twistTurns);
   }
   void add_ribbonPointsPath(uint32_t ribbonPointsPath) {
     fbb_.AddElement<uint32_t>(Solver::VT_RIBBONPOINTSPATH, ribbonPointsPath, 0);
-  }
-  void add_ribbonRestPoints(::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Vec3f *>> ribbonRestPoints) {
-    fbb_.AddOffset(Solver::VT_RIBBONRESTPOINTS, ribbonRestPoints);
   }
   void add_ribbonConstantPoints(::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Vec3f *>> ribbonConstantPoints) {
     fbb_.AddOffset(Solver::VT_RIBBONCONSTANTPOINTS, ribbonConstantPoints);
@@ -9566,7 +9498,6 @@ struct SolverBuilder {
     fbb_.Required(o, Solver::VT_SOFTNESS);
     fbb_.Required(o, Solver::VT_IKSPACE);
     fbb_.Required(o, Solver::VT_BLENDWEIGHT);
-    fbb_.Required(o, Solver::VT_SPLINEREST);
     fbb_.Required(o, Solver::VT_PRESERVEVOLUME);
     fbb_.Required(o, Solver::VT_MIDFOLLOWWEIGHT);
     fbb_.Required(o, Solver::VT_ROLL);
@@ -9590,38 +9521,29 @@ inline ::flatbuffers::Offset<Solver> CreateSolver(
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Landmarks *>> jointRests = 0,
     bool restsVary = false,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> restOverrides = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<double>> splineRestWeights = 0,
-    uint8_t splineRestMode = 0,
     bool degenerate = false,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> controls = 0,
     bool parentRelative = false,
-    ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Landmarks *>> controlRests = 0,
     int32_t start = -1,
-    const rigExec::fb::Landmarks *startRest = nullptr,
     uint32_t startRead = 0,
     int32_t root = -1,
     int32_t mid = -1,
     int32_t end = -1,
     int32_t pole = -1,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Landmarks *>> ikRests = 0,
-    const rigExec::fb::TwoBoneIkParams *ikParams = nullptr,
     ::flatbuffers::Offset<rigExec::fb::Input> bend = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> upperOffset = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> lowerOffset = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> stretch = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> softness = 0,
-    const rigExec::fb::F64 *upperLengthBase = nullptr,
-    const rigExec::fb::F64 *lowerLengthBase = nullptr,
     ::flatbuffers::Offset<rigExec::fb::Input> ikSpace = 0,
     int32_t spaceSlot = -1,
-    const rigExec::fb::Landmarks *spaceRest = nullptr,
     uint32_t spaceRead = 0,
     int32_t inA = -1,
     int32_t inB = -1,
     ::flatbuffers::Offset<rigExec::fb::Input> blendWeight = 0,
     uint8_t scaleMode = 0,
     bool blendRotationRejected = false,
-    ::flatbuffers::Offset<rigExec::fb::SplineIkRest> splineRest = 0,
     const rigExec::fb::SplineIkParams *splineParams = nullptr,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Landmarks *>> splineJointRests = 0,
     uint64_t splineCount = 0,
@@ -9631,12 +9553,8 @@ inline ::flatbuffers::Offset<Solver> CreateSolver(
     ::flatbuffers::Offset<rigExec::fb::Input> twist = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> minLengthRatio = 0,
     bool splineParamsVary = false,
-    const rigExec::fb::Landmarks *twistStartRest = nullptr,
-    const rigExec::fb::Landmarks *twistEndRest = nullptr,
-    ::flatbuffers::Offset<::flatbuffers::Vector<double>> twistWeights = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> twistTurns = 0,
     uint32_t ribbonPointsPath = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Vec3f *>> ribbonRestPoints = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Vec3f *>> ribbonConstantPoints = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> ribbonSampleCount = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::IntPair *>> outputs = 0,
@@ -9686,12 +9604,8 @@ inline ::flatbuffers::Offset<Solver> CreateSolver(
   builder_.add_outputs(outputs);
   builder_.add_ribbonSampleCount(ribbonSampleCount);
   builder_.add_ribbonConstantPoints(ribbonConstantPoints);
-  builder_.add_ribbonRestPoints(ribbonRestPoints);
   builder_.add_ribbonPointsPath(ribbonPointsPath);
   builder_.add_twistTurns(twistTurns);
-  builder_.add_twistWeights(twistWeights);
-  builder_.add_twistEndRest(twistEndRest);
-  builder_.add_twistStartRest(twistStartRest);
   builder_.add_minLengthRatio(minLengthRatio);
   builder_.add_twist(twist);
   builder_.add_roll(roll);
@@ -9699,33 +9613,25 @@ inline ::flatbuffers::Offset<Solver> CreateSolver(
   builder_.add_preserveVolume(preserveVolume);
   builder_.add_splineJointRests(splineJointRests);
   builder_.add_splineParams(splineParams);
-  builder_.add_splineRest(splineRest);
   builder_.add_blendWeight(blendWeight);
   builder_.add_inB(inB);
   builder_.add_inA(inA);
   builder_.add_spaceRead(spaceRead);
-  builder_.add_spaceRest(spaceRest);
   builder_.add_spaceSlot(spaceSlot);
   builder_.add_ikSpace(ikSpace);
-  builder_.add_lowerLengthBase(lowerLengthBase);
-  builder_.add_upperLengthBase(upperLengthBase);
   builder_.add_softness(softness);
   builder_.add_stretch(stretch);
   builder_.add_lowerOffset(lowerOffset);
   builder_.add_upperOffset(upperOffset);
   builder_.add_bend(bend);
-  builder_.add_ikParams(ikParams);
   builder_.add_ikRests(ikRests);
   builder_.add_pole(pole);
   builder_.add_end(end);
   builder_.add_mid(mid);
   builder_.add_root(root);
   builder_.add_startRead(startRead);
-  builder_.add_startRest(startRest);
   builder_.add_start(start);
-  builder_.add_controlRests(controlRests);
   builder_.add_controls(controls);
-  builder_.add_splineRestWeights(splineRestWeights);
   builder_.add_restOverrides(restOverrides);
   builder_.add_jointRests(jointRests);
   builder_.add_restReads(restReads);
@@ -9742,7 +9648,6 @@ inline ::flatbuffers::Offset<Solver> CreateSolver(
   builder_.add_scaleMode(scaleMode);
   builder_.add_parentRelative(parentRelative);
   builder_.add_degenerate(degenerate);
-  builder_.add_splineRestMode(splineRestMode);
   builder_.add_restsVary(restsVary);
   builder_.add_hasLiveRest(hasLiveRest);
   return builder_.Finish();
@@ -9765,38 +9670,29 @@ inline ::flatbuffers::Offset<Solver> CreateSolverDirect(
     const std::vector<rigExec::fb::Landmarks> *jointRests = nullptr,
     bool restsVary = false,
     const std::vector<int32_t> *restOverrides = nullptr,
-    const std::vector<double> *splineRestWeights = nullptr,
-    uint8_t splineRestMode = 0,
     bool degenerate = false,
     const std::vector<int32_t> *controls = nullptr,
     bool parentRelative = false,
-    const std::vector<rigExec::fb::Landmarks> *controlRests = nullptr,
     int32_t start = -1,
-    const rigExec::fb::Landmarks *startRest = nullptr,
     uint32_t startRead = 0,
     int32_t root = -1,
     int32_t mid = -1,
     int32_t end = -1,
     int32_t pole = -1,
     const std::vector<rigExec::fb::Landmarks> *ikRests = nullptr,
-    const rigExec::fb::TwoBoneIkParams *ikParams = nullptr,
     ::flatbuffers::Offset<rigExec::fb::Input> bend = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> upperOffset = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> lowerOffset = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> stretch = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> softness = 0,
-    const rigExec::fb::F64 *upperLengthBase = nullptr,
-    const rigExec::fb::F64 *lowerLengthBase = nullptr,
     ::flatbuffers::Offset<rigExec::fb::Input> ikSpace = 0,
     int32_t spaceSlot = -1,
-    const rigExec::fb::Landmarks *spaceRest = nullptr,
     uint32_t spaceRead = 0,
     int32_t inA = -1,
     int32_t inB = -1,
     ::flatbuffers::Offset<rigExec::fb::Input> blendWeight = 0,
     uint8_t scaleMode = 0,
     bool blendRotationRejected = false,
-    ::flatbuffers::Offset<rigExec::fb::SplineIkRest> splineRest = 0,
     const rigExec::fb::SplineIkParams *splineParams = nullptr,
     const std::vector<rigExec::fb::Landmarks> *splineJointRests = nullptr,
     uint64_t splineCount = 0,
@@ -9806,12 +9702,8 @@ inline ::flatbuffers::Offset<Solver> CreateSolverDirect(
     ::flatbuffers::Offset<rigExec::fb::Input> twist = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> minLengthRatio = 0,
     bool splineParamsVary = false,
-    const rigExec::fb::Landmarks *twistStartRest = nullptr,
-    const rigExec::fb::Landmarks *twistEndRest = nullptr,
-    const std::vector<double> *twistWeights = nullptr,
     ::flatbuffers::Offset<rigExec::fb::Input> twistTurns = 0,
     uint32_t ribbonPointsPath = 0,
-    const std::vector<rigExec::fb::Vec3f> *ribbonRestPoints = nullptr,
     const std::vector<rigExec::fb::Vec3f> *ribbonConstantPoints = nullptr,
     ::flatbuffers::Offset<rigExec::fb::Input> ribbonSampleCount = 0,
     const std::vector<rigExec::fb::IntPair> *outputs = nullptr,
@@ -9843,13 +9735,9 @@ inline ::flatbuffers::Offset<Solver> CreateSolverDirect(
   auto restReads__ = restReads ? _fbb.CreateVector<uint32_t>(*restReads) : 0;
   auto jointRests__ = jointRests ? _fbb.CreateVectorOfStructs<rigExec::fb::Landmarks>(*jointRests) : 0;
   auto restOverrides__ = restOverrides ? _fbb.CreateVector<int32_t>(*restOverrides) : 0;
-  auto splineRestWeights__ = splineRestWeights ? _fbb.CreateVector<double>(*splineRestWeights) : 0;
   auto controls__ = controls ? _fbb.CreateVector<int32_t>(*controls) : 0;
-  auto controlRests__ = controlRests ? _fbb.CreateVectorOfStructs<rigExec::fb::Landmarks>(*controlRests) : 0;
   auto ikRests__ = ikRests ? _fbb.CreateVectorOfStructs<rigExec::fb::Landmarks>(*ikRests) : 0;
   auto splineJointRests__ = splineJointRests ? _fbb.CreateVectorOfStructs<rigExec::fb::Landmarks>(*splineJointRests) : 0;
-  auto twistWeights__ = twistWeights ? _fbb.CreateVector<double>(*twistWeights) : 0;
-  auto ribbonRestPoints__ = ribbonRestPoints ? _fbb.CreateVectorOfStructs<rigExec::fb::Vec3f>(*ribbonRestPoints) : 0;
   auto ribbonConstantPoints__ = ribbonConstantPoints ? _fbb.CreateVectorOfStructs<rigExec::fb::Vec3f>(*ribbonConstantPoints) : 0;
   auto outputs__ = outputs ? _fbb.CreateVectorOfStructs<rigExec::fb::IntPair>(*outputs) : 0;
   auto outPosition__ = outPosition ? _fbb.CreateVector<int32_t>(*outPosition) : 0;
@@ -9872,38 +9760,29 @@ inline ::flatbuffers::Offset<Solver> CreateSolverDirect(
       jointRests__,
       restsVary,
       restOverrides__,
-      splineRestWeights__,
-      splineRestMode,
       degenerate,
       controls__,
       parentRelative,
-      controlRests__,
       start,
-      startRest,
       startRead,
       root,
       mid,
       end,
       pole,
       ikRests__,
-      ikParams,
       bend,
       upperOffset,
       lowerOffset,
       stretch,
       softness,
-      upperLengthBase,
-      lowerLengthBase,
       ikSpace,
       spaceSlot,
-      spaceRest,
       spaceRead,
       inA,
       inB,
       blendWeight,
       scaleMode,
       blendRotationRejected,
-      splineRest,
       splineParams,
       splineJointRests__,
       splineCount,
@@ -9913,12 +9792,8 @@ inline ::flatbuffers::Offset<Solver> CreateSolverDirect(
       twist,
       minLengthRatio,
       splineParamsVary,
-      twistStartRest,
-      twistEndRest,
-      twistWeights__,
       twistTurns,
       ribbonPointsPath,
-      ribbonRestPoints__,
       ribbonConstantPoints__,
       ribbonSampleCount,
       outputs__,
@@ -11151,8 +11026,6 @@ struct RigExecWireCommit : public ::flatbuffers::NativeTable {
   std::vector<int32_t> slots{};
   std::vector<::rigExec::RigExecWireIntPair> propagate{};
   std::vector<int32_t> closestPos{};
-  bool split = false;
-  int32_t stagingBase = 0;
   std::vector<::rigExec::RigExecWireConstraintSource> sources{};
   std::vector<uint32_t> slotReads{};
   std::vector<uint32_t> slotWrites{};
@@ -11194,32 +11067,30 @@ struct Commit FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_SLOTS = 8,
     VT_PROPAGATE = 10,
     VT_CLOSESTPOS = 12,
-    VT_SPLIT = 14,
-    VT_STAGINGBASE = 16,
-    VT_SOURCES = 18,
-    VT_SLOTREADS = 20,
-    VT_SLOTWRITES = 22,
-    VT_SLOTBASEWRITES = 24,
-    VT_DESCENDANTREADS = 26,
-    VT_CLOSESTREADS = 28,
-    VT_DESCENDANTWRITES = 30,
-    VT_DESCENDANTBASEWRITES = 32,
-    VT_SLOTCARRY = 34,
-    VT_SLOTBASECARRY = 36,
-    VT_DESCENDANTCARRY = 38,
-    VT_DESCENDANTBASECARRY = 40,
-    VT_SOURCEREADS = 42,
-    VT_WORLDUPREAD = 44,
-    VT_TARGETREAD = 46,
-    VT_TARGETREADS = 48,
-    VT_EFFECTORREAD = 50,
-    VT_EFFECTORANCESTORS = 52,
-    VT_POLEREADS = 54,
-    VT_POLEANCESTORS = 56,
-    VT_RECORDAFTER = 58,
-    VT_RECORDEVERYTARGET = 60,
-    VT_SOURCEANCESTORS = 62,
-    VT_WORLDUPANCESTORS = 64
+    VT_SOURCES = 14,
+    VT_SLOTREADS = 16,
+    VT_SLOTWRITES = 18,
+    VT_SLOTBASEWRITES = 20,
+    VT_DESCENDANTREADS = 22,
+    VT_CLOSESTREADS = 24,
+    VT_DESCENDANTWRITES = 26,
+    VT_DESCENDANTBASEWRITES = 28,
+    VT_SLOTCARRY = 30,
+    VT_SLOTBASECARRY = 32,
+    VT_DESCENDANTCARRY = 34,
+    VT_DESCENDANTBASECARRY = 36,
+    VT_SOURCEREADS = 38,
+    VT_WORLDUPREAD = 40,
+    VT_TARGETREAD = 42,
+    VT_TARGETREADS = 44,
+    VT_EFFECTORREAD = 46,
+    VT_EFFECTORANCESTORS = 48,
+    VT_POLEREADS = 50,
+    VT_POLEANCESTORS = 52,
+    VT_RECORDAFTER = 54,
+    VT_RECORDEVERYTARGET = 56,
+    VT_SOURCEANCESTORS = 58,
+    VT_WORLDUPANCESTORS = 60
   };
   uint32_t moverPath() const {
     return GetField<uint32_t>(VT_MOVERPATH, 0);
@@ -11235,12 +11106,6 @@ struct Commit FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   const ::flatbuffers::Vector<int32_t> *closestPos() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_CLOSESTPOS);
-  }
-  bool split() const {
-    return GetField<uint8_t>(VT_SPLIT, 0) != 0;
-  }
-  int32_t stagingBase() const {
-    return GetField<int32_t>(VT_STAGINGBASE, 0);
   }
   const ::flatbuffers::Vector<const rigExec::fb::ConstraintSource *> *sources() const {
     return GetPointer<const ::flatbuffers::Vector<const rigExec::fb::ConstraintSource *> *>(VT_SOURCES);
@@ -11330,8 +11195,6 @@ struct Commit FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVector(propagate()) &&
            VerifyOffset(verifier, VT_CLOSESTPOS) &&
            verifier.VerifyVector(closestPos()) &&
-           VerifyField<uint8_t>(verifier, VT_SPLIT, 1) &&
-           VerifyField<int32_t>(verifier, VT_STAGINGBASE, 4) &&
            VerifyOffset(verifier, VT_SOURCES) &&
            verifier.VerifyVector(sources()) &&
            VerifyOffset(verifier, VT_SLOTREADS) &&
@@ -11402,12 +11265,6 @@ struct CommitBuilder {
   }
   void add_closestPos(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> closestPos) {
     fbb_.AddOffset(Commit::VT_CLOSESTPOS, closestPos);
-  }
-  void add_split(bool split) {
-    fbb_.AddElement<uint8_t>(Commit::VT_SPLIT, static_cast<uint8_t>(split), 0);
-  }
-  void add_stagingBase(int32_t stagingBase) {
-    fbb_.AddElement<int32_t>(Commit::VT_STAGINGBASE, stagingBase, 0);
   }
   void add_sources(::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::ConstraintSource *>> sources) {
     fbb_.AddOffset(Commit::VT_SOURCES, sources);
@@ -11499,8 +11356,6 @@ inline ::flatbuffers::Offset<Commit> CreateCommit(
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> slots = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::IntPair *>> propagate = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> closestPos = 0,
-    bool split = false,
-    int32_t stagingBase = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::ConstraintSource *>> sources = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> slotReads = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> slotWrites = 0,
@@ -11548,14 +11403,12 @@ inline ::flatbuffers::Offset<Commit> CreateCommit(
   builder_.add_slotWrites(slotWrites);
   builder_.add_slotReads(slotReads);
   builder_.add_sources(sources);
-  builder_.add_stagingBase(stagingBase);
   builder_.add_closestPos(closestPos);
   builder_.add_propagate(propagate);
   builder_.add_slots(slots);
   builder_.add_moverPath(moverPath);
   builder_.add_recordEveryTarget(recordEveryTarget);
   builder_.add_recordAfter(recordAfter);
-  builder_.add_split(split);
   builder_.add_solverOutput(solverOutput);
   return builder_.Finish();
 }
@@ -11572,8 +11425,6 @@ inline ::flatbuffers::Offset<Commit> CreateCommitDirect(
     const std::vector<int32_t> *slots = nullptr,
     const std::vector<rigExec::fb::IntPair> *propagate = nullptr,
     const std::vector<int32_t> *closestPos = nullptr,
-    bool split = false,
-    int32_t stagingBase = 0,
     const std::vector<rigExec::fb::ConstraintSource> *sources = nullptr,
     const std::vector<uint32_t> *slotReads = nullptr,
     const std::vector<uint32_t> *slotWrites = nullptr,
@@ -11627,8 +11478,6 @@ inline ::flatbuffers::Offset<Commit> CreateCommitDirect(
       slots__,
       propagate__,
       closestPos__,
-      split,
-      stagingBase,
       sources__,
       slotReads__,
       slotWrites__,
@@ -16073,6 +15922,8 @@ struct RigExecWireRevision : public ::flatbuffers::NativeTable {
   int32_t weightField = -1;
   std::vector<rigExec::fb::RigExecWireExternalDeclaredInput> leafSites{};
   std::vector<rigExec::fb::RigExecWireExternalDeclaredInput> layoutLeafSites{};
+  bool rangeRole = false;
+  bool wholeRole = false;
   RigExecWireRevision() = default;
   RigExecWireRevision(const RigExecWireRevision &o);
   RigExecWireRevision(RigExecWireRevision&&) FLATBUFFERS_NOEXCEPT = default;
@@ -16131,7 +15982,9 @@ struct Revision FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_JOINTWEIGHTSSLOT = 86,
     VT_WEIGHTFIELD = 88,
     VT_LEAFSITES = 90,
-    VT_LAYOUTLEAFSITES = 92
+    VT_LAYOUTLEAFSITES = 92,
+    VT_RANGEROLE = 94,
+    VT_WHOLEROLE = 96
   };
   uint32_t moverPath() const {
     return GetField<uint32_t>(VT_MOVERPATH, 0);
@@ -16288,6 +16141,12 @@ struct Revision FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>> *layoutLeafSites() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>> *>(VT_LAYOUTLEAFSITES);
   }
+  bool rangeRole() const {
+    return GetField<uint8_t>(VT_RANGEROLE, 0) != 0;
+  }
+  bool wholeRole() const {
+    return GetField<uint8_t>(VT_WHOLEROLE, 0) != 0;
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -16358,6 +16217,8 @@ struct Revision FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffset(verifier, VT_LAYOUTLEAFSITES) &&
            verifier.VerifyVector(layoutLeafSites()) &&
            verifier.VerifyVectorOfTables(layoutLeafSites()) &&
+           VerifyField<uint8_t>(verifier, VT_RANGEROLE, 1) &&
+           VerifyField<uint8_t>(verifier, VT_WHOLEROLE, 1) &&
            verifier.EndTable();
   }
   RigExecWireRevision *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -16504,6 +16365,12 @@ struct RevisionBuilder {
   void add_layoutLeafSites(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>>> layoutLeafSites) {
     fbb_.AddOffset(Revision::VT_LAYOUTLEAFSITES, layoutLeafSites);
   }
+  void add_rangeRole(bool rangeRole) {
+    fbb_.AddElement<uint8_t>(Revision::VT_RANGEROLE, static_cast<uint8_t>(rangeRole), 0);
+  }
+  void add_wholeRole(bool wholeRole) {
+    fbb_.AddElement<uint8_t>(Revision::VT_WHOLEROLE, static_cast<uint8_t>(wholeRole), 0);
+  }
   explicit RevisionBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -16562,7 +16429,9 @@ inline ::flatbuffers::Offset<Revision> CreateRevision(
     int32_t jointWeightsSlot = -1,
     int32_t weightField = -1,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>>> leafSites = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>>> layoutLeafSites = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>>> layoutLeafSites = 0,
+    bool rangeRole = false,
+    bool wholeRole = false) {
   RevisionBuilder builder_(_fbb);
   builder_.add_partitionDistinctReads(partitionDistinctReads);
   builder_.add_partitionCandidates(partitionCandidates);
@@ -16601,6 +16470,8 @@ inline ::flatbuffers::Offset<Revision> CreateRevision(
   builder_.add_moverPrim(moverPrim);
   builder_.add_target(target);
   builder_.add_moverPath(moverPath);
+  builder_.add_wholeRole(wholeRole);
+  builder_.add_rangeRole(rangeRole);
   builder_.add_topologyResolved(topologyResolved);
   builder_.add_weightCurrentPhase(weightCurrentPhase);
   builder_.add_weightOperationDomain(weightOperationDomain);
@@ -16663,7 +16534,9 @@ inline ::flatbuffers::Offset<Revision> CreateRevisionDirect(
     int32_t jointWeightsSlot = -1,
     int32_t weightField = -1,
     const std::vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>> *leafSites = nullptr,
-    const std::vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>> *layoutLeafSites = nullptr) {
+    const std::vector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>> *layoutLeafSites = nullptr,
+    bool rangeRole = false,
+    bool wholeRole = false) {
   auto blendChannels__ = blendChannels ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::BlendChannel>>(*blendChannels) : 0;
   auto influenceSlots__ = influenceSlots ? _fbb.CreateVector<int32_t>(*influenceSlots) : 0;
   auto packetInfluences__ = packetInfluences ? _fbb.CreateVectorOfStructs<rigExec::fb::Matrix4d>(*packetInfluences) : 0;
@@ -16721,7 +16594,9 @@ inline ::flatbuffers::Offset<Revision> CreateRevisionDirect(
       jointWeightsSlot,
       weightField,
       leafSites__,
-      layoutLeafSites__);
+      layoutLeafSites__,
+      rangeRole,
+      wholeRole);
 }
 
 ::flatbuffers::Offset<Revision> CreateRevision(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireRevision *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -17026,16 +16901,16 @@ struct RigExecWireWeightObject : public ::flatbuffers::NativeTable {
   std::vector<float> falloffCurve{};
   bool envelopeOnly = false;
   bool samplesInFlight = false;
-  uint32_t oraclePlaneAxis = 0;
-  uint32_t oraclePlaneBounds = 0;
-  std::string oraclePhaseError{};
-  std::string oracleStaticError{};
+  uint32_t fieldPlaneAxis = 0;
+  uint32_t fieldPlaneBounds = 0;
+  std::string fieldPhaseError{};
+  std::string fieldStaticError{};
   int32_t valuesSlot = -1;
   int32_t indicesSlot = -1;
-  int32_t oracleSamplesSlot = -1;
-  int32_t oracleCurveSlot = -1;
-  int32_t oraclePlaneAxisSlot = -1;
-  int32_t oraclePlaneBoundsSlot = -1;
+  int32_t fieldSamplesSlot = -1;
+  int32_t fieldCurveSlot = -1;
+  int32_t fieldPlaneAxisSlot = -1;
+  int32_t fieldPlaneBoundsSlot = -1;
   RigExecWireWeightObject() = default;
   RigExecWireWeightObject(const RigExecWireWeightObject &o);
   RigExecWireWeightObject(RigExecWireWeightObject&&) FLATBUFFERS_NOEXCEPT = default;
@@ -17043,7 +16918,7 @@ struct RigExecWireWeightObject : public ::flatbuffers::NativeTable {
 };
 
 /// One weight object: its composition by value, its scalar reads, and the
-/// facts the runtime's port of the weight oracle needs. `base` and `inputs`
+/// facts the runtime's weight field needs. `base` and `inputs`
 /// index lower entries of the same table (dependency order).
 struct WeightObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef RigExecWireWeightObject NativeTableType;
@@ -17094,16 +16969,16 @@ struct WeightObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_FALLOFFCURVE = 84,
     VT_ENVELOPEONLY = 86,
     VT_SAMPLESINFLIGHT = 88,
-    VT_ORACLEPLANEAXIS = 94,
-    VT_ORACLEPLANEBOUNDS = 96,
-    VT_ORACLEPHASEERROR = 98,
-    VT_ORACLESTATICERROR = 100,
+    VT_FIELDPLANEAXIS = 94,
+    VT_FIELDPLANEBOUNDS = 96,
+    VT_FIELDPHASEERROR = 98,
+    VT_FIELDSTATICERROR = 100,
     VT_VALUESSLOT = 102,
     VT_INDICESSLOT = 104,
-    VT_ORACLESAMPLESSLOT = 106,
-    VT_ORACLECURVESLOT = 108,
-    VT_ORACLEPLANEAXISSLOT = 110,
-    VT_ORACLEPLANEBOUNDSSLOT = 112
+    VT_FIELDSAMPLESSLOT = 106,
+    VT_FIELDCURVESLOT = 108,
+    VT_FIELDPLANEAXISSLOT = 110,
+    VT_FIELDPLANEBOUNDSSLOT = 112
   };
   uint32_t path() const {
     return GetField<uint32_t>(VT_PATH, 0);
@@ -17208,8 +17083,8 @@ struct WeightObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t planeBounds() const {
     return GetField<uint32_t>(VT_PLANEBOUNDS, 0);
   }
-  /// Oracle objects retain the full authored weightTarget cardinality.
-  /// Canonical prim targets have valid=0: raw oracle fallback reads them,
+  /// Field-resolved objects retain the full authored weightTarget cardinality.
+  /// Canonical prim targets have valid=0: raw field fallback reads them,
   /// while packet gathering skips them, preserving native gather semantics.
   const ::flatbuffers::Vector<uint32_t> *targetPoints() const {
     return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_TARGETPOINTS);
@@ -17243,29 +17118,29 @@ struct WeightObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return GetField<uint8_t>(VT_SAMPLESINFLIGHT, 0) != 0;
   }
   /// A plane volume's rigExec:planeAxis and rigExec:planeBounds as the
-  /// oracle reads them (the fallback only when the attribute is absent);
+  /// weight field reads them (the fallback only when the attribute is absent);
   /// Token path ids, 0 for every other type.
-  uint32_t oraclePlaneAxis() const {
-    return GetField<uint32_t>(VT_ORACLEPLANEAXIS, 0);
+  uint32_t fieldPlaneAxis() const {
+    return GetField<uint32_t>(VT_FIELDPLANEAXIS, 0);
   }
-  uint32_t oraclePlaneBounds() const {
-    return GetField<uint32_t>(VT_ORACLEPLANEBOUNDS, 0);
+  uint32_t fieldPlaneBounds() const {
+    return GetField<uint32_t>(VT_FIELDPLANEBOUNDS, 0);
   }
-  /// The oracle's error text when the read-phase check fails, else empty.
-  const ::flatbuffers::String *oraclePhaseError() const {
-    return GetPointer<const ::flatbuffers::String *>(VT_ORACLEPHASEERROR);
+  /// The field's error text when the read-phase check fails, else empty.
+  const ::flatbuffers::String *fieldPhaseError() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_FIELDPHASEERROR);
   }
-  /// The oracle's error text for the object's first structural failure,
+  /// The field's error text for the object's first structural failure,
   /// which precedes every per-run read of it; else empty.
-  const ::flatbuffers::String *oracleStaticError() const {
-    return GetPointer<const ::flatbuffers::String *>(VT_ORACLESTATICERROR);
+  const ::flatbuffers::String *fieldStaticError() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_FIELDSTATICERROR);
   }
   /// Input slots, -1 for none: the painted rigExec:values (FloatArray)
   /// and rigExec:indices (IntArray), whose defaults are their values at
-  /// Default; and, for an object the oracle resolves, the points a volume
+  /// Default; and, for an object the weight field resolves, the points a volume
   /// not in flight samples (rigExec:sampleSource, else
   /// rigExec:weightTarget) and a curve volume's rigExec:curve points
-  /// (Vec3fArray, each at the attribute the oracle resolves its
+  /// (Vec3fArray, each at the attribute the weight field resolves its
   /// relationship to), read at the time.
   int32_t valuesSlot() const {
     return GetField<int32_t>(VT_VALUESSLOT, -1);
@@ -17273,19 +17148,19 @@ struct WeightObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int32_t indicesSlot() const {
     return GetField<int32_t>(VT_INDICESSLOT, -1);
   }
-  int32_t oracleSamplesSlot() const {
-    return GetField<int32_t>(VT_ORACLESAMPLESSLOT, -1);
+  int32_t fieldSamplesSlot() const {
+    return GetField<int32_t>(VT_FIELDSAMPLESSLOT, -1);
   }
-  int32_t oracleCurveSlot() const {
-    return GetField<int32_t>(VT_ORACLECURVESLOT, -1);
+  int32_t fieldCurveSlot() const {
+    return GetField<int32_t>(VT_FIELDCURVESLOT, -1);
   }
   /// Raw token transport; -1 distinguishes an absent attribute's default
   /// from an existing attribute whose sampled Get fails.
-  int32_t oraclePlaneAxisSlot() const {
-    return GetField<int32_t>(VT_ORACLEPLANEAXISSLOT, -1);
+  int32_t fieldPlaneAxisSlot() const {
+    return GetField<int32_t>(VT_FIELDPLANEAXISSLOT, -1);
   }
-  int32_t oraclePlaneBoundsSlot() const {
-    return GetField<int32_t>(VT_ORACLEPLANEBOUNDSSLOT, -1);
+  int32_t fieldPlaneBoundsSlot() const {
+    return GetField<int32_t>(VT_FIELDPLANEBOUNDSSLOT, -1);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -17360,18 +17235,18 @@ struct WeightObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVector(falloffCurve()) &&
            VerifyField<uint8_t>(verifier, VT_ENVELOPEONLY, 1) &&
            VerifyField<uint8_t>(verifier, VT_SAMPLESINFLIGHT, 1) &&
-           VerifyField<uint32_t>(verifier, VT_ORACLEPLANEAXIS, 4) &&
-           VerifyField<uint32_t>(verifier, VT_ORACLEPLANEBOUNDS, 4) &&
-           VerifyOffset(verifier, VT_ORACLEPHASEERROR) &&
-           verifier.VerifyString(oraclePhaseError()) &&
-           VerifyOffset(verifier, VT_ORACLESTATICERROR) &&
-           verifier.VerifyString(oracleStaticError()) &&
+           VerifyField<uint32_t>(verifier, VT_FIELDPLANEAXIS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_FIELDPLANEBOUNDS, 4) &&
+           VerifyOffset(verifier, VT_FIELDPHASEERROR) &&
+           verifier.VerifyString(fieldPhaseError()) &&
+           VerifyOffset(verifier, VT_FIELDSTATICERROR) &&
+           verifier.VerifyString(fieldStaticError()) &&
            VerifyField<int32_t>(verifier, VT_VALUESSLOT, 4) &&
            VerifyField<int32_t>(verifier, VT_INDICESSLOT, 4) &&
-           VerifyField<int32_t>(verifier, VT_ORACLESAMPLESSLOT, 4) &&
-           VerifyField<int32_t>(verifier, VT_ORACLECURVESLOT, 4) &&
-           VerifyField<int32_t>(verifier, VT_ORACLEPLANEAXISSLOT, 4) &&
-           VerifyField<int32_t>(verifier, VT_ORACLEPLANEBOUNDSSLOT, 4) &&
+           VerifyField<int32_t>(verifier, VT_FIELDSAMPLESSLOT, 4) &&
+           VerifyField<int32_t>(verifier, VT_FIELDCURVESLOT, 4) &&
+           VerifyField<int32_t>(verifier, VT_FIELDPLANEAXISSLOT, 4) &&
+           VerifyField<int32_t>(verifier, VT_FIELDPLANEBOUNDSSLOT, 4) &&
            verifier.EndTable();
   }
   RigExecWireWeightObject *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -17506,17 +17381,17 @@ struct WeightObjectBuilder {
   void add_samplesInFlight(bool samplesInFlight) {
     fbb_.AddElement<uint8_t>(WeightObject::VT_SAMPLESINFLIGHT, static_cast<uint8_t>(samplesInFlight), 0);
   }
-  void add_oraclePlaneAxis(uint32_t oraclePlaneAxis) {
-    fbb_.AddElement<uint32_t>(WeightObject::VT_ORACLEPLANEAXIS, oraclePlaneAxis, 0);
+  void add_fieldPlaneAxis(uint32_t fieldPlaneAxis) {
+    fbb_.AddElement<uint32_t>(WeightObject::VT_FIELDPLANEAXIS, fieldPlaneAxis, 0);
   }
-  void add_oraclePlaneBounds(uint32_t oraclePlaneBounds) {
-    fbb_.AddElement<uint32_t>(WeightObject::VT_ORACLEPLANEBOUNDS, oraclePlaneBounds, 0);
+  void add_fieldPlaneBounds(uint32_t fieldPlaneBounds) {
+    fbb_.AddElement<uint32_t>(WeightObject::VT_FIELDPLANEBOUNDS, fieldPlaneBounds, 0);
   }
-  void add_oraclePhaseError(::flatbuffers::Offset<::flatbuffers::String> oraclePhaseError) {
-    fbb_.AddOffset(WeightObject::VT_ORACLEPHASEERROR, oraclePhaseError);
+  void add_fieldPhaseError(::flatbuffers::Offset<::flatbuffers::String> fieldPhaseError) {
+    fbb_.AddOffset(WeightObject::VT_FIELDPHASEERROR, fieldPhaseError);
   }
-  void add_oracleStaticError(::flatbuffers::Offset<::flatbuffers::String> oracleStaticError) {
-    fbb_.AddOffset(WeightObject::VT_ORACLESTATICERROR, oracleStaticError);
+  void add_fieldStaticError(::flatbuffers::Offset<::flatbuffers::String> fieldStaticError) {
+    fbb_.AddOffset(WeightObject::VT_FIELDSTATICERROR, fieldStaticError);
   }
   void add_valuesSlot(int32_t valuesSlot) {
     fbb_.AddElement<int32_t>(WeightObject::VT_VALUESSLOT, valuesSlot, -1);
@@ -17524,17 +17399,17 @@ struct WeightObjectBuilder {
   void add_indicesSlot(int32_t indicesSlot) {
     fbb_.AddElement<int32_t>(WeightObject::VT_INDICESSLOT, indicesSlot, -1);
   }
-  void add_oracleSamplesSlot(int32_t oracleSamplesSlot) {
-    fbb_.AddElement<int32_t>(WeightObject::VT_ORACLESAMPLESSLOT, oracleSamplesSlot, -1);
+  void add_fieldSamplesSlot(int32_t fieldSamplesSlot) {
+    fbb_.AddElement<int32_t>(WeightObject::VT_FIELDSAMPLESSLOT, fieldSamplesSlot, -1);
   }
-  void add_oracleCurveSlot(int32_t oracleCurveSlot) {
-    fbb_.AddElement<int32_t>(WeightObject::VT_ORACLECURVESLOT, oracleCurveSlot, -1);
+  void add_fieldCurveSlot(int32_t fieldCurveSlot) {
+    fbb_.AddElement<int32_t>(WeightObject::VT_FIELDCURVESLOT, fieldCurveSlot, -1);
   }
-  void add_oraclePlaneAxisSlot(int32_t oraclePlaneAxisSlot) {
-    fbb_.AddElement<int32_t>(WeightObject::VT_ORACLEPLANEAXISSLOT, oraclePlaneAxisSlot, -1);
+  void add_fieldPlaneAxisSlot(int32_t fieldPlaneAxisSlot) {
+    fbb_.AddElement<int32_t>(WeightObject::VT_FIELDPLANEAXISSLOT, fieldPlaneAxisSlot, -1);
   }
-  void add_oraclePlaneBoundsSlot(int32_t oraclePlaneBoundsSlot) {
-    fbb_.AddElement<int32_t>(WeightObject::VT_ORACLEPLANEBOUNDSSLOT, oraclePlaneBoundsSlot, -1);
+  void add_fieldPlaneBoundsSlot(int32_t fieldPlaneBoundsSlot) {
+    fbb_.AddElement<int32_t>(WeightObject::VT_FIELDPLANEBOUNDSSLOT, fieldPlaneBoundsSlot, -1);
   }
   explicit WeightObjectBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
@@ -17609,28 +17484,28 @@ inline ::flatbuffers::Offset<WeightObject> CreateWeightObject(
     ::flatbuffers::Offset<::flatbuffers::Vector<float>> falloffCurve = 0,
     bool envelopeOnly = false,
     bool samplesInFlight = false,
-    uint32_t oraclePlaneAxis = 0,
-    uint32_t oraclePlaneBounds = 0,
-    ::flatbuffers::Offset<::flatbuffers::String> oraclePhaseError = 0,
-    ::flatbuffers::Offset<::flatbuffers::String> oracleStaticError = 0,
+    uint32_t fieldPlaneAxis = 0,
+    uint32_t fieldPlaneBounds = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> fieldPhaseError = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> fieldStaticError = 0,
     int32_t valuesSlot = -1,
     int32_t indicesSlot = -1,
-    int32_t oracleSamplesSlot = -1,
-    int32_t oracleCurveSlot = -1,
-    int32_t oraclePlaneAxisSlot = -1,
-    int32_t oraclePlaneBoundsSlot = -1) {
+    int32_t fieldSamplesSlot = -1,
+    int32_t fieldCurveSlot = -1,
+    int32_t fieldPlaneAxisSlot = -1,
+    int32_t fieldPlaneBoundsSlot = -1) {
   WeightObjectBuilder builder_(_fbb);
   builder_.add_costElements(costElements);
-  builder_.add_oraclePlaneBoundsSlot(oraclePlaneBoundsSlot);
-  builder_.add_oraclePlaneAxisSlot(oraclePlaneAxisSlot);
-  builder_.add_oracleCurveSlot(oracleCurveSlot);
-  builder_.add_oracleSamplesSlot(oracleSamplesSlot);
+  builder_.add_fieldPlaneBoundsSlot(fieldPlaneBoundsSlot);
+  builder_.add_fieldPlaneAxisSlot(fieldPlaneAxisSlot);
+  builder_.add_fieldCurveSlot(fieldCurveSlot);
+  builder_.add_fieldSamplesSlot(fieldSamplesSlot);
   builder_.add_indicesSlot(indicesSlot);
   builder_.add_valuesSlot(valuesSlot);
-  builder_.add_oracleStaticError(oracleStaticError);
-  builder_.add_oraclePhaseError(oraclePhaseError);
-  builder_.add_oraclePlaneBounds(oraclePlaneBounds);
-  builder_.add_oraclePlaneAxis(oraclePlaneAxis);
+  builder_.add_fieldStaticError(fieldStaticError);
+  builder_.add_fieldPhaseError(fieldPhaseError);
+  builder_.add_fieldPlaneBounds(fieldPlaneBounds);
+  builder_.add_fieldPlaneAxis(fieldPlaneAxis);
   builder_.add_falloffCurve(falloffCurve);
   builder_.add_curveValid(curveValid);
   builder_.add_curvePoints(curvePoints);
@@ -17722,16 +17597,16 @@ inline ::flatbuffers::Offset<WeightObject> CreateWeightObjectDirect(
     const std::vector<float> *falloffCurve = nullptr,
     bool envelopeOnly = false,
     bool samplesInFlight = false,
-    uint32_t oraclePlaneAxis = 0,
-    uint32_t oraclePlaneBounds = 0,
-    const char *oraclePhaseError = nullptr,
-    const char *oracleStaticError = nullptr,
+    uint32_t fieldPlaneAxis = 0,
+    uint32_t fieldPlaneBounds = 0,
+    const char *fieldPhaseError = nullptr,
+    const char *fieldStaticError = nullptr,
     int32_t valuesSlot = -1,
     int32_t indicesSlot = -1,
-    int32_t oracleSamplesSlot = -1,
-    int32_t oracleCurveSlot = -1,
-    int32_t oraclePlaneAxisSlot = -1,
-    int32_t oraclePlaneBoundsSlot = -1) {
+    int32_t fieldSamplesSlot = -1,
+    int32_t fieldCurveSlot = -1,
+    int32_t fieldPlaneAxisSlot = -1,
+    int32_t fieldPlaneBoundsSlot = -1) {
   auto inputs__ = inputs ? _fbb.CreateVector<int32_t>(*inputs) : 0;
   auto combineTargetPoints__ = combineTargetPoints ? _fbb.CreateVector<uint32_t>(*combineTargetPoints) : 0;
   auto combineTargetValid__ = combineTargetValid ? _fbb.CreateVector<uint8_t>(*combineTargetValid) : 0;
@@ -17742,8 +17617,8 @@ inline ::flatbuffers::Offset<WeightObject> CreateWeightObjectDirect(
   auto curvePoints__ = curvePoints ? _fbb.CreateVector<uint32_t>(*curvePoints) : 0;
   auto curveValid__ = curveValid ? _fbb.CreateVector<uint8_t>(*curveValid) : 0;
   auto falloffCurve__ = falloffCurve ? _fbb.CreateVector<float>(*falloffCurve) : 0;
-  auto oraclePhaseError__ = oraclePhaseError ? _fbb.CreateString(oraclePhaseError) : 0;
-  auto oracleStaticError__ = oracleStaticError ? _fbb.CreateString(oracleStaticError) : 0;
+  auto fieldPhaseError__ = fieldPhaseError ? _fbb.CreateString(fieldPhaseError) : 0;
+  auto fieldStaticError__ = fieldStaticError ? _fbb.CreateString(fieldStaticError) : 0;
   return rigExec::fb::CreateWeightObject(
       _fbb,
       path,
@@ -17787,16 +17662,16 @@ inline ::flatbuffers::Offset<WeightObject> CreateWeightObjectDirect(
       falloffCurve__,
       envelopeOnly,
       samplesInFlight,
-      oraclePlaneAxis,
-      oraclePlaneBounds,
-      oraclePhaseError__,
-      oracleStaticError__,
+      fieldPlaneAxis,
+      fieldPlaneBounds,
+      fieldPhaseError__,
+      fieldStaticError__,
       valuesSlot,
       indicesSlot,
-      oracleSamplesSlot,
-      oracleCurveSlot,
-      oraclePlaneAxisSlot,
-      oraclePlaneBoundsSlot);
+      fieldSamplesSlot,
+      fieldCurveSlot,
+      fieldPlaneAxisSlot,
+      fieldPlaneBoundsSlot);
 }
 
 ::flatbuffers::Offset<WeightObject> CreateWeightObject(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireWeightObject *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -17812,7 +17687,7 @@ struct RigExecWireWeightFieldPointRead : public ::flatbuffers::NativeTable {
   RigExecWireWeightFieldPointRead &operator=(RigExecWireWeightFieldPointRead o) FLATBUFFERS_NOEXCEPT;
 };
 
-/// One actual native per-consumer oracle context; never shared by object alone.
+/// One per-consumer weight field context; never shared by object alone.
 struct WeightFieldPointRead FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef RigExecWireWeightFieldPointRead NativeTableType;
   typedef WeightFieldPointReadBuilder Builder;
@@ -21568,6 +21443,1263 @@ struct WindowedOp::Traits {
 
 ::flatbuffers::Offset<WindowedOp> CreateWindowedOp(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireWindowedOp *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct RigExecWireManifestEntry : public ::flatbuffers::NativeTable {
+  typedef ManifestEntry TableType;
+  std::string nameSpace{};
+  std::string name{};
+  uint32_t version = 1;
+};
+
+/// Format 33: a stable id, (name_space, name, version).
+struct ManifestEntry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireManifestEntry NativeTableType;
+  typedef ManifestEntryBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return ManifestEntryTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_NAMESPACE = 4,
+    VT_NAME = 6,
+    VT_VERSION = 8
+  };
+  const ::flatbuffers::String *nameSpace() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_NAMESPACE);
+  }
+  const ::flatbuffers::String *name() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_NAME);
+  }
+  uint32_t version() const {
+    return GetField<uint32_t>(VT_VERSION, 1);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_NAMESPACE) &&
+           verifier.VerifyString(nameSpace()) &&
+           VerifyOffsetRequired(verifier, VT_NAME) &&
+           verifier.VerifyString(name()) &&
+           VerifyField<uint32_t>(verifier, VT_VERSION, 4) &&
+           verifier.EndTable();
+  }
+  RigExecWireManifestEntry *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireManifestEntry *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<ManifestEntry> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireManifestEntry* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ManifestEntryBuilder {
+  typedef ManifestEntry Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_nameSpace(::flatbuffers::Offset<::flatbuffers::String> nameSpace) {
+    fbb_.AddOffset(ManifestEntry::VT_NAMESPACE, nameSpace);
+  }
+  void add_name(::flatbuffers::Offset<::flatbuffers::String> name) {
+    fbb_.AddOffset(ManifestEntry::VT_NAME, name);
+  }
+  void add_version(uint32_t version) {
+    fbb_.AddElement<uint32_t>(ManifestEntry::VT_VERSION, version, 1);
+  }
+  explicit ManifestEntryBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<ManifestEntry> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<ManifestEntry>(end);
+    fbb_.Required(o, ManifestEntry::VT_NAMESPACE);
+    fbb_.Required(o, ManifestEntry::VT_NAME);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<ManifestEntry> CreateManifestEntry(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::String> nameSpace = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> name = 0,
+    uint32_t version = 1) {
+  ManifestEntryBuilder builder_(_fbb);
+  builder_.add_version(version);
+  builder_.add_name(name);
+  builder_.add_nameSpace(nameSpace);
+  return builder_.Finish();
+}
+
+struct ManifestEntry::Traits {
+  using type = ManifestEntry;
+  static auto constexpr Create = CreateManifestEntry;
+};
+
+inline ::flatbuffers::Offset<ManifestEntry> CreateManifestEntryDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const char *nameSpace = nullptr,
+    const char *name = nullptr,
+    uint32_t version = 1) {
+  auto nameSpace__ = nameSpace ? _fbb.CreateString(nameSpace) : 0;
+  auto name__ = name ? _fbb.CreateString(name) : 0;
+  return rigExec::fb::CreateManifestEntry(
+      _fbb,
+      nameSpace__,
+      name__,
+      version);
+}
+
+::flatbuffers::Offset<ManifestEntry> CreateManifestEntry(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireManifestEntry *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct RigExecWireManifest : public ::flatbuffers::NativeTable {
+  typedef Manifest TableType;
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>> revisionOps{};
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>> propertyOps{};
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>> providerOps{};
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>> valueTypes{};
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>> coreOps{};
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>> coreTypes{};
+  RigExecWireManifest() = default;
+  RigExecWireManifest(const RigExecWireManifest &o);
+  RigExecWireManifest(RigExecWireManifest&&) FLATBUFFERS_NOEXCEPT = default;
+  RigExecWireManifest &operator=(RigExecWireManifest o) FLATBUFFERS_NOEXCEPT;
+};
+
+/// Format 33: what the file's op and value-type ordinals stand for. Entry i
+/// of each list is the stable id of wire ordinal i in this file. Open maps
+/// each id to the reader's own ordinal (rigExecBinary/manifest.h), rewrites
+/// the op fields through that map and refuses an id it does not know.
+/// Older files get the format-32 table.
+struct Manifest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireManifest NativeTableType;
+  typedef ManifestBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return ManifestTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_REVISIONOPS = 4,
+    VT_PROPERTYOPS = 6,
+    VT_PROVIDEROPS = 8,
+    VT_VALUETYPES = 10,
+    VT_COREOPS = 12,
+    VT_CORETYPES = 14
+  };
+  /// Revision.op.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *revisionOps() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *>(VT_REVISIONOPS);
+  }
+  /// PropertyRevision.op.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *propertyOps() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *>(VT_PROPERTYOPS);
+  }
+  /// ProviderOp.kind.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *providerOps() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *>(VT_PROVIDEROPS);
+  }
+  /// InputTag. Must match the reader's in order.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *valueTypes() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *>(VT_VALUETYPES);
+  }
+  /// Format 35: OpNode.op, the ops of the reader's op registry.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *coreOps() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *>(VT_COREOPS);
+  }
+  /// Format 35: OpGraphOutput.type, the types of the reader's op registry.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *coreTypes() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *>(VT_CORETYPES);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffset(verifier, VT_REVISIONOPS) &&
+           verifier.VerifyVector(revisionOps()) &&
+           verifier.VerifyVectorOfTables(revisionOps()) &&
+           VerifyOffset(verifier, VT_PROPERTYOPS) &&
+           verifier.VerifyVector(propertyOps()) &&
+           verifier.VerifyVectorOfTables(propertyOps()) &&
+           VerifyOffset(verifier, VT_PROVIDEROPS) &&
+           verifier.VerifyVector(providerOps()) &&
+           verifier.VerifyVectorOfTables(providerOps()) &&
+           VerifyOffset(verifier, VT_VALUETYPES) &&
+           verifier.VerifyVector(valueTypes()) &&
+           verifier.VerifyVectorOfTables(valueTypes()) &&
+           VerifyOffset(verifier, VT_COREOPS) &&
+           verifier.VerifyVector(coreOps()) &&
+           verifier.VerifyVectorOfTables(coreOps()) &&
+           VerifyOffset(verifier, VT_CORETYPES) &&
+           verifier.VerifyVector(coreTypes()) &&
+           verifier.VerifyVectorOfTables(coreTypes()) &&
+           verifier.EndTable();
+  }
+  RigExecWireManifest *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireManifest *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<Manifest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireManifest* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ManifestBuilder {
+  typedef Manifest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_revisionOps(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> revisionOps) {
+    fbb_.AddOffset(Manifest::VT_REVISIONOPS, revisionOps);
+  }
+  void add_propertyOps(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> propertyOps) {
+    fbb_.AddOffset(Manifest::VT_PROPERTYOPS, propertyOps);
+  }
+  void add_providerOps(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> providerOps) {
+    fbb_.AddOffset(Manifest::VT_PROVIDEROPS, providerOps);
+  }
+  void add_valueTypes(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> valueTypes) {
+    fbb_.AddOffset(Manifest::VT_VALUETYPES, valueTypes);
+  }
+  void add_coreOps(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> coreOps) {
+    fbb_.AddOffset(Manifest::VT_COREOPS, coreOps);
+  }
+  void add_coreTypes(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> coreTypes) {
+    fbb_.AddOffset(Manifest::VT_CORETYPES, coreTypes);
+  }
+  explicit ManifestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<Manifest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<Manifest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<Manifest> CreateManifest(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> revisionOps = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> propertyOps = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> providerOps = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> valueTypes = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> coreOps = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>> coreTypes = 0) {
+  ManifestBuilder builder_(_fbb);
+  builder_.add_coreTypes(coreTypes);
+  builder_.add_coreOps(coreOps);
+  builder_.add_valueTypes(valueTypes);
+  builder_.add_providerOps(providerOps);
+  builder_.add_propertyOps(propertyOps);
+  builder_.add_revisionOps(revisionOps);
+  return builder_.Finish();
+}
+
+struct Manifest::Traits {
+  using type = Manifest;
+  static auto constexpr Create = CreateManifest;
+};
+
+inline ::flatbuffers::Offset<Manifest> CreateManifestDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *revisionOps = nullptr,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *propertyOps = nullptr,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *providerOps = nullptr,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *valueTypes = nullptr,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *coreOps = nullptr,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> *coreTypes = nullptr) {
+  auto revisionOps__ = revisionOps ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>(*revisionOps) : 0;
+  auto propertyOps__ = propertyOps ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>(*propertyOps) : 0;
+  auto providerOps__ = providerOps ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>(*providerOps) : 0;
+  auto valueTypes__ = valueTypes ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>(*valueTypes) : 0;
+  auto coreOps__ = coreOps ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>(*coreOps) : 0;
+  auto coreTypes__ = coreTypes ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>>(*coreTypes) : 0;
+  return rigExec::fb::CreateManifest(
+      _fbb,
+      revisionOps__,
+      propertyOps__,
+      providerOps__,
+      valueTypes__,
+      coreOps__,
+      coreTypes__);
+}
+
+::flatbuffers::Offset<Manifest> CreateManifest(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireManifest *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct RigExecWireOpNodeInput : public ::flatbuffers::NativeTable {
+  typedef OpNodeInput TableType;
+  uint32_t port = 0;
+  int32_t node = -1;
+  uint32_t output = 0;
+  int8_t host = -1;
+  uint32_t object = 0;
+  std::vector<uint8_t> constant{};
+};
+
+/// What feeds one input port of an op node: another node's output port,
+/// or (format 36) a value of the rig or a constant. Exactly one source is
+/// set.
+struct OpNodeInput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireOpNodeInput NativeTableType;
+  typedef OpNodeInputBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return OpNodeInputTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_PORT = 4,
+    VT_NODE = 6,
+    VT_OUTPUT = 8,
+    VT_HOST = 10,
+    VT_OBJECT = 12,
+    VT_CONSTANT = 14
+  };
+  /// The fed port: its index in the op's port list. A port taking many
+  /// values has one entry per value, in order.
+  uint32_t port() const {
+    return GetField<uint32_t>(VT_PORT, 0);
+  }
+  /// The feeding node, or -1.
+  int32_t node() const {
+    return GetField<int32_t>(VT_NODE, -1);
+  }
+  /// The feeding node's output port index.
+  uint32_t output() const {
+    return GetField<uint32_t>(VT_OUTPUT, 0);
+  }
+  /// Format 36, what else feeds the port, or -1: 0 a point chain's final
+  /// points (object: its chains[] index), 1 and 2 a joint's or control's
+  /// final and base matrix (object: its slot), 3 the constant `constant`
+  /// holds, 4 (format 37) OpGraph.lookups[object].
+  int8_t host() const {
+    return GetField<int8_t>(VT_HOST, -1);
+  }
+  uint32_t object() const {
+    return GetField<uint32_t>(VT_OBJECT, 0);
+  }
+  /// For a constant: the value's bytes, an array's elements one after
+  /// another.
+  const ::flatbuffers::Vector<uint8_t> *constant() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_CONSTANT);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_PORT, 4) &&
+           VerifyField<int32_t>(verifier, VT_NODE, 4) &&
+           VerifyField<uint32_t>(verifier, VT_OUTPUT, 4) &&
+           VerifyField<int8_t>(verifier, VT_HOST, 1) &&
+           VerifyField<uint32_t>(verifier, VT_OBJECT, 4) &&
+           VerifyOffset(verifier, VT_CONSTANT) &&
+           verifier.VerifyVector(constant()) &&
+           verifier.EndTable();
+  }
+  RigExecWireOpNodeInput *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireOpNodeInput *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<OpNodeInput> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpNodeInput* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct OpNodeInputBuilder {
+  typedef OpNodeInput Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_port(uint32_t port) {
+    fbb_.AddElement<uint32_t>(OpNodeInput::VT_PORT, port, 0);
+  }
+  void add_node(int32_t node) {
+    fbb_.AddElement<int32_t>(OpNodeInput::VT_NODE, node, -1);
+  }
+  void add_output(uint32_t output) {
+    fbb_.AddElement<uint32_t>(OpNodeInput::VT_OUTPUT, output, 0);
+  }
+  void add_host(int8_t host) {
+    fbb_.AddElement<int8_t>(OpNodeInput::VT_HOST, host, -1);
+  }
+  void add_object(uint32_t object) {
+    fbb_.AddElement<uint32_t>(OpNodeInput::VT_OBJECT, object, 0);
+  }
+  void add_constant(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> constant) {
+    fbb_.AddOffset(OpNodeInput::VT_CONSTANT, constant);
+  }
+  explicit OpNodeInputBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<OpNodeInput> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<OpNodeInput>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<OpNodeInput> CreateOpNodeInput(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t port = 0,
+    int32_t node = -1,
+    uint32_t output = 0,
+    int8_t host = -1,
+    uint32_t object = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> constant = 0) {
+  OpNodeInputBuilder builder_(_fbb);
+  builder_.add_constant(constant);
+  builder_.add_object(object);
+  builder_.add_output(output);
+  builder_.add_node(node);
+  builder_.add_port(port);
+  builder_.add_host(host);
+  return builder_.Finish();
+}
+
+struct OpNodeInput::Traits {
+  using type = OpNodeInput;
+  static auto constexpr Create = CreateOpNodeInput;
+};
+
+inline ::flatbuffers::Offset<OpNodeInput> CreateOpNodeInputDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t port = 0,
+    int32_t node = -1,
+    uint32_t output = 0,
+    int8_t host = -1,
+    uint32_t object = 0,
+    const std::vector<uint8_t> *constant = nullptr) {
+  auto constant__ = constant ? _fbb.CreateVector<uint8_t>(*constant) : 0;
+  return rigExec::fb::CreateOpNodeInput(
+      _fbb,
+      port,
+      node,
+      output,
+      host,
+      object,
+      constant__);
+}
+
+::flatbuffers::Offset<OpNodeInput> CreateOpNodeInput(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpNodeInput *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct RigExecWireOpNode : public ::flatbuffers::NativeTable {
+  typedef OpNode TableType;
+  uint32_t op = 0;
+  std::vector<uint8_t> payload{};
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireOpNodeInput>> inputs{};
+  RigExecWireOpNode() = default;
+  RigExecWireOpNode(const RigExecWireOpNode &o);
+  RigExecWireOpNode(RigExecWireOpNode&&) FLATBUFFERS_NOEXCEPT = default;
+  RigExecWireOpNode &operator=(RigExecWireOpNode o) FLATBUFFERS_NOEXCEPT;
+};
+
+/// Format 35: one op instance. Its op and ports are named by index only;
+/// the names live in Manifest.core_ops.
+struct OpNode FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireOpNode NativeTableType;
+  typedef OpNodeBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return OpNodeTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_OP = 4,
+    VT_PAYLOAD = 6,
+    VT_INPUTS = 8
+  };
+  /// Manifest.core_ops index.
+  uint32_t op() const {
+    return GetField<uint32_t>(VT_OP, 0);
+  }
+  /// The op's settings as its payload encode wrote them; empty for an op
+  /// without settings.
+  const ::flatbuffers::Vector<uint8_t> *payload() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_PAYLOAD);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpNodeInput>> *inputs() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpNodeInput>> *>(VT_INPUTS);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_OP, 4) &&
+           VerifyOffset(verifier, VT_PAYLOAD) &&
+           verifier.VerifyVector(payload()) &&
+           VerifyOffset(verifier, VT_INPUTS) &&
+           verifier.VerifyVector(inputs()) &&
+           verifier.VerifyVectorOfTables(inputs()) &&
+           verifier.EndTable();
+  }
+  RigExecWireOpNode *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireOpNode *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<OpNode> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpNode* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct OpNodeBuilder {
+  typedef OpNode Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_op(uint32_t op) {
+    fbb_.AddElement<uint32_t>(OpNode::VT_OP, op, 0);
+  }
+  void add_payload(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> payload) {
+    fbb_.AddOffset(OpNode::VT_PAYLOAD, payload);
+  }
+  void add_inputs(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpNodeInput>>> inputs) {
+    fbb_.AddOffset(OpNode::VT_INPUTS, inputs);
+  }
+  explicit OpNodeBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<OpNode> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<OpNode>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<OpNode> CreateOpNode(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t op = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> payload = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpNodeInput>>> inputs = 0) {
+  OpNodeBuilder builder_(_fbb);
+  builder_.add_inputs(inputs);
+  builder_.add_payload(payload);
+  builder_.add_op(op);
+  return builder_.Finish();
+}
+
+struct OpNode::Traits {
+  using type = OpNode;
+  static auto constexpr Create = CreateOpNode;
+};
+
+inline ::flatbuffers::Offset<OpNode> CreateOpNodeDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t op = 0,
+    const std::vector<uint8_t> *payload = nullptr,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::OpNodeInput>> *inputs = nullptr) {
+  auto payload__ = payload ? _fbb.CreateVector<uint8_t>(*payload) : 0;
+  auto inputs__ = inputs ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpNodeInput>>(*inputs) : 0;
+  return rigExec::fb::CreateOpNode(
+      _fbb,
+      op,
+      payload__,
+      inputs__);
+}
+
+::flatbuffers::Offset<OpNode> CreateOpNode(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpNode *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct RigExecWireOpGraphOutput : public ::flatbuffers::NativeTable {
+  typedef OpGraphOutput TableType;
+  uint32_t node = 0;
+  uint32_t port = 0;
+  uint32_t type = 0;
+  std::string name{};
+};
+
+/// Format 35: an op node output published under a name.
+struct OpGraphOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireOpGraphOutput NativeTableType;
+  typedef OpGraphOutputBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return OpGraphOutputTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_NODE = 4,
+    VT_PORT = 6,
+    VT_TYPE = 8,
+    VT_NAME = 10
+  };
+  uint32_t node() const {
+    return GetField<uint32_t>(VT_NODE, 0);
+  }
+  /// The output port's index in the op's port list.
+  uint32_t port() const {
+    return GetField<uint32_t>(VT_PORT, 0);
+  }
+  /// Manifest.core_types index of the port's type.
+  uint32_t type() const {
+    return GetField<uint32_t>(VT_TYPE, 0);
+  }
+  const ::flatbuffers::String *name() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_NAME);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_NODE, 4) &&
+           VerifyField<uint32_t>(verifier, VT_PORT, 4) &&
+           VerifyField<uint32_t>(verifier, VT_TYPE, 4) &&
+           VerifyOffsetRequired(verifier, VT_NAME) &&
+           verifier.VerifyString(name()) &&
+           verifier.EndTable();
+  }
+  RigExecWireOpGraphOutput *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireOpGraphOutput *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<OpGraphOutput> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpGraphOutput* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct OpGraphOutputBuilder {
+  typedef OpGraphOutput Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_node(uint32_t node) {
+    fbb_.AddElement<uint32_t>(OpGraphOutput::VT_NODE, node, 0);
+  }
+  void add_port(uint32_t port) {
+    fbb_.AddElement<uint32_t>(OpGraphOutput::VT_PORT, port, 0);
+  }
+  void add_type(uint32_t type) {
+    fbb_.AddElement<uint32_t>(OpGraphOutput::VT_TYPE, type, 0);
+  }
+  void add_name(::flatbuffers::Offset<::flatbuffers::String> name) {
+    fbb_.AddOffset(OpGraphOutput::VT_NAME, name);
+  }
+  explicit OpGraphOutputBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<OpGraphOutput> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<OpGraphOutput>(end);
+    fbb_.Required(o, OpGraphOutput::VT_NAME);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<OpGraphOutput> CreateOpGraphOutput(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t node = 0,
+    uint32_t port = 0,
+    uint32_t type = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> name = 0) {
+  OpGraphOutputBuilder builder_(_fbb);
+  builder_.add_name(name);
+  builder_.add_type(type);
+  builder_.add_port(port);
+  builder_.add_node(node);
+  return builder_.Finish();
+}
+
+struct OpGraphOutput::Traits {
+  using type = OpGraphOutput;
+  static auto constexpr Create = CreateOpGraphOutput;
+};
+
+inline ::flatbuffers::Offset<OpGraphOutput> CreateOpGraphOutputDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t node = 0,
+    uint32_t port = 0,
+    uint32_t type = 0,
+    const char *name = nullptr) {
+  auto name__ = name ? _fbb.CreateString(name) : 0;
+  return rigExec::fb::CreateOpGraphOutput(
+      _fbb,
+      node,
+      port,
+      type,
+      name__);
+}
+
+::flatbuffers::Offset<OpGraphOutput> CreateOpGraphOutput(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpGraphOutput *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct RigExecWireOpChain : public ::flatbuffers::NativeTable {
+  typedef OpChain TableType;
+  uint32_t pointChain = 0;
+  std::vector<int32_t> bounds{};
+  std::vector<uint32_t> members{};
+  std::vector<uint8_t> writes{};
+};
+
+/// Format 36: one range chain of the op nodes, in the order the op core
+/// compiles them: the point chain whose vertex groups it runs in and their
+/// bounds.
+struct OpChain FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireOpChain NativeTableType;
+  typedef OpChainBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return OpChainTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_POINTCHAIN = 4,
+    VT_BOUNDS = 6,
+    VT_MEMBERS = 8,
+    VT_WRITES = 10
+  };
+  uint32_t pointChain() const {
+    return GetField<uint32_t>(VT_POINTCHAIN, 0);
+  }
+  const ::flatbuffers::Vector<int32_t> *bounds() const {
+    return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_BOUNDS);
+  }
+  /// Format 42: the member nodes in chain order, and per member and group
+  /// (member-major) whether the member writes that group; empty when every
+  /// member writes every group.
+  const ::flatbuffers::Vector<uint32_t> *members() const {
+    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_MEMBERS);
+  }
+  const ::flatbuffers::Vector<uint8_t> *writes() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_WRITES);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_POINTCHAIN, 4) &&
+           VerifyOffset(verifier, VT_BOUNDS) &&
+           verifier.VerifyVector(bounds()) &&
+           VerifyOffset(verifier, VT_MEMBERS) &&
+           verifier.VerifyVector(members()) &&
+           VerifyOffset(verifier, VT_WRITES) &&
+           verifier.VerifyVector(writes()) &&
+           verifier.EndTable();
+  }
+  RigExecWireOpChain *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireOpChain *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<OpChain> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpChain* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct OpChainBuilder {
+  typedef OpChain Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_pointChain(uint32_t pointChain) {
+    fbb_.AddElement<uint32_t>(OpChain::VT_POINTCHAIN, pointChain, 0);
+  }
+  void add_bounds(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> bounds) {
+    fbb_.AddOffset(OpChain::VT_BOUNDS, bounds);
+  }
+  void add_members(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> members) {
+    fbb_.AddOffset(OpChain::VT_MEMBERS, members);
+  }
+  void add_writes(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> writes) {
+    fbb_.AddOffset(OpChain::VT_WRITES, writes);
+  }
+  explicit OpChainBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<OpChain> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<OpChain>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<OpChain> CreateOpChain(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t pointChain = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> bounds = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> members = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> writes = 0) {
+  OpChainBuilder builder_(_fbb);
+  builder_.add_writes(writes);
+  builder_.add_members(members);
+  builder_.add_bounds(bounds);
+  builder_.add_pointChain(pointChain);
+  return builder_.Finish();
+}
+
+struct OpChain::Traits {
+  using type = OpChain;
+  static auto constexpr Create = CreateOpChain;
+};
+
+inline ::flatbuffers::Offset<OpChain> CreateOpChainDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t pointChain = 0,
+    const std::vector<int32_t> *bounds = nullptr,
+    const std::vector<uint32_t> *members = nullptr,
+    const std::vector<uint8_t> *writes = nullptr) {
+  auto bounds__ = bounds ? _fbb.CreateVector<int32_t>(*bounds) : 0;
+  auto members__ = members ? _fbb.CreateVector<uint32_t>(*members) : 0;
+  auto writes__ = writes ? _fbb.CreateVector<uint8_t>(*writes) : 0;
+  return rigExec::fb::CreateOpChain(
+      _fbb,
+      pointChain,
+      bounds__,
+      members__,
+      writes__);
+}
+
+::flatbuffers::Offset<OpChain> CreateOpChain(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpChain *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct RigExecWireOpLookup : public ::flatbuffers::NativeTable {
+  typedef OpLookup TableType;
+  uint8_t source = 0;
+  uint32_t object = 0;
+  int32_t part = -1;
+  uint8_t read = 0;
+};
+
+/// Format 37: a value of the rig an op input (OpNodeInput.host 4) reads
+/// each time its node runs, found by the runtime as the evaluator finds it.
+struct OpLookup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireOpLookup NativeTableType;
+  typedef OpLookupBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return OpLookupTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_SOURCE = 4,
+    VT_OBJECT = 6,
+    VT_PART = 8,
+    VT_READ = 10
+  };
+  /// 0: a read of property chain `object` (property_chains index):
+  /// `read` 0 its base, else of revision `part`: 1 enabled, 2 the
+  /// weight, 3 value, 4 min, 5 max, 6 keys, 7 tangents, 8 path points.
+  /// 1 (format 38): the pose frame of fin (`part` 0) or base (`part` 1)
+  /// version `object`.
+  /// 2 (format 39): input `read` of weight object `object`
+  /// (geometry.weight_objects index; `part` -1): 0 defaultWeight, 1
+  /// driver, 2 scale, 3 bias, 4 strength, 5 invert, 6 falloffMin, 7
+  /// falloffMax, 8 the x, y, z scales, 9 the positive and 10 the negative
+  /// scales, 11 extentU, 12 extentV, 13 values, 14 indices, 15 sample, 16
+  /// target and 17 curve points, 18 the falloff samples, 19 the combine
+  /// target point count.
+  /// 3 (format 40): the points entering revision `part` of point chain
+  /// `object` (geometry.chains index), as one array.
+  /// 4 (format 40): input `read` of weight object `part` as weight field
+  /// `object` (geometry.weight_fields index) reads it: 0 defaultWeight, 1
+  /// driver, 2 scale, 3 bias, 4 strength, 5 invert, 6 falloffMin, 7
+  /// falloffMax, 8-10 the x, y, z scales, 11-13 the positive and 14-16 the
+  /// negative scales, 17 extentU, 18 extentV (floats); 19 the scales, 20
+  /// the positive and 21 the negative scales (Vec3f); 22 the sampled
+  /// points, 23 the curve points, 24 the falloff samples, 25 the placement,
+  /// 26 the field's point count, 27 values, 28 indices, 29 the plane axis
+  /// and 30 whether the plane is bounded (uint).
+  /// 20 (format 41): the rest frame of slot `object`. 21 (format 41): the
+  /// record gates of pose commit `object`: `read` 0 its present bytes, 1
+  /// record-after, 2 record-every-target, 3 whether it committed output
+  /// `part`.
+  /// 5: an array of `part` elements, element i what lookup `object` + i
+  /// answers. 6: the final (`part` 0) or base (`part` 1) matrix of
+  /// provider slot `object`. 7: frame record `object`, present when valid
+  /// this frame. 8: the delta geometry-domain constraint `object`
+  /// measured, present when it measured one. 9: the first present of the
+  /// `part` lookups from `object`, each a 6, 7 or 8 (Mat4d). 10 (format
+  /// 42): input `read` of revision `object` (geometry.revision_index): 0
+  /// inputs:enabled (Bool), 1 inputs:defaultWeight (Float), 2 (format 44)
+  /// whether rigExec:weightBlend is radial (Bool), 3-13 (format 48) a delta
+  /// mush's inputs and its chain's base points, 14-15 (format 50) a lattice's
+  /// rest and live cages, 16 (format 54) the weight of a blend shape's
+  /// channel `part`, 31-34 (format 68) the activation, dense points,
+  /// sparse offsets and indices of its sample `part` (OpRevisionRead,
+  /// rigExecEvalCore/opSteps.h).
+  /// 22 (format 45): provider refresh `object`'s re-evaluated base
+  /// (`read` 0) or current (1) frame. 23 (format 45): the raw parent space
+  /// of slot `object`. 24 (format 45): typed input list `read`
+  /// (ProviderRead, rigExecEvalCore/spaces.h) of provider operation
+  /// `object` (provider_program.ops index), filled from the provider values
+  /// its inputs name. 25 (format 49): flag `read` (ProviderCandidateRead,
+  /// rigExecGraph/providerInputs.h: 0 present, 1 authoritative, 2 blocked)
+  /// of each candidate that can answer provider value producer `object`
+  /// (ProviderProducers numbering: provider_program.ops, sampled,
+  /// external_inputs, routed_inputs, then pose.provider_frame_inputs).
+  /// 30 (format 43): the frames of pose commit `object` at version list
+  /// `part`: 0 entering, 1 carry, 2 base carry, 3 current descendants, 4
+  /// closest, 5 descendant carry, 6 descendant base carry. 31 (format 43):
+  /// commit `object`'s candidates: `part` 0 their frames, 1 which are
+  /// present.
+  /// 32 to 37 and 39 (format 47) read constraint commit `object`
+  /// (OpConstraintRead, rigExecEvalCore/opSteps.h, in `read`): 32 its
+  /// sources, `part` -1 all of them, else source `part`'s frame (`read`
+  /// 0) or rest frame (1); 33 a per-source table; 34 an input of its mover;
+  /// 35 its envelope: the weight it solves at, its delta weight or which
+  /// of its commit's candidates are present; 36 its rigExec:space carry;
+  /// 37 the world-up direction its aim reads, `part` the world-up mode
+  /// (OpConstraintWorldUp); 39 its geometry target's authored transform
+  /// (`read` 0) or whether it was read (1).
+  /// 38, 70 and 71 (format 51) read an input of harmonics, single-chain IK
+  /// and IK/FK match constraint commit `object`, `read` an
+  /// OpHarmonicsRead, OpSingleChainIkRead or OpIkFkMatchRead
+  /// (rigExecEvalCore/opSteps.h).
+  /// 40 (format 52): the values of provider slot `object`'s avar
+  /// bindings, its varying ones then its constant ones. 41 (format 52):
+  /// input `read` (OpCheckpointRead, rigExecEvalCore/opSteps.h) of space
+  /// checkpoint `object` over the slots it recomposes, outermost first: 0
+  /// their avars, 1 rotation orders, 2 rotation signs, 3 posed defaults, 4
+  /// parent default inverses, 5 parent expressions and 6 whether each was
+  /// authored, 7 whether the posed matrix was authored and 8 that matrix,
+  /// 9 its anchor's posed matrix.
+  /// 42 (format 52): input `read` (OpInterpolatorRead,
+  /// rigExecEvalCore/opSteps.h) of pose interpolator `object`: 0
+  /// inputs:enabled, 1 its numeric driver values, 2 inputs:mask, 3 and 4
+  /// its driver's last fin and rest frames, 5 and 6 its parent's, 7 to 10
+  /// its extra drivers' and their parents' (lists).
+  /// 43 (format 56): input `read` (OpRestRead) of compose group
+  /// `object`'s RestCompose node: 0 its slot's rest avars, 1 rest space, 2
+  /// intervening space, 3 its parent's rest round trip.
+  /// 44 (format 68): input `read` (OpLadderRead) of compose group
+  /// `object`'s LadderCompose node: 0 its ladder channels 1 to 6, 1 their
+  /// authored flags, 2 the parent space leaf, 3 the rotation sign, 4 the
+  /// default avars, 5 its slot's rest round trip, 6 and 7 its parent's rest
+  /// and default round trips.
+  /// 60 (format 55): input `part` (OpSolverRead, rigExecEvalCore/opSteps.h)
+  /// of solver `object` (pose.solvers index), read by one of its op nodes.
+  uint8_t source() const {
+    return GetField<uint8_t>(VT_SOURCE, 0);
+  }
+  uint32_t object() const {
+    return GetField<uint32_t>(VT_OBJECT, 0);
+  }
+  int32_t part() const {
+    return GetField<int32_t>(VT_PART, -1);
+  }
+  uint8_t read() const {
+    return GetField<uint8_t>(VT_READ, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint8_t>(verifier, VT_SOURCE, 1) &&
+           VerifyField<uint32_t>(verifier, VT_OBJECT, 4) &&
+           VerifyField<int32_t>(verifier, VT_PART, 4) &&
+           VerifyField<uint8_t>(verifier, VT_READ, 1) &&
+           verifier.EndTable();
+  }
+  RigExecWireOpLookup *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireOpLookup *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<OpLookup> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpLookup* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct OpLookupBuilder {
+  typedef OpLookup Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_source(uint8_t source) {
+    fbb_.AddElement<uint8_t>(OpLookup::VT_SOURCE, source, 0);
+  }
+  void add_object(uint32_t object) {
+    fbb_.AddElement<uint32_t>(OpLookup::VT_OBJECT, object, 0);
+  }
+  void add_part(int32_t part) {
+    fbb_.AddElement<int32_t>(OpLookup::VT_PART, part, -1);
+  }
+  void add_read(uint8_t read) {
+    fbb_.AddElement<uint8_t>(OpLookup::VT_READ, read, 0);
+  }
+  explicit OpLookupBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<OpLookup> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<OpLookup>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<OpLookup> CreateOpLookup(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint8_t source = 0,
+    uint32_t object = 0,
+    int32_t part = -1,
+    uint8_t read = 0) {
+  OpLookupBuilder builder_(_fbb);
+  builder_.add_part(part);
+  builder_.add_object(object);
+  builder_.add_read(read);
+  builder_.add_source(source);
+  return builder_.Finish();
+}
+
+struct OpLookup::Traits {
+  using type = OpLookup;
+  static auto constexpr Create = CreateOpLookup;
+};
+
+::flatbuffers::Offset<OpLookup> CreateOpLookup(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpLookup *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct RigExecWireOpHostOutput : public ::flatbuffers::NativeTable {
+  typedef OpHostOutput TableType;
+  uint32_t node = 0;
+  uint32_t port = 0;
+  uint8_t target = 0;
+  uint32_t object = 0;
+};
+
+/// Format 37: a node port's value the runtime stores in its own slot after
+/// the node runs: an output, or an input a lookup feeds.
+struct OpHostOutput FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireOpHostOutput NativeTableType;
+  typedef OpHostOutputBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return OpHostOutputTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_NODE = 4,
+    VT_PORT = 6,
+    VT_TARGET = 8,
+    VT_OBJECT = 10
+  };
+  uint32_t node() const {
+    return GetField<uint32_t>(VT_NODE, 0);
+  }
+  uint32_t port() const {
+    return GetField<uint32_t>(VT_PORT, 0);
+  }
+  /// 0: property version `object`; 1 and 2 (format 38): the final and
+  /// the base placement of volume slot `object`; 3 (format 39): the
+  /// packet of weight object `object`; 5 (format 40): the weights of weight
+  /// field `object`; 20 and 21 (format 41): the final and the base matrix
+  /// of slot `object`; 22 and 23 (format 41): the matrix and the valid byte
+  /// of frame record `object`; 24 to 27 (format 45): provider refresh `object`'s base
+  /// and final frames and its carried descendants' base and final frames;
+  /// 28 and 29 (format 45): provider operation `object`'s matrix or frame into its
+  /// provider value, published after 50, its authority, and 51, the input
+  /// that left it unavailable (-1 when available); 52 (format 49): the candidate that
+  /// answers provider value producer `object` (-1 when it holds no value),
+  /// published into that producer's value after 53, its authority, and 54,
+  /// its blocked flag;
+  /// 30 to 33 (format 43): the final candidate,
+  /// final descendant, base candidate and base descendant versions pose
+  /// commit `object` writes; 34 (format 43): which of its candidates are
+  /// present; 35 (format 47): the frame constraint commit `object`'s mover
+  /// solved; 36 and 37 (format 47): the delta it measured against its
+  /// geometry target's authored transform and whether it measured one;
+  /// 70 (format 51): what constraint commit `object`'s Harmonics,
+  /// SingleChainIk or IkFkMatch node made of its frames; 71 (format 51):
+  /// the chain its single-chain IK solved; 72 to 74 (format 51): the IK and
+  /// FK values its IK/FK match matched and the controls it presents.
+  /// 40 (format 52): an AvarInputs node's values into provider slot
+  /// `object`'s bound avars, in ascending channel order; 41 (format 52):
+  /// space checkpoint `object`'s switch frame;
+  /// 42 (format 52): pose interpolator `object`'s weights, one per pose in
+  /// its solve's order; the rest of its weight range publishes zero.
+  /// 43 (format 56): RestCompose output `port` (OpRestOutput: 4 the rest
+  /// matrix, 5 the rest frame, 6 the rest round trip) into compose group
+  /// `object`'s slot.
+  /// 44 (format 68): LadderCompose output `port` (OpLadderOutput, 8 to 16)
+  /// into compose group `object`'s slot's ladder tables.
+  /// 45 (format 68): pose interpolator `object`'s status
+  /// (RigExecPoseInterpolatorStatus); an unusable driver gives its node's
+  /// step one line.
+  /// 60 (format 55): solver `object`'s frames, from its last op node, as
+  /// its aggregate and its commit's outputs; 61 (format 55): whether 2D
+  /// skeleton solver `object` solved in its plane.
+  /// 4 (format 42): a range chain member's output, group by group, into
+  /// the vertex groups of revision `object` (geometry.revision_index), the
+  /// groups its OpChain.writes names. 6 (format 44): the looked-up
+  /// inputs:enabled of revision `object`, whose groups the same node
+  /// stores.
+  uint8_t target() const {
+    return GetField<uint8_t>(VT_TARGET, 0);
+  }
+  uint32_t object() const {
+    return GetField<uint32_t>(VT_OBJECT, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_NODE, 4) &&
+           VerifyField<uint32_t>(verifier, VT_PORT, 4) &&
+           VerifyField<uint8_t>(verifier, VT_TARGET, 1) &&
+           VerifyField<uint32_t>(verifier, VT_OBJECT, 4) &&
+           verifier.EndTable();
+  }
+  RigExecWireOpHostOutput *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireOpHostOutput *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<OpHostOutput> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpHostOutput* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct OpHostOutputBuilder {
+  typedef OpHostOutput Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_node(uint32_t node) {
+    fbb_.AddElement<uint32_t>(OpHostOutput::VT_NODE, node, 0);
+  }
+  void add_port(uint32_t port) {
+    fbb_.AddElement<uint32_t>(OpHostOutput::VT_PORT, port, 0);
+  }
+  void add_target(uint8_t target) {
+    fbb_.AddElement<uint8_t>(OpHostOutput::VT_TARGET, target, 0);
+  }
+  void add_object(uint32_t object) {
+    fbb_.AddElement<uint32_t>(OpHostOutput::VT_OBJECT, object, 0);
+  }
+  explicit OpHostOutputBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<OpHostOutput> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<OpHostOutput>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<OpHostOutput> CreateOpHostOutput(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t node = 0,
+    uint32_t port = 0,
+    uint8_t target = 0,
+    uint32_t object = 0) {
+  OpHostOutputBuilder builder_(_fbb);
+  builder_.add_object(object);
+  builder_.add_port(port);
+  builder_.add_node(node);
+  builder_.add_target(target);
+  return builder_.Finish();
+}
+
+struct OpHostOutput::Traits {
+  using type = OpHostOutput;
+  static auto constexpr Create = CreateOpHostOutput;
+};
+
+::flatbuffers::Offset<OpHostOutput> CreateOpHostOutput(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpHostOutput *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct RigExecWireOpGraph : public ::flatbuffers::NativeTable {
+  typedef OpGraph TableType;
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireOpNode>> nodes{};
+  std::vector<::rigExec::RigExecWireIntPair> order{};
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireOpGraphOutput>> outputs{};
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireOpChain>> chains{};
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireOpLookup>> lookups{};
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireOpHostOutput>> hostOutputs{};
+  RigExecWireOpGraph() = default;
+  RigExecWireOpGraph(const RigExecWireOpGraph &o);
+  RigExecWireOpGraph(RigExecWireOpGraph&&) FLATBUFFERS_NOEXCEPT = default;
+  RigExecWireOpGraph &operator=(RigExecWireOpGraph o) FLATBUFFERS_NOEXCEPT;
+};
+
+/// Format 36: op nodes the common graph runs as OpNode, OpChainHead and
+/// OpChainRange steps, ordered by their declared reads like any other.
+struct OpGraph FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireOpGraph NativeTableType;
+  typedef OpGraphBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return OpGraphTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_NODES = 4,
+    VT_ORDER = 6,
+    VT_OUTPUTS = 8,
+    VT_CHAINS = 10,
+    VT_LOOKUPS = 12,
+    VT_HOSTOUTPUTS = 14
+  };
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpNode>> *nodes() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpNode>> *>(VT_NODES);
+  }
+  /// (first, second) node pairs: first runs before second.
+  const ::flatbuffers::Vector<const rigExec::fb::IntPair *> *order() const {
+    return GetPointer<const ::flatbuffers::Vector<const rigExec::fb::IntPair *> *>(VT_ORDER);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpGraphOutput>> *outputs() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpGraphOutput>> *>(VT_OUTPUTS);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpChain>> *chains() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpChain>> *>(VT_CHAINS);
+  }
+  /// Format 37.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpLookup>> *lookups() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpLookup>> *>(VT_LOOKUPS);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpHostOutput>> *hostOutputs() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpHostOutput>> *>(VT_HOSTOUTPUTS);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffset(verifier, VT_NODES) &&
+           verifier.VerifyVector(nodes()) &&
+           verifier.VerifyVectorOfTables(nodes()) &&
+           VerifyOffset(verifier, VT_ORDER) &&
+           verifier.VerifyVector(order()) &&
+           VerifyOffset(verifier, VT_OUTPUTS) &&
+           verifier.VerifyVector(outputs()) &&
+           verifier.VerifyVectorOfTables(outputs()) &&
+           VerifyOffset(verifier, VT_CHAINS) &&
+           verifier.VerifyVector(chains()) &&
+           verifier.VerifyVectorOfTables(chains()) &&
+           VerifyOffset(verifier, VT_LOOKUPS) &&
+           verifier.VerifyVector(lookups()) &&
+           verifier.VerifyVectorOfTables(lookups()) &&
+           VerifyOffset(verifier, VT_HOSTOUTPUTS) &&
+           verifier.VerifyVector(hostOutputs()) &&
+           verifier.VerifyVectorOfTables(hostOutputs()) &&
+           verifier.EndTable();
+  }
+  RigExecWireOpGraph *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireOpGraph *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<OpGraph> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpGraph* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct OpGraphBuilder {
+  typedef OpGraph Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_nodes(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpNode>>> nodes) {
+    fbb_.AddOffset(OpGraph::VT_NODES, nodes);
+  }
+  void add_order(::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::IntPair *>> order) {
+    fbb_.AddOffset(OpGraph::VT_ORDER, order);
+  }
+  void add_outputs(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpGraphOutput>>> outputs) {
+    fbb_.AddOffset(OpGraph::VT_OUTPUTS, outputs);
+  }
+  void add_chains(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpChain>>> chains) {
+    fbb_.AddOffset(OpGraph::VT_CHAINS, chains);
+  }
+  void add_lookups(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpLookup>>> lookups) {
+    fbb_.AddOffset(OpGraph::VT_LOOKUPS, lookups);
+  }
+  void add_hostOutputs(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpHostOutput>>> hostOutputs) {
+    fbb_.AddOffset(OpGraph::VT_HOSTOUTPUTS, hostOutputs);
+  }
+  explicit OpGraphBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<OpGraph> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<OpGraph>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<OpGraph> CreateOpGraph(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpNode>>> nodes = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::IntPair *>> order = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpGraphOutput>>> outputs = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpChain>>> chains = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpLookup>>> lookups = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::OpHostOutput>>> hostOutputs = 0) {
+  OpGraphBuilder builder_(_fbb);
+  builder_.add_hostOutputs(hostOutputs);
+  builder_.add_lookups(lookups);
+  builder_.add_chains(chains);
+  builder_.add_outputs(outputs);
+  builder_.add_order(order);
+  builder_.add_nodes(nodes);
+  return builder_.Finish();
+}
+
+struct OpGraph::Traits {
+  using type = OpGraph;
+  static auto constexpr Create = CreateOpGraph;
+};
+
+inline ::flatbuffers::Offset<OpGraph> CreateOpGraphDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::OpNode>> *nodes = nullptr,
+    const std::vector<rigExec::fb::IntPair> *order = nullptr,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::OpGraphOutput>> *outputs = nullptr,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::OpChain>> *chains = nullptr,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::OpLookup>> *lookups = nullptr,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::OpHostOutput>> *hostOutputs = nullptr) {
+  auto nodes__ = nodes ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpNode>>(*nodes) : 0;
+  auto order__ = order ? _fbb.CreateVectorOfStructs<rigExec::fb::IntPair>(*order) : 0;
+  auto outputs__ = outputs ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpGraphOutput>>(*outputs) : 0;
+  auto chains__ = chains ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpChain>>(*chains) : 0;
+  auto lookups__ = lookups ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpLookup>>(*lookups) : 0;
+  auto hostOutputs__ = hostOutputs ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpHostOutput>>(*hostOutputs) : 0;
+  return rigExec::fb::CreateOpGraph(
+      _fbb,
+      nodes__,
+      order__,
+      outputs__,
+      chains__,
+      lookups__,
+      hostOutputs__);
+}
+
+::flatbuffers::Offset<OpGraph> CreateOpGraph(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpGraph *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct RigExecWireFile : public ::flatbuffers::NativeTable {
   typedef File TableType;
   uint32_t formatVersion = 0;
@@ -21604,6 +22736,8 @@ struct RigExecWireFile : public ::flatbuffers::NativeTable {
   std::vector<rigExec::fb::RigExecWireBoolArray> boolArrays{};
   std::vector<rigExec::fb::RigExecWireWindowedOp> windowedOps{};
   std::vector<uint32_t> scalarPrimvarChains{};
+  std::unique_ptr<rigExec::fb::RigExecWireManifest> manifest{};
+  std::unique_ptr<rigExec::fb::RigExecWireOpGraph> opGraph{};
   RigExecWireFile() = default;
   RigExecWireFile(const RigExecWireFile &o);
   RigExecWireFile(RigExecWireFile&&) FLATBUFFERS_NOEXCEPT = default;
@@ -21651,7 +22785,9 @@ struct File FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_TOKENARRAYS = 64,
     VT_BOOLARRAYS = 66,
     VT_WINDOWEDOPS = 68,
-    VT_SCALARPRIMVARCHAINS = 70
+    VT_SCALARPRIMVARCHAINS = 70,
+    VT_MANIFEST = 72,
+    VT_OPGRAPH = 74
   };
   /// RigExecFormatVersion.
   uint32_t formatVersion() const {
@@ -21772,6 +22908,14 @@ struct File FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<uint32_t> *scalarPrimvarChains() const {
     return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_SCALARPRIMVARCHAINS);
   }
+  /// Format 33: the stable ids of the file's ordinals. Required from 33.
+  const rigExec::fb::Manifest *manifest() const {
+    return GetPointer<const rigExec::fb::Manifest *>(VT_MANIFEST);
+  }
+  /// Format 35: op nodes run through the op core.
+  const rigExec::fb::OpGraph *opGraph() const {
+    return GetPointer<const rigExec::fb::OpGraph *>(VT_OPGRAPH);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -21858,6 +23002,10 @@ struct File FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVectorOfTables(windowedOps()) &&
            VerifyOffset(verifier, VT_SCALARPRIMVARCHAINS) &&
            verifier.VerifyVector(scalarPrimvarChains()) &&
+           VerifyOffset(verifier, VT_MANIFEST) &&
+           verifier.VerifyTable(manifest()) &&
+           VerifyOffset(verifier, VT_OPGRAPH) &&
+           verifier.VerifyTable(opGraph()) &&
            verifier.EndTable();
   }
   RigExecWireFile *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -21971,6 +23119,12 @@ struct FileBuilder {
   void add_scalarPrimvarChains(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> scalarPrimvarChains) {
     fbb_.AddOffset(File::VT_SCALARPRIMVARCHAINS, scalarPrimvarChains);
   }
+  void add_manifest(::flatbuffers::Offset<rigExec::fb::Manifest> manifest) {
+    fbb_.AddOffset(File::VT_MANIFEST, manifest);
+  }
+  void add_opGraph(::flatbuffers::Offset<rigExec::fb::OpGraph> opGraph) {
+    fbb_.AddOffset(File::VT_OPGRAPH, opGraph);
+  }
   explicit FileBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -22025,8 +23179,12 @@ inline ::flatbuffers::Offset<File> CreateFile(
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::TokenArray>>> tokenArrays = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::BoolArray>>> boolArrays = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::WindowedOp>>> windowedOps = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> scalarPrimvarChains = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> scalarPrimvarChains = 0,
+    ::flatbuffers::Offset<rigExec::fb::Manifest> manifest = 0,
+    ::flatbuffers::Offset<rigExec::fb::OpGraph> opGraph = 0) {
   FileBuilder builder_(_fbb);
+  builder_.add_opGraph(opGraph);
+  builder_.add_manifest(manifest);
   builder_.add_scalarPrimvarChains(scalarPrimvarChains);
   builder_.add_windowedOps(windowedOps);
   builder_.add_boolArrays(boolArrays);
@@ -22104,7 +23262,9 @@ inline ::flatbuffers::Offset<File> CreateFileDirect(
     const std::vector<::flatbuffers::Offset<rigExec::fb::TokenArray>> *tokenArrays = nullptr,
     const std::vector<::flatbuffers::Offset<rigExec::fb::BoolArray>> *boolArrays = nullptr,
     const std::vector<::flatbuffers::Offset<rigExec::fb::WindowedOp>> *windowedOps = nullptr,
-    const std::vector<uint32_t> *scalarPrimvarChains = nullptr) {
+    const std::vector<uint32_t> *scalarPrimvarChains = nullptr,
+    ::flatbuffers::Offset<rigExec::fb::Manifest> manifest = 0,
+    ::flatbuffers::Offset<rigExec::fb::OpGraph> opGraph = 0) {
   auto names__ = names ? _fbb.CreateVector<::flatbuffers::Offset<::flatbuffers::String>>(*names) : 0;
   auto paths__ = paths ? _fbb.CreateVectorOfStructs<rigExec::fb::PathNode>(*paths) : 0;
   auto values__ = values ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Value>>(*values) : 0;
@@ -22163,7 +23323,9 @@ inline ::flatbuffers::Offset<File> CreateFileDirect(
       tokenArrays__,
       boolArrays__,
       windowedOps__,
-      scalarPrimvarChains__);
+      scalarPrimvarChains__,
+      manifest,
+      opGraph);
 }
 
 ::flatbuffers::Offset<File> CreateFile(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireFile *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -23458,17 +24620,14 @@ inline RigExecWirePoseInterpolator::RigExecWirePoseInterpolator(const RigExecWir
         weightEnd(o.weightEnd),
         poseSlots(o.poseSlots),
         disabledSlots(o.disabledSlots),
-        solver((o.solver) ? new rigExec::fb::RigExecWireRbf(*o.solver) : nullptr),
         enableTranslation(o.enableTranslation),
         valueInputs(o.valueInputs),
-        method((o.method) ? new rigExec::fb::RigExecWireRbfMethod(*o.method) : nullptr),
         extraDriverSlots(o.extraDriverSlots),
         extraParentSlots(o.extraParentSlots),
-        network((o.network) ? new rigExec::fb::RigExecWireMlNetwork(*o.network) : nullptr),
         mask((o.mask) ? new rigExec::fb::RigExecWireInput(*o.mask) : nullptr),
-        maps((o.maps) ? new rigExec::fb::RigExecWireAnimatedMaps(*o.maps) : nullptr),
         primvarSlots(o.primvarSlots),
-        primvarSources(o.primvarSources) {
+        primvarSources(o.primvarSources),
+        solve(o.solve) {
 }
 
 inline RigExecWirePoseInterpolator &RigExecWirePoseInterpolator::operator=(RigExecWirePoseInterpolator o) FLATBUFFERS_NOEXCEPT {
@@ -23481,17 +24640,14 @@ inline RigExecWirePoseInterpolator &RigExecWirePoseInterpolator::operator=(RigEx
   std::swap(weightEnd, o.weightEnd);
   std::swap(poseSlots, o.poseSlots);
   std::swap(disabledSlots, o.disabledSlots);
-  std::swap(solver, o.solver);
   std::swap(enableTranslation, o.enableTranslation);
   std::swap(valueInputs, o.valueInputs);
-  std::swap(method, o.method);
   std::swap(extraDriverSlots, o.extraDriverSlots);
   std::swap(extraParentSlots, o.extraParentSlots);
-  std::swap(network, o.network);
   std::swap(mask, o.mask);
-  std::swap(maps, o.maps);
   std::swap(primvarSlots, o.primvarSlots);
   std::swap(primvarSources, o.primvarSources);
+  std::swap(solve, o.solve);
   return *this;
 }
 
@@ -23513,17 +24669,14 @@ inline void PoseInterpolator::UnPackTo(RigExecWirePoseInterpolator *_o, const ::
   { auto _e = weightEnd(); _o->weightEnd = _e; }
   { auto _e = poseSlots(); if (_e) { _o->poseSlots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->poseSlots[_i] = _e->Get(_i); } } else { _o->poseSlots.resize(0); } }
   { auto _e = disabledSlots(); if (_e) { _o->disabledSlots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->disabledSlots[_i] = _e->Get(_i); } } else { _o->disabledSlots.resize(0); } }
-  { auto _e = solver(); if (_e) { if(_o->solver) { _e->UnPackTo(_o->solver.get(), _resolver); } else { _o->solver = std::unique_ptr<rigExec::fb::RigExecWireRbf>(_e->UnPack(_resolver)); } } else if (_o->solver) { _o->solver.reset(); } }
   { auto _e = enableTranslation(); _o->enableTranslation = _e; }
   { auto _e = valueInputs(); if (_e) { _o->valueInputs.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->valueInputs[_i] = *std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->valueInputs.resize(0); } }
-  { auto _e = method(); if (_e) { if(_o->method) { _e->UnPackTo(_o->method.get(), _resolver); } else { _o->method = std::unique_ptr<rigExec::fb::RigExecWireRbfMethod>(_e->UnPack(_resolver)); } } else if (_o->method) { _o->method.reset(); } }
   { auto _e = extraDriverSlots(); if (_e) { _o->extraDriverSlots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->extraDriverSlots[_i] = _e->Get(_i); } } else { _o->extraDriverSlots.resize(0); } }
   { auto _e = extraParentSlots(); if (_e) { _o->extraParentSlots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->extraParentSlots[_i] = _e->Get(_i); } } else { _o->extraParentSlots.resize(0); } }
-  { auto _e = network(); if (_e) { if(_o->network) { _e->UnPackTo(_o->network.get(), _resolver); } else { _o->network = std::unique_ptr<rigExec::fb::RigExecWireMlNetwork>(_e->UnPack(_resolver)); } } else if (_o->network) { _o->network.reset(); } }
   { auto _e = mask(); if (_e) { if(_o->mask) { _e->UnPackTo(_o->mask.get(), _resolver); } else { _o->mask = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->mask) { _o->mask.reset(); } }
-  { auto _e = maps(); if (_e) { if(_o->maps) { _e->UnPackTo(_o->maps.get(), _resolver); } else { _o->maps = std::unique_ptr<rigExec::fb::RigExecWireAnimatedMaps>(_e->UnPack(_resolver)); } } else if (_o->maps) { _o->maps.reset(); } }
   { auto _e = primvarSlots(); if (_e) { _o->primvarSlots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->primvarSlots[_i] = _e->Get(_i); } } else { _o->primvarSlots.resize(0); } }
   { auto _e = primvarSources(); if (_e) { _o->primvarSources.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->primvarSources[_i] = _e->Get(_i); } } else { _o->primvarSources.resize(0); } }
+  { auto _e = solve(); _o->solve = _e; }
 }
 
 inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolator(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWirePoseInterpolator *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -23543,17 +24696,14 @@ inline ::flatbuffers::Offset<PoseInterpolator> PoseInterpolator::Pack(::flatbuff
   auto _weightEnd = _o->weightEnd;
   auto _poseSlots = _o->poseSlots.size() ? _fbb.CreateVector(_o->poseSlots) : 0;
   auto _disabledSlots = _o->disabledSlots.size() ? _fbb.CreateVector(_o->disabledSlots) : 0;
-  auto _solver = _o->solver ? CreateRbf(_fbb, _o->solver.get(), _rehasher) : 0;
   auto _enableTranslation = _o->enableTranslation;
   auto _valueInputs = _o->valueInputs.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Input>> (_o->valueInputs.size(), [](size_t i, _VectorArgs *__va) { return CreateInput(*__va->__fbb, &(__va->__o->valueInputs[i]), __va->__rehasher); }, &_va ) : 0;
-  auto _method = _o->method ? CreateRbfMethod(_fbb, _o->method.get(), _rehasher) : 0;
   auto _extraDriverSlots = _o->extraDriverSlots.size() ? _fbb.CreateVector(_o->extraDriverSlots) : 0;
   auto _extraParentSlots = _o->extraParentSlots.size() ? _fbb.CreateVector(_o->extraParentSlots) : 0;
-  auto _network = _o->network ? CreateMlNetwork(_fbb, _o->network.get(), _rehasher) : 0;
   auto _mask = _o->mask ? CreateInput(_fbb, _o->mask.get(), _rehasher) : 0;
-  auto _maps = _o->maps ? CreateAnimatedMaps(_fbb, _o->maps.get(), _rehasher) : 0;
   auto _primvarSlots = _o->primvarSlots.size() ? _fbb.CreateVector(_o->primvarSlots) : 0;
   auto _primvarSources = _o->primvarSources.size() ? _fbb.CreateVector(_o->primvarSources) : 0;
+  auto _solve = _o->solve;
   return rigExec::fb::CreatePoseInterpolator(
       _fbb,
       _path,
@@ -23565,17 +24715,14 @@ inline ::flatbuffers::Offset<PoseInterpolator> PoseInterpolator::Pack(::flatbuff
       _weightEnd,
       _poseSlots,
       _disabledSlots,
-      _solver,
       _enableTranslation,
       _valueInputs,
-      _method,
       _extraDriverSlots,
       _extraParentSlots,
-      _network,
       _mask,
-      _maps,
       _primvarSlots,
-      _primvarSources);
+      _primvarSources,
+      _solve);
 }
 
 inline RigExecWireSkeleton2d *Skeleton2d::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
@@ -23786,38 +24933,29 @@ inline RigExecWireSolver::RigExecWireSolver(const RigExecWireSolver &o)
         jointRests(o.jointRests),
         restsVary(o.restsVary),
         restOverrides(o.restOverrides),
-        splineRestWeights(o.splineRestWeights),
-        splineRestMode(o.splineRestMode),
         degenerate(o.degenerate),
         controls(o.controls),
         parentRelative(o.parentRelative),
-        controlRests(o.controlRests),
         start(o.start),
-        startRest(o.startRest),
         startRead(o.startRead),
         root(o.root),
         mid(o.mid),
         end(o.end),
         pole(o.pole),
         ikRests(o.ikRests),
-        ikParams(o.ikParams),
         bend((o.bend) ? new rigExec::fb::RigExecWireInput(*o.bend) : nullptr),
         upperOffset((o.upperOffset) ? new rigExec::fb::RigExecWireInput(*o.upperOffset) : nullptr),
         lowerOffset((o.lowerOffset) ? new rigExec::fb::RigExecWireInput(*o.lowerOffset) : nullptr),
         stretch((o.stretch) ? new rigExec::fb::RigExecWireInput(*o.stretch) : nullptr),
         softness((o.softness) ? new rigExec::fb::RigExecWireInput(*o.softness) : nullptr),
-        upperLengthBase(o.upperLengthBase),
-        lowerLengthBase(o.lowerLengthBase),
         ikSpace((o.ikSpace) ? new rigExec::fb::RigExecWireInput(*o.ikSpace) : nullptr),
         spaceSlot(o.spaceSlot),
-        spaceRest(o.spaceRest),
         spaceRead(o.spaceRead),
         inA(o.inA),
         inB(o.inB),
         blendWeight((o.blendWeight) ? new rigExec::fb::RigExecWireInput(*o.blendWeight) : nullptr),
         scaleMode(o.scaleMode),
         blendRotationRejected(o.blendRotationRejected),
-        splineRest((o.splineRest) ? new rigExec::fb::RigExecWireSplineIkRest(*o.splineRest) : nullptr),
         splineParams(o.splineParams),
         splineJointRests(o.splineJointRests),
         splineCount(o.splineCount),
@@ -23827,12 +24965,8 @@ inline RigExecWireSolver::RigExecWireSolver(const RigExecWireSolver &o)
         twist((o.twist) ? new rigExec::fb::RigExecWireInput(*o.twist) : nullptr),
         minLengthRatio((o.minLengthRatio) ? new rigExec::fb::RigExecWireInput(*o.minLengthRatio) : nullptr),
         splineParamsVary(o.splineParamsVary),
-        twistStartRest(o.twistStartRest),
-        twistEndRest(o.twistEndRest),
-        twistWeights(o.twistWeights),
         twistTurns((o.twistTurns) ? new rigExec::fb::RigExecWireInput(*o.twistTurns) : nullptr),
         ribbonPointsPath(o.ribbonPointsPath),
-        ribbonRestPoints(o.ribbonRestPoints),
         ribbonConstantPoints(o.ribbonConstantPoints),
         ribbonSampleCount((o.ribbonSampleCount) ? new rigExec::fb::RigExecWireInput(*o.ribbonSampleCount) : nullptr),
         outputs(o.outputs),
@@ -23871,38 +25005,29 @@ inline RigExecWireSolver &RigExecWireSolver::operator=(RigExecWireSolver o) FLAT
   std::swap(jointRests, o.jointRests);
   std::swap(restsVary, o.restsVary);
   std::swap(restOverrides, o.restOverrides);
-  std::swap(splineRestWeights, o.splineRestWeights);
-  std::swap(splineRestMode, o.splineRestMode);
   std::swap(degenerate, o.degenerate);
   std::swap(controls, o.controls);
   std::swap(parentRelative, o.parentRelative);
-  std::swap(controlRests, o.controlRests);
   std::swap(start, o.start);
-  std::swap(startRest, o.startRest);
   std::swap(startRead, o.startRead);
   std::swap(root, o.root);
   std::swap(mid, o.mid);
   std::swap(end, o.end);
   std::swap(pole, o.pole);
   std::swap(ikRests, o.ikRests);
-  std::swap(ikParams, o.ikParams);
   std::swap(bend, o.bend);
   std::swap(upperOffset, o.upperOffset);
   std::swap(lowerOffset, o.lowerOffset);
   std::swap(stretch, o.stretch);
   std::swap(softness, o.softness);
-  std::swap(upperLengthBase, o.upperLengthBase);
-  std::swap(lowerLengthBase, o.lowerLengthBase);
   std::swap(ikSpace, o.ikSpace);
   std::swap(spaceSlot, o.spaceSlot);
-  std::swap(spaceRest, o.spaceRest);
   std::swap(spaceRead, o.spaceRead);
   std::swap(inA, o.inA);
   std::swap(inB, o.inB);
   std::swap(blendWeight, o.blendWeight);
   std::swap(scaleMode, o.scaleMode);
   std::swap(blendRotationRejected, o.blendRotationRejected);
-  std::swap(splineRest, o.splineRest);
   std::swap(splineParams, o.splineParams);
   std::swap(splineJointRests, o.splineJointRests);
   std::swap(splineCount, o.splineCount);
@@ -23912,12 +25037,8 @@ inline RigExecWireSolver &RigExecWireSolver::operator=(RigExecWireSolver o) FLAT
   std::swap(twist, o.twist);
   std::swap(minLengthRatio, o.minLengthRatio);
   std::swap(splineParamsVary, o.splineParamsVary);
-  std::swap(twistStartRest, o.twistStartRest);
-  std::swap(twistEndRest, o.twistEndRest);
-  std::swap(twistWeights, o.twistWeights);
   std::swap(twistTurns, o.twistTurns);
   std::swap(ribbonPointsPath, o.ribbonPointsPath);
-  std::swap(ribbonRestPoints, o.ribbonRestPoints);
   std::swap(ribbonConstantPoints, o.ribbonConstantPoints);
   std::swap(ribbonSampleCount, o.ribbonSampleCount);
   std::swap(outputs, o.outputs);
@@ -23965,38 +25086,29 @@ inline void Solver::UnPackTo(RigExecWireSolver *_o, const ::flatbuffers::resolve
   { auto _e = jointRests(); if (_e) { _o->jointRests.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->jointRests[_i] = ::flatbuffers::UnPackLandmarks(*_e->Get(_i)); } } else { _o->jointRests.resize(0); } }
   { auto _e = restsVary(); _o->restsVary = _e; }
   { auto _e = restOverrides(); if (_e) { _o->restOverrides.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->restOverrides[_i] = _e->Get(_i); } } else { _o->restOverrides.resize(0); } }
-  { auto _e = splineRestWeights(); if (_e) { _o->splineRestWeights.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->splineRestWeights[_i] = _e->Get(_i); } } else { _o->splineRestWeights.resize(0); } }
-  { auto _e = splineRestMode(); _o->splineRestMode = _e; }
   { auto _e = degenerate(); _o->degenerate = _e; }
   { auto _e = controls(); if (_e) { _o->controls.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->controls[_i] = _e->Get(_i); } } else { _o->controls.resize(0); } }
   { auto _e = parentRelative(); _o->parentRelative = _e; }
-  { auto _e = controlRests(); if (_e) { _o->controlRests.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->controlRests[_i] = ::flatbuffers::UnPackLandmarks(*_e->Get(_i)); } } else { _o->controlRests.resize(0); } }
   { auto _e = start(); _o->start = _e; }
-  { auto _e = startRest(); if (_e) _o->startRest = ::flatbuffers::UnPackLandmarks(*_e); }
   { auto _e = startRead(); _o->startRead = _e; }
   { auto _e = root(); _o->root = _e; }
   { auto _e = mid(); _o->mid = _e; }
   { auto _e = end(); _o->end = _e; }
   { auto _e = pole(); _o->pole = _e; }
   { auto _e = ikRests(); if (_e) { _o->ikRests.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->ikRests[_i] = ::flatbuffers::UnPackLandmarks(*_e->Get(_i)); } } else { _o->ikRests.resize(0); } }
-  { auto _e = ikParams(); if (_e) _o->ikParams = ::flatbuffers::UnPackTwoBoneIkParams(*_e); }
   { auto _e = bend(); if (_e) { if(_o->bend) { _e->UnPackTo(_o->bend.get(), _resolver); } else { _o->bend = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->bend) { _o->bend.reset(); } }
   { auto _e = upperOffset(); if (_e) { if(_o->upperOffset) { _e->UnPackTo(_o->upperOffset.get(), _resolver); } else { _o->upperOffset = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->upperOffset) { _o->upperOffset.reset(); } }
   { auto _e = lowerOffset(); if (_e) { if(_o->lowerOffset) { _e->UnPackTo(_o->lowerOffset.get(), _resolver); } else { _o->lowerOffset = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->lowerOffset) { _o->lowerOffset.reset(); } }
   { auto _e = stretch(); if (_e) { if(_o->stretch) { _e->UnPackTo(_o->stretch.get(), _resolver); } else { _o->stretch = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->stretch) { _o->stretch.reset(); } }
   { auto _e = softness(); if (_e) { if(_o->softness) { _e->UnPackTo(_o->softness.get(), _resolver); } else { _o->softness = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->softness) { _o->softness.reset(); } }
-  { auto _e = upperLengthBase(); if (_e) _o->upperLengthBase = ::flatbuffers::UnPackF64(*_e); }
-  { auto _e = lowerLengthBase(); if (_e) _o->lowerLengthBase = ::flatbuffers::UnPackF64(*_e); }
   { auto _e = ikSpace(); if (_e) { if(_o->ikSpace) { _e->UnPackTo(_o->ikSpace.get(), _resolver); } else { _o->ikSpace = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->ikSpace) { _o->ikSpace.reset(); } }
   { auto _e = spaceSlot(); _o->spaceSlot = _e; }
-  { auto _e = spaceRest(); if (_e) _o->spaceRest = ::flatbuffers::UnPackLandmarks(*_e); }
   { auto _e = spaceRead(); _o->spaceRead = _e; }
   { auto _e = inA(); _o->inA = _e; }
   { auto _e = inB(); _o->inB = _e; }
   { auto _e = blendWeight(); if (_e) { if(_o->blendWeight) { _e->UnPackTo(_o->blendWeight.get(), _resolver); } else { _o->blendWeight = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->blendWeight) { _o->blendWeight.reset(); } }
   { auto _e = scaleMode(); _o->scaleMode = _e; }
   { auto _e = blendRotationRejected(); _o->blendRotationRejected = _e; }
-  { auto _e = splineRest(); if (_e) { if(_o->splineRest) { _e->UnPackTo(_o->splineRest.get(), _resolver); } else { _o->splineRest = std::unique_ptr<rigExec::fb::RigExecWireSplineIkRest>(_e->UnPack(_resolver)); } } else if (_o->splineRest) { _o->splineRest.reset(); } }
   { auto _e = splineParams(); if (_e) _o->splineParams = ::flatbuffers::UnPackSplineIkParams(*_e); }
   { auto _e = splineJointRests(); if (_e) { _o->splineJointRests.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->splineJointRests[_i] = ::flatbuffers::UnPackLandmarks(*_e->Get(_i)); } } else { _o->splineJointRests.resize(0); } }
   { auto _e = splineCount(); _o->splineCount = _e; }
@@ -24006,12 +25118,8 @@ inline void Solver::UnPackTo(RigExecWireSolver *_o, const ::flatbuffers::resolve
   { auto _e = twist(); if (_e) { if(_o->twist) { _e->UnPackTo(_o->twist.get(), _resolver); } else { _o->twist = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->twist) { _o->twist.reset(); } }
   { auto _e = minLengthRatio(); if (_e) { if(_o->minLengthRatio) { _e->UnPackTo(_o->minLengthRatio.get(), _resolver); } else { _o->minLengthRatio = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->minLengthRatio) { _o->minLengthRatio.reset(); } }
   { auto _e = splineParamsVary(); _o->splineParamsVary = _e; }
-  { auto _e = twistStartRest(); if (_e) _o->twistStartRest = ::flatbuffers::UnPackLandmarks(*_e); }
-  { auto _e = twistEndRest(); if (_e) _o->twistEndRest = ::flatbuffers::UnPackLandmarks(*_e); }
-  { auto _e = twistWeights(); if (_e) { _o->twistWeights.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->twistWeights[_i] = _e->Get(_i); } } else { _o->twistWeights.resize(0); } }
   { auto _e = twistTurns(); if (_e) { if(_o->twistTurns) { _e->UnPackTo(_o->twistTurns.get(), _resolver); } else { _o->twistTurns = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->twistTurns) { _o->twistTurns.reset(); } }
   { auto _e = ribbonPointsPath(); _o->ribbonPointsPath = _e; }
-  { auto _e = ribbonRestPoints(); if (_e) { _o->ribbonRestPoints.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->ribbonRestPoints[_i] = ::flatbuffers::UnPackVec3f(*_e->Get(_i)); } } else { _o->ribbonRestPoints.resize(0); } }
   { auto _e = ribbonConstantPoints(); if (_e) { _o->ribbonConstantPoints.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->ribbonConstantPoints[_i] = ::flatbuffers::UnPackVec3f(*_e->Get(_i)); } } else { _o->ribbonConstantPoints.resize(0); } }
   { auto _e = ribbonSampleCount(); if (_e) { if(_o->ribbonSampleCount) { _e->UnPackTo(_o->ribbonSampleCount.get(), _resolver); } else { _o->ribbonSampleCount = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->ribbonSampleCount) { _o->ribbonSampleCount.reset(); } }
   { auto _e = outputs(); if (_e) { _o->outputs.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->outputs[_i] = ::flatbuffers::UnPackIntPair(*_e->Get(_i)); } } else { _o->outputs.resize(0); } }
@@ -24057,38 +25165,29 @@ inline ::flatbuffers::Offset<Solver> Solver::Pack(::flatbuffers::FlatBufferBuild
   auto _jointRests = _o->jointRests.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::Landmarks, ::rigExec::RigExecWireLandmarks>(_o->jointRests, ::flatbuffers::PackLandmarks) : 0;
   auto _restsVary = _o->restsVary;
   auto _restOverrides = _o->restOverrides.size() ? _fbb.CreateVector(_o->restOverrides) : 0;
-  auto _splineRestWeights = _o->splineRestWeights.size() ? _fbb.CreateVector(_o->splineRestWeights) : 0;
-  auto _splineRestMode = _o->splineRestMode;
   auto _degenerate = _o->degenerate;
   auto _controls = _o->controls.size() ? _fbb.CreateVector(_o->controls) : 0;
   auto _parentRelative = _o->parentRelative;
-  auto _controlRests = _o->controlRests.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::Landmarks, ::rigExec::RigExecWireLandmarks>(_o->controlRests, ::flatbuffers::PackLandmarks) : 0;
   auto _start = _o->start;
-  auto _startRest = ::flatbuffers::PackLandmarks(_o->startRest);
   auto _startRead = _o->startRead;
   auto _root = _o->root;
   auto _mid = _o->mid;
   auto _end = _o->end;
   auto _pole = _o->pole;
   auto _ikRests = _o->ikRests.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::Landmarks, ::rigExec::RigExecWireLandmarks>(_o->ikRests, ::flatbuffers::PackLandmarks) : 0;
-  auto _ikParams = ::flatbuffers::PackTwoBoneIkParams(_o->ikParams);
   auto _bend = _o->bend ? CreateInput(_fbb, _o->bend.get(), _rehasher) : 0;
   auto _upperOffset = _o->upperOffset ? CreateInput(_fbb, _o->upperOffset.get(), _rehasher) : 0;
   auto _lowerOffset = _o->lowerOffset ? CreateInput(_fbb, _o->lowerOffset.get(), _rehasher) : 0;
   auto _stretch = _o->stretch ? CreateInput(_fbb, _o->stretch.get(), _rehasher) : 0;
   auto _softness = _o->softness ? CreateInput(_fbb, _o->softness.get(), _rehasher) : 0;
-  auto _upperLengthBase = ::flatbuffers::PackF64(_o->upperLengthBase);
-  auto _lowerLengthBase = ::flatbuffers::PackF64(_o->lowerLengthBase);
   auto _ikSpace = _o->ikSpace ? CreateInput(_fbb, _o->ikSpace.get(), _rehasher) : 0;
   auto _spaceSlot = _o->spaceSlot;
-  auto _spaceRest = ::flatbuffers::PackLandmarks(_o->spaceRest);
   auto _spaceRead = _o->spaceRead;
   auto _inA = _o->inA;
   auto _inB = _o->inB;
   auto _blendWeight = _o->blendWeight ? CreateInput(_fbb, _o->blendWeight.get(), _rehasher) : 0;
   auto _scaleMode = _o->scaleMode;
   auto _blendRotationRejected = _o->blendRotationRejected;
-  auto _splineRest = _o->splineRest ? CreateSplineIkRest(_fbb, _o->splineRest.get(), _rehasher) : 0;
   auto _splineParams = ::flatbuffers::PackSplineIkParams(_o->splineParams);
   auto _splineJointRests = _o->splineJointRests.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::Landmarks, ::rigExec::RigExecWireLandmarks>(_o->splineJointRests, ::flatbuffers::PackLandmarks) : 0;
   auto _splineCount = _o->splineCount;
@@ -24098,12 +25197,8 @@ inline ::flatbuffers::Offset<Solver> Solver::Pack(::flatbuffers::FlatBufferBuild
   auto _twist = _o->twist ? CreateInput(_fbb, _o->twist.get(), _rehasher) : 0;
   auto _minLengthRatio = _o->minLengthRatio ? CreateInput(_fbb, _o->minLengthRatio.get(), _rehasher) : 0;
   auto _splineParamsVary = _o->splineParamsVary;
-  auto _twistStartRest = ::flatbuffers::PackLandmarks(_o->twistStartRest);
-  auto _twistEndRest = ::flatbuffers::PackLandmarks(_o->twistEndRest);
-  auto _twistWeights = _o->twistWeights.size() ? _fbb.CreateVector(_o->twistWeights) : 0;
   auto _twistTurns = _o->twistTurns ? CreateInput(_fbb, _o->twistTurns.get(), _rehasher) : 0;
   auto _ribbonPointsPath = _o->ribbonPointsPath;
-  auto _ribbonRestPoints = _o->ribbonRestPoints.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::Vec3f, ::rigExec::RigExecWireVec3f>(_o->ribbonRestPoints, ::flatbuffers::PackVec3f) : 0;
   auto _ribbonConstantPoints = _o->ribbonConstantPoints.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::Vec3f, ::rigExec::RigExecWireVec3f>(_o->ribbonConstantPoints, ::flatbuffers::PackVec3f) : 0;
   auto _ribbonSampleCount = _o->ribbonSampleCount ? CreateInput(_fbb, _o->ribbonSampleCount.get(), _rehasher) : 0;
   auto _outputs = _o->outputs.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::IntPair, ::rigExec::RigExecWireIntPair>(_o->outputs, ::flatbuffers::PackIntPair) : 0;
@@ -24141,38 +25236,29 @@ inline ::flatbuffers::Offset<Solver> Solver::Pack(::flatbuffers::FlatBufferBuild
       _jointRests,
       _restsVary,
       _restOverrides,
-      _splineRestWeights,
-      _splineRestMode,
       _degenerate,
       _controls,
       _parentRelative,
-      _controlRests,
       _start,
-      &_startRest,
       _startRead,
       _root,
       _mid,
       _end,
       _pole,
       _ikRests,
-      &_ikParams,
       _bend,
       _upperOffset,
       _lowerOffset,
       _stretch,
       _softness,
-      &_upperLengthBase,
-      &_lowerLengthBase,
       _ikSpace,
       _spaceSlot,
-      &_spaceRest,
       _spaceRead,
       _inA,
       _inB,
       _blendWeight,
       _scaleMode,
       _blendRotationRejected,
-      _splineRest,
       &_splineParams,
       _splineJointRests,
       _splineCount,
@@ -24182,12 +25268,8 @@ inline ::flatbuffers::Offset<Solver> Solver::Pack(::flatbuffers::FlatBufferBuild
       _twist,
       _minLengthRatio,
       _splineParamsVary,
-      &_twistStartRest,
-      &_twistEndRest,
-      _twistWeights,
       _twistTurns,
       _ribbonPointsPath,
-      _ribbonRestPoints,
       _ribbonConstantPoints,
       _ribbonSampleCount,
       _outputs,
@@ -24654,8 +25736,6 @@ inline void Commit::UnPackTo(RigExecWireCommit *_o, const ::flatbuffers::resolve
   { auto _e = slots(); if (_e) { _o->slots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->slots[_i] = _e->Get(_i); } } else { _o->slots.resize(0); } }
   { auto _e = propagate(); if (_e) { _o->propagate.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->propagate[_i] = ::flatbuffers::UnPackIntPair(*_e->Get(_i)); } } else { _o->propagate.resize(0); } }
   { auto _e = closestPos(); if (_e) { _o->closestPos.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->closestPos[_i] = _e->Get(_i); } } else { _o->closestPos.resize(0); } }
-  { auto _e = split(); _o->split = _e; }
-  { auto _e = stagingBase(); _o->stagingBase = _e; }
   { auto _e = sources(); if (_e) { _o->sources.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->sources[_i] = ::flatbuffers::UnPackConstraintSource(*_e->Get(_i)); } } else { _o->sources.resize(0); } }
   { auto _e = slotReads(); if (_e) { _o->slotReads.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->slotReads[_i] = _e->Get(_i); } } else { _o->slotReads.resize(0); } }
   { auto _e = slotWrites(); if (_e) { _o->slotWrites.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->slotWrites[_i] = _e->Get(_i); } } else { _o->slotWrites.resize(0); } }
@@ -24695,8 +25775,6 @@ inline ::flatbuffers::Offset<Commit> Commit::Pack(::flatbuffers::FlatBufferBuild
   auto _slots = _o->slots.size() ? _fbb.CreateVector(_o->slots) : 0;
   auto _propagate = _o->propagate.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::IntPair, ::rigExec::RigExecWireIntPair>(_o->propagate, ::flatbuffers::PackIntPair) : 0;
   auto _closestPos = _o->closestPos.size() ? _fbb.CreateVector(_o->closestPos) : 0;
-  auto _split = _o->split;
-  auto _stagingBase = _o->stagingBase;
   auto _sources = _o->sources.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::ConstraintSource, ::rigExec::RigExecWireConstraintSource>(_o->sources, ::flatbuffers::PackConstraintSource) : 0;
   auto _slotReads = _o->slotReads.size() ? _fbb.CreateVector(_o->slotReads) : 0;
   auto _slotWrites = _o->slotWrites.size() ? _fbb.CreateVector(_o->slotWrites) : 0;
@@ -24728,8 +25806,6 @@ inline ::flatbuffers::Offset<Commit> Commit::Pack(::flatbuffers::FlatBufferBuild
       _slots,
       _propagate,
       _closestPos,
-      _split,
-      _stagingBase,
       _sources,
       _slotReads,
       _slotWrites,
@@ -26205,7 +27281,9 @@ inline RigExecWireRevision::RigExecWireRevision(const RigExecWireRevision &o)
         jointWeightsSlot(o.jointWeightsSlot),
         weightField(o.weightField),
         leafSites(o.leafSites),
-        layoutLeafSites(o.layoutLeafSites) {
+        layoutLeafSites(o.layoutLeafSites),
+        rangeRole(o.rangeRole),
+        wholeRole(o.wholeRole) {
 }
 
 inline RigExecWireRevision &RigExecWireRevision::operator=(RigExecWireRevision o) FLATBUFFERS_NOEXCEPT {
@@ -26254,6 +27332,8 @@ inline RigExecWireRevision &RigExecWireRevision::operator=(RigExecWireRevision o
   std::swap(weightField, o.weightField);
   std::swap(leafSites, o.leafSites);
   std::swap(layoutLeafSites, o.layoutLeafSites);
+  std::swap(rangeRole, o.rangeRole);
+  std::swap(wholeRole, o.wholeRole);
   return *this;
 }
 
@@ -26311,6 +27391,8 @@ inline void Revision::UnPackTo(RigExecWireRevision *_o, const ::flatbuffers::res
   { auto _e = weightField(); _o->weightField = _e; }
   { auto _e = leafSites(); if (_e) { _o->leafSites.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->leafSites[_i] = *std::unique_ptr<rigExec::fb::RigExecWireExternalDeclaredInput>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->leafSites.resize(0); } }
   { auto _e = layoutLeafSites(); if (_e) { _o->layoutLeafSites.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->layoutLeafSites[_i] = *std::unique_ptr<rigExec::fb::RigExecWireExternalDeclaredInput>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->layoutLeafSites.resize(0); } }
+  { auto _e = rangeRole(); _o->rangeRole = _e; }
+  { auto _e = wholeRole(); _o->wholeRole = _e; }
 }
 
 inline ::flatbuffers::Offset<Revision> CreateRevision(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireRevision *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -26366,6 +27448,8 @@ inline ::flatbuffers::Offset<Revision> Revision::Pack(::flatbuffers::FlatBufferB
   auto _weightField = _o->weightField;
   auto _leafSites = _o->leafSites.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>> (_o->leafSites.size(), [](size_t i, _VectorArgs *__va) { return CreateExternalDeclaredInput(*__va->__fbb, &(__va->__o->leafSites[i]), __va->__rehasher); }, &_va ) : 0;
   auto _layoutLeafSites = _o->layoutLeafSites.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ExternalDeclaredInput>> (_o->layoutLeafSites.size(), [](size_t i, _VectorArgs *__va) { return CreateExternalDeclaredInput(*__va->__fbb, &(__va->__o->layoutLeafSites[i]), __va->__rehasher); }, &_va ) : 0;
+  auto _rangeRole = _o->rangeRole;
+  auto _wholeRole = _o->wholeRole;
   return rigExec::fb::CreateRevision(
       _fbb,
       _moverPath,
@@ -26412,7 +27496,9 @@ inline ::flatbuffers::Offset<Revision> Revision::Pack(::flatbuffers::FlatBufferB
       _jointWeightsSlot,
       _weightField,
       _leafSites,
-      _layoutLeafSites);
+      _layoutLeafSites,
+      _rangeRole,
+      _wholeRole);
 }
 
 inline RigExecWireDerived::RigExecWireDerived(const RigExecWireDerived &o)
@@ -26553,16 +27639,16 @@ inline RigExecWireWeightObject::RigExecWireWeightObject(const RigExecWireWeightO
         falloffCurve(o.falloffCurve),
         envelopeOnly(o.envelopeOnly),
         samplesInFlight(o.samplesInFlight),
-        oraclePlaneAxis(o.oraclePlaneAxis),
-        oraclePlaneBounds(o.oraclePlaneBounds),
-        oraclePhaseError(o.oraclePhaseError),
-        oracleStaticError(o.oracleStaticError),
+        fieldPlaneAxis(o.fieldPlaneAxis),
+        fieldPlaneBounds(o.fieldPlaneBounds),
+        fieldPhaseError(o.fieldPhaseError),
+        fieldStaticError(o.fieldStaticError),
         valuesSlot(o.valuesSlot),
         indicesSlot(o.indicesSlot),
-        oracleSamplesSlot(o.oracleSamplesSlot),
-        oracleCurveSlot(o.oracleCurveSlot),
-        oraclePlaneAxisSlot(o.oraclePlaneAxisSlot),
-        oraclePlaneBoundsSlot(o.oraclePlaneBoundsSlot) {
+        fieldSamplesSlot(o.fieldSamplesSlot),
+        fieldCurveSlot(o.fieldCurveSlot),
+        fieldPlaneAxisSlot(o.fieldPlaneAxisSlot),
+        fieldPlaneBoundsSlot(o.fieldPlaneBoundsSlot) {
 }
 
 inline RigExecWireWeightObject &RigExecWireWeightObject::operator=(RigExecWireWeightObject o) FLATBUFFERS_NOEXCEPT {
@@ -26607,16 +27693,16 @@ inline RigExecWireWeightObject &RigExecWireWeightObject::operator=(RigExecWireWe
   std::swap(falloffCurve, o.falloffCurve);
   std::swap(envelopeOnly, o.envelopeOnly);
   std::swap(samplesInFlight, o.samplesInFlight);
-  std::swap(oraclePlaneAxis, o.oraclePlaneAxis);
-  std::swap(oraclePlaneBounds, o.oraclePlaneBounds);
-  std::swap(oraclePhaseError, o.oraclePhaseError);
-  std::swap(oracleStaticError, o.oracleStaticError);
+  std::swap(fieldPlaneAxis, o.fieldPlaneAxis);
+  std::swap(fieldPlaneBounds, o.fieldPlaneBounds);
+  std::swap(fieldPhaseError, o.fieldPhaseError);
+  std::swap(fieldStaticError, o.fieldStaticError);
   std::swap(valuesSlot, o.valuesSlot);
   std::swap(indicesSlot, o.indicesSlot);
-  std::swap(oracleSamplesSlot, o.oracleSamplesSlot);
-  std::swap(oracleCurveSlot, o.oracleCurveSlot);
-  std::swap(oraclePlaneAxisSlot, o.oraclePlaneAxisSlot);
-  std::swap(oraclePlaneBoundsSlot, o.oraclePlaneBoundsSlot);
+  std::swap(fieldSamplesSlot, o.fieldSamplesSlot);
+  std::swap(fieldCurveSlot, o.fieldCurveSlot);
+  std::swap(fieldPlaneAxisSlot, o.fieldPlaneAxisSlot);
+  std::swap(fieldPlaneBoundsSlot, o.fieldPlaneBoundsSlot);
   return *this;
 }
 
@@ -26670,16 +27756,16 @@ inline void WeightObject::UnPackTo(RigExecWireWeightObject *_o, const ::flatbuff
   { auto _e = falloffCurve(); if (_e) { _o->falloffCurve.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->falloffCurve[_i] = _e->Get(_i); } } else { _o->falloffCurve.resize(0); } }
   { auto _e = envelopeOnly(); _o->envelopeOnly = _e; }
   { auto _e = samplesInFlight(); _o->samplesInFlight = _e; }
-  { auto _e = oraclePlaneAxis(); _o->oraclePlaneAxis = _e; }
-  { auto _e = oraclePlaneBounds(); _o->oraclePlaneBounds = _e; }
-  { auto _e = oraclePhaseError(); if (_e) _o->oraclePhaseError = _e->str(); }
-  { auto _e = oracleStaticError(); if (_e) _o->oracleStaticError = _e->str(); }
+  { auto _e = fieldPlaneAxis(); _o->fieldPlaneAxis = _e; }
+  { auto _e = fieldPlaneBounds(); _o->fieldPlaneBounds = _e; }
+  { auto _e = fieldPhaseError(); if (_e) _o->fieldPhaseError = _e->str(); }
+  { auto _e = fieldStaticError(); if (_e) _o->fieldStaticError = _e->str(); }
   { auto _e = valuesSlot(); _o->valuesSlot = _e; }
   { auto _e = indicesSlot(); _o->indicesSlot = _e; }
-  { auto _e = oracleSamplesSlot(); _o->oracleSamplesSlot = _e; }
-  { auto _e = oracleCurveSlot(); _o->oracleCurveSlot = _e; }
-  { auto _e = oraclePlaneAxisSlot(); _o->oraclePlaneAxisSlot = _e; }
-  { auto _e = oraclePlaneBoundsSlot(); _o->oraclePlaneBoundsSlot = _e; }
+  { auto _e = fieldSamplesSlot(); _o->fieldSamplesSlot = _e; }
+  { auto _e = fieldCurveSlot(); _o->fieldCurveSlot = _e; }
+  { auto _e = fieldPlaneAxisSlot(); _o->fieldPlaneAxisSlot = _e; }
+  { auto _e = fieldPlaneBoundsSlot(); _o->fieldPlaneBoundsSlot = _e; }
 }
 
 inline ::flatbuffers::Offset<WeightObject> CreateWeightObject(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireWeightObject *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -26731,16 +27817,16 @@ inline ::flatbuffers::Offset<WeightObject> WeightObject::Pack(::flatbuffers::Fla
   auto _falloffCurve = _o->falloffCurve.size() ? _fbb.CreateVector(_o->falloffCurve) : 0;
   auto _envelopeOnly = _o->envelopeOnly;
   auto _samplesInFlight = _o->samplesInFlight;
-  auto _oraclePlaneAxis = _o->oraclePlaneAxis;
-  auto _oraclePlaneBounds = _o->oraclePlaneBounds;
-  auto _oraclePhaseError = _o->oraclePhaseError.empty() ? 0 : _fbb.CreateString(_o->oraclePhaseError);
-  auto _oracleStaticError = _o->oracleStaticError.empty() ? 0 : _fbb.CreateString(_o->oracleStaticError);
+  auto _fieldPlaneAxis = _o->fieldPlaneAxis;
+  auto _fieldPlaneBounds = _o->fieldPlaneBounds;
+  auto _fieldPhaseError = _o->fieldPhaseError.empty() ? 0 : _fbb.CreateString(_o->fieldPhaseError);
+  auto _fieldStaticError = _o->fieldStaticError.empty() ? 0 : _fbb.CreateString(_o->fieldStaticError);
   auto _valuesSlot = _o->valuesSlot;
   auto _indicesSlot = _o->indicesSlot;
-  auto _oracleSamplesSlot = _o->oracleSamplesSlot;
-  auto _oracleCurveSlot = _o->oracleCurveSlot;
-  auto _oraclePlaneAxisSlot = _o->oraclePlaneAxisSlot;
-  auto _oraclePlaneBoundsSlot = _o->oraclePlaneBoundsSlot;
+  auto _fieldSamplesSlot = _o->fieldSamplesSlot;
+  auto _fieldCurveSlot = _o->fieldCurveSlot;
+  auto _fieldPlaneAxisSlot = _o->fieldPlaneAxisSlot;
+  auto _fieldPlaneBoundsSlot = _o->fieldPlaneBoundsSlot;
   return rigExec::fb::CreateWeightObject(
       _fbb,
       _path,
@@ -26784,16 +27870,16 @@ inline ::flatbuffers::Offset<WeightObject> WeightObject::Pack(::flatbuffers::Fla
       _falloffCurve,
       _envelopeOnly,
       _samplesInFlight,
-      _oraclePlaneAxis,
-      _oraclePlaneBounds,
-      _oraclePhaseError,
-      _oracleStaticError,
+      _fieldPlaneAxis,
+      _fieldPlaneBounds,
+      _fieldPhaseError,
+      _fieldStaticError,
       _valuesSlot,
       _indicesSlot,
-      _oracleSamplesSlot,
-      _oracleCurveSlot,
-      _oraclePlaneAxisSlot,
-      _oraclePlaneBoundsSlot);
+      _fieldSamplesSlot,
+      _fieldCurveSlot,
+      _fieldPlaneAxisSlot,
+      _fieldPlaneBoundsSlot);
 }
 
 inline RigExecWireWeightFieldPointRead::RigExecWireWeightFieldPointRead(const RigExecWireWeightFieldPointRead &o)
@@ -27991,6 +29077,396 @@ inline ::flatbuffers::Offset<WindowedOp> WindowedOp::Pack(::flatbuffers::FlatBuf
       _frames);
 }
 
+inline RigExecWireManifestEntry *ManifestEntry::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireManifestEntry>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ManifestEntry::UnPackTo(RigExecWireManifestEntry *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = nameSpace(); if (_e) _o->nameSpace = _e->str(); }
+  { auto _e = name(); if (_e) _o->name = _e->str(); }
+  { auto _e = version(); _o->version = _e; }
+}
+
+inline ::flatbuffers::Offset<ManifestEntry> CreateManifestEntry(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireManifestEntry *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return ManifestEntry::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<ManifestEntry> ManifestEntry::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireManifestEntry* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireManifestEntry* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _nameSpace = _fbb.CreateString(_o->nameSpace);
+  auto _name = _fbb.CreateString(_o->name);
+  auto _version = _o->version;
+  return rigExec::fb::CreateManifestEntry(
+      _fbb,
+      _nameSpace,
+      _name,
+      _version);
+}
+
+inline RigExecWireManifest::RigExecWireManifest(const RigExecWireManifest &o) {
+  revisionOps.reserve(o.revisionOps.size());
+  for (const auto &revisionOps_ : o.revisionOps) { revisionOps.emplace_back((revisionOps_) ? new rigExec::fb::RigExecWireManifestEntry(*revisionOps_) : nullptr); }
+  propertyOps.reserve(o.propertyOps.size());
+  for (const auto &propertyOps_ : o.propertyOps) { propertyOps.emplace_back((propertyOps_) ? new rigExec::fb::RigExecWireManifestEntry(*propertyOps_) : nullptr); }
+  providerOps.reserve(o.providerOps.size());
+  for (const auto &providerOps_ : o.providerOps) { providerOps.emplace_back((providerOps_) ? new rigExec::fb::RigExecWireManifestEntry(*providerOps_) : nullptr); }
+  valueTypes.reserve(o.valueTypes.size());
+  for (const auto &valueTypes_ : o.valueTypes) { valueTypes.emplace_back((valueTypes_) ? new rigExec::fb::RigExecWireManifestEntry(*valueTypes_) : nullptr); }
+  coreOps.reserve(o.coreOps.size());
+  for (const auto &coreOps_ : o.coreOps) { coreOps.emplace_back((coreOps_) ? new rigExec::fb::RigExecWireManifestEntry(*coreOps_) : nullptr); }
+  coreTypes.reserve(o.coreTypes.size());
+  for (const auto &coreTypes_ : o.coreTypes) { coreTypes.emplace_back((coreTypes_) ? new rigExec::fb::RigExecWireManifestEntry(*coreTypes_) : nullptr); }
+}
+
+inline RigExecWireManifest &RigExecWireManifest::operator=(RigExecWireManifest o) FLATBUFFERS_NOEXCEPT {
+  std::swap(revisionOps, o.revisionOps);
+  std::swap(propertyOps, o.propertyOps);
+  std::swap(providerOps, o.providerOps);
+  std::swap(valueTypes, o.valueTypes);
+  std::swap(coreOps, o.coreOps);
+  std::swap(coreTypes, o.coreTypes);
+  return *this;
+}
+
+inline RigExecWireManifest *Manifest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireManifest>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void Manifest::UnPackTo(RigExecWireManifest *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = revisionOps(); if (_e) { _o->revisionOps.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->revisionOps[_i]) { _e->Get(_i)->UnPackTo(_o->revisionOps[_i].get(), _resolver); } else { _o->revisionOps[_i] = std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->revisionOps.resize(0); } }
+  { auto _e = propertyOps(); if (_e) { _o->propertyOps.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->propertyOps[_i]) { _e->Get(_i)->UnPackTo(_o->propertyOps[_i].get(), _resolver); } else { _o->propertyOps[_i] = std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->propertyOps.resize(0); } }
+  { auto _e = providerOps(); if (_e) { _o->providerOps.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->providerOps[_i]) { _e->Get(_i)->UnPackTo(_o->providerOps[_i].get(), _resolver); } else { _o->providerOps[_i] = std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->providerOps.resize(0); } }
+  { auto _e = valueTypes(); if (_e) { _o->valueTypes.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->valueTypes[_i]) { _e->Get(_i)->UnPackTo(_o->valueTypes[_i].get(), _resolver); } else { _o->valueTypes[_i] = std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->valueTypes.resize(0); } }
+  { auto _e = coreOps(); if (_e) { _o->coreOps.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->coreOps[_i]) { _e->Get(_i)->UnPackTo(_o->coreOps[_i].get(), _resolver); } else { _o->coreOps[_i] = std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->coreOps.resize(0); } }
+  { auto _e = coreTypes(); if (_e) { _o->coreTypes.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->coreTypes[_i]) { _e->Get(_i)->UnPackTo(_o->coreTypes[_i].get(), _resolver); } else { _o->coreTypes[_i] = std::unique_ptr<rigExec::fb::RigExecWireManifestEntry>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->coreTypes.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<Manifest> CreateManifest(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireManifest *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return Manifest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<Manifest> Manifest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireManifest* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireManifest* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _revisionOps = _o->revisionOps.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> (_o->revisionOps.size(), [](size_t i, _VectorArgs *__va) { return CreateManifestEntry(*__va->__fbb, __va->__o->revisionOps[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _propertyOps = _o->propertyOps.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> (_o->propertyOps.size(), [](size_t i, _VectorArgs *__va) { return CreateManifestEntry(*__va->__fbb, __va->__o->propertyOps[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _providerOps = _o->providerOps.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> (_o->providerOps.size(), [](size_t i, _VectorArgs *__va) { return CreateManifestEntry(*__va->__fbb, __va->__o->providerOps[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _valueTypes = _o->valueTypes.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> (_o->valueTypes.size(), [](size_t i, _VectorArgs *__va) { return CreateManifestEntry(*__va->__fbb, __va->__o->valueTypes[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _coreOps = _o->coreOps.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> (_o->coreOps.size(), [](size_t i, _VectorArgs *__va) { return CreateManifestEntry(*__va->__fbb, __va->__o->coreOps[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _coreTypes = _o->coreTypes.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::ManifestEntry>> (_o->coreTypes.size(), [](size_t i, _VectorArgs *__va) { return CreateManifestEntry(*__va->__fbb, __va->__o->coreTypes[i].get(), __va->__rehasher); }, &_va ) : 0;
+  return rigExec::fb::CreateManifest(
+      _fbb,
+      _revisionOps,
+      _propertyOps,
+      _providerOps,
+      _valueTypes,
+      _coreOps,
+      _coreTypes);
+}
+
+inline RigExecWireOpNodeInput *OpNodeInput::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireOpNodeInput>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void OpNodeInput::UnPackTo(RigExecWireOpNodeInput *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = port(); _o->port = _e; }
+  { auto _e = node(); _o->node = _e; }
+  { auto _e = output(); _o->output = _e; }
+  { auto _e = host(); _o->host = _e; }
+  { auto _e = object(); _o->object = _e; }
+  { auto _e = constant(); if (_e) { _o->constant.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->constant.begin()); } }
+}
+
+inline ::flatbuffers::Offset<OpNodeInput> CreateOpNodeInput(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpNodeInput *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return OpNodeInput::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<OpNodeInput> OpNodeInput::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpNodeInput* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireOpNodeInput* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _port = _o->port;
+  auto _node = _o->node;
+  auto _output = _o->output;
+  auto _host = _o->host;
+  auto _object = _o->object;
+  auto _constant = _o->constant.size() ? _fbb.CreateVector(_o->constant) : 0;
+  return rigExec::fb::CreateOpNodeInput(
+      _fbb,
+      _port,
+      _node,
+      _output,
+      _host,
+      _object,
+      _constant);
+}
+
+inline RigExecWireOpNode::RigExecWireOpNode(const RigExecWireOpNode &o)
+      : op(o.op),
+        payload(o.payload) {
+  inputs.reserve(o.inputs.size());
+  for (const auto &inputs_ : o.inputs) { inputs.emplace_back((inputs_) ? new rigExec::fb::RigExecWireOpNodeInput(*inputs_) : nullptr); }
+}
+
+inline RigExecWireOpNode &RigExecWireOpNode::operator=(RigExecWireOpNode o) FLATBUFFERS_NOEXCEPT {
+  std::swap(op, o.op);
+  std::swap(payload, o.payload);
+  std::swap(inputs, o.inputs);
+  return *this;
+}
+
+inline RigExecWireOpNode *OpNode::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireOpNode>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void OpNode::UnPackTo(RigExecWireOpNode *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = op(); _o->op = _e; }
+  { auto _e = payload(); if (_e) { _o->payload.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->payload.begin()); } }
+  { auto _e = inputs(); if (_e) { _o->inputs.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->inputs[_i]) { _e->Get(_i)->UnPackTo(_o->inputs[_i].get(), _resolver); } else { _o->inputs[_i] = std::unique_ptr<rigExec::fb::RigExecWireOpNodeInput>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->inputs.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<OpNode> CreateOpNode(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpNode *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return OpNode::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<OpNode> OpNode::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpNode* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireOpNode* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _op = _o->op;
+  auto _payload = _o->payload.size() ? _fbb.CreateVector(_o->payload) : 0;
+  auto _inputs = _o->inputs.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpNodeInput>> (_o->inputs.size(), [](size_t i, _VectorArgs *__va) { return CreateOpNodeInput(*__va->__fbb, __va->__o->inputs[i].get(), __va->__rehasher); }, &_va ) : 0;
+  return rigExec::fb::CreateOpNode(
+      _fbb,
+      _op,
+      _payload,
+      _inputs);
+}
+
+inline RigExecWireOpGraphOutput *OpGraphOutput::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireOpGraphOutput>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void OpGraphOutput::UnPackTo(RigExecWireOpGraphOutput *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = node(); _o->node = _e; }
+  { auto _e = port(); _o->port = _e; }
+  { auto _e = type(); _o->type = _e; }
+  { auto _e = name(); if (_e) _o->name = _e->str(); }
+}
+
+inline ::flatbuffers::Offset<OpGraphOutput> CreateOpGraphOutput(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpGraphOutput *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return OpGraphOutput::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<OpGraphOutput> OpGraphOutput::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpGraphOutput* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireOpGraphOutput* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _node = _o->node;
+  auto _port = _o->port;
+  auto _type = _o->type;
+  auto _name = _fbb.CreateString(_o->name);
+  return rigExec::fb::CreateOpGraphOutput(
+      _fbb,
+      _node,
+      _port,
+      _type,
+      _name);
+}
+
+inline RigExecWireOpChain *OpChain::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireOpChain>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void OpChain::UnPackTo(RigExecWireOpChain *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = pointChain(); _o->pointChain = _e; }
+  { auto _e = bounds(); if (_e) { _o->bounds.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->bounds[_i] = _e->Get(_i); } } else { _o->bounds.resize(0); } }
+  { auto _e = members(); if (_e) { _o->members.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->members[_i] = _e->Get(_i); } } else { _o->members.resize(0); } }
+  { auto _e = writes(); if (_e) { _o->writes.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->writes.begin()); } }
+}
+
+inline ::flatbuffers::Offset<OpChain> CreateOpChain(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpChain *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return OpChain::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<OpChain> OpChain::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpChain* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireOpChain* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _pointChain = _o->pointChain;
+  auto _bounds = _o->bounds.size() ? _fbb.CreateVector(_o->bounds) : 0;
+  auto _members = _o->members.size() ? _fbb.CreateVector(_o->members) : 0;
+  auto _writes = _o->writes.size() ? _fbb.CreateVector(_o->writes) : 0;
+  return rigExec::fb::CreateOpChain(
+      _fbb,
+      _pointChain,
+      _bounds,
+      _members,
+      _writes);
+}
+
+inline RigExecWireOpLookup *OpLookup::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireOpLookup>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void OpLookup::UnPackTo(RigExecWireOpLookup *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = source(); _o->source = _e; }
+  { auto _e = object(); _o->object = _e; }
+  { auto _e = part(); _o->part = _e; }
+  { auto _e = read(); _o->read = _e; }
+}
+
+inline ::flatbuffers::Offset<OpLookup> CreateOpLookup(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpLookup *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return OpLookup::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<OpLookup> OpLookup::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpLookup* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireOpLookup* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _source = _o->source;
+  auto _object = _o->object;
+  auto _part = _o->part;
+  auto _read = _o->read;
+  return rigExec::fb::CreateOpLookup(
+      _fbb,
+      _source,
+      _object,
+      _part,
+      _read);
+}
+
+inline RigExecWireOpHostOutput *OpHostOutput::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireOpHostOutput>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void OpHostOutput::UnPackTo(RigExecWireOpHostOutput *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = node(); _o->node = _e; }
+  { auto _e = port(); _o->port = _e; }
+  { auto _e = target(); _o->target = _e; }
+  { auto _e = object(); _o->object = _e; }
+}
+
+inline ::flatbuffers::Offset<OpHostOutput> CreateOpHostOutput(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpHostOutput *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return OpHostOutput::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<OpHostOutput> OpHostOutput::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpHostOutput* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireOpHostOutput* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _node = _o->node;
+  auto _port = _o->port;
+  auto _target = _o->target;
+  auto _object = _o->object;
+  return rigExec::fb::CreateOpHostOutput(
+      _fbb,
+      _node,
+      _port,
+      _target,
+      _object);
+}
+
+inline RigExecWireOpGraph::RigExecWireOpGraph(const RigExecWireOpGraph &o)
+      : order(o.order) {
+  nodes.reserve(o.nodes.size());
+  for (const auto &nodes_ : o.nodes) { nodes.emplace_back((nodes_) ? new rigExec::fb::RigExecWireOpNode(*nodes_) : nullptr); }
+  outputs.reserve(o.outputs.size());
+  for (const auto &outputs_ : o.outputs) { outputs.emplace_back((outputs_) ? new rigExec::fb::RigExecWireOpGraphOutput(*outputs_) : nullptr); }
+  chains.reserve(o.chains.size());
+  for (const auto &chains_ : o.chains) { chains.emplace_back((chains_) ? new rigExec::fb::RigExecWireOpChain(*chains_) : nullptr); }
+  lookups.reserve(o.lookups.size());
+  for (const auto &lookups_ : o.lookups) { lookups.emplace_back((lookups_) ? new rigExec::fb::RigExecWireOpLookup(*lookups_) : nullptr); }
+  hostOutputs.reserve(o.hostOutputs.size());
+  for (const auto &hostOutputs_ : o.hostOutputs) { hostOutputs.emplace_back((hostOutputs_) ? new rigExec::fb::RigExecWireOpHostOutput(*hostOutputs_) : nullptr); }
+}
+
+inline RigExecWireOpGraph &RigExecWireOpGraph::operator=(RigExecWireOpGraph o) FLATBUFFERS_NOEXCEPT {
+  std::swap(nodes, o.nodes);
+  std::swap(order, o.order);
+  std::swap(outputs, o.outputs);
+  std::swap(chains, o.chains);
+  std::swap(lookups, o.lookups);
+  std::swap(hostOutputs, o.hostOutputs);
+  return *this;
+}
+
+inline RigExecWireOpGraph *OpGraph::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireOpGraph>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void OpGraph::UnPackTo(RigExecWireOpGraph *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = nodes(); if (_e) { _o->nodes.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->nodes[_i]) { _e->Get(_i)->UnPackTo(_o->nodes[_i].get(), _resolver); } else { _o->nodes[_i] = std::unique_ptr<rigExec::fb::RigExecWireOpNode>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->nodes.resize(0); } }
+  { auto _e = order(); if (_e) { _o->order.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->order[_i] = ::flatbuffers::UnPackIntPair(*_e->Get(_i)); } } else { _o->order.resize(0); } }
+  { auto _e = outputs(); if (_e) { _o->outputs.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->outputs[_i]) { _e->Get(_i)->UnPackTo(_o->outputs[_i].get(), _resolver); } else { _o->outputs[_i] = std::unique_ptr<rigExec::fb::RigExecWireOpGraphOutput>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->outputs.resize(0); } }
+  { auto _e = chains(); if (_e) { _o->chains.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->chains[_i]) { _e->Get(_i)->UnPackTo(_o->chains[_i].get(), _resolver); } else { _o->chains[_i] = std::unique_ptr<rigExec::fb::RigExecWireOpChain>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->chains.resize(0); } }
+  { auto _e = lookups(); if (_e) { _o->lookups.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->lookups[_i]) { _e->Get(_i)->UnPackTo(_o->lookups[_i].get(), _resolver); } else { _o->lookups[_i] = std::unique_ptr<rigExec::fb::RigExecWireOpLookup>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->lookups.resize(0); } }
+  { auto _e = hostOutputs(); if (_e) { _o->hostOutputs.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->hostOutputs[_i]) { _e->Get(_i)->UnPackTo(_o->hostOutputs[_i].get(), _resolver); } else { _o->hostOutputs[_i] = std::unique_ptr<rigExec::fb::RigExecWireOpHostOutput>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->hostOutputs.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<OpGraph> CreateOpGraph(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpGraph *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return OpGraph::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<OpGraph> OpGraph::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireOpGraph* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireOpGraph* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _nodes = _o->nodes.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpNode>> (_o->nodes.size(), [](size_t i, _VectorArgs *__va) { return CreateOpNode(*__va->__fbb, __va->__o->nodes[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _order = _o->order.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::IntPair, ::rigExec::RigExecWireIntPair>(_o->order, ::flatbuffers::PackIntPair) : 0;
+  auto _outputs = _o->outputs.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpGraphOutput>> (_o->outputs.size(), [](size_t i, _VectorArgs *__va) { return CreateOpGraphOutput(*__va->__fbb, __va->__o->outputs[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _chains = _o->chains.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpChain>> (_o->chains.size(), [](size_t i, _VectorArgs *__va) { return CreateOpChain(*__va->__fbb, __va->__o->chains[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _lookups = _o->lookups.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpLookup>> (_o->lookups.size(), [](size_t i, _VectorArgs *__va) { return CreateOpLookup(*__va->__fbb, __va->__o->lookups[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _hostOutputs = _o->hostOutputs.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::OpHostOutput>> (_o->hostOutputs.size(), [](size_t i, _VectorArgs *__va) { return CreateOpHostOutput(*__va->__fbb, __va->__o->hostOutputs[i].get(), __va->__rehasher); }, &_va ) : 0;
+  return rigExec::fb::CreateOpGraph(
+      _fbb,
+      _nodes,
+      _order,
+      _outputs,
+      _chains,
+      _lookups,
+      _hostOutputs);
+}
+
 inline RigExecWireFile::RigExecWireFile(const RigExecWireFile &o)
       : formatVersion(o.formatVersion),
         rig(o.rig),
@@ -28025,7 +29501,9 @@ inline RigExecWireFile::RigExecWireFile(const RigExecWireFile &o)
         tokenArrays(o.tokenArrays),
         boolArrays(o.boolArrays),
         windowedOps(o.windowedOps),
-        scalarPrimvarChains(o.scalarPrimvarChains) {
+        scalarPrimvarChains(o.scalarPrimvarChains),
+        manifest((o.manifest) ? new rigExec::fb::RigExecWireManifest(*o.manifest) : nullptr),
+        opGraph((o.opGraph) ? new rigExec::fb::RigExecWireOpGraph(*o.opGraph) : nullptr) {
 }
 
 inline RigExecWireFile &RigExecWireFile::operator=(RigExecWireFile o) FLATBUFFERS_NOEXCEPT {
@@ -28063,6 +29541,8 @@ inline RigExecWireFile &RigExecWireFile::operator=(RigExecWireFile o) FLATBUFFER
   std::swap(boolArrays, o.boolArrays);
   std::swap(windowedOps, o.windowedOps);
   std::swap(scalarPrimvarChains, o.scalarPrimvarChains);
+  std::swap(manifest, o.manifest);
+  std::swap(opGraph, o.opGraph);
   return *this;
 }
 
@@ -28109,6 +29589,8 @@ inline void File::UnPackTo(RigExecWireFile *_o, const ::flatbuffers::resolver_fu
   { auto _e = boolArrays(); if (_e) { _o->boolArrays.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->boolArrays[_i] = *std::unique_ptr<rigExec::fb::RigExecWireBoolArray>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->boolArrays.resize(0); } }
   { auto _e = windowedOps(); if (_e) { _o->windowedOps.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->windowedOps[_i] = *std::unique_ptr<rigExec::fb::RigExecWireWindowedOp>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->windowedOps.resize(0); } }
   { auto _e = scalarPrimvarChains(); if (_e) { _o->scalarPrimvarChains.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->scalarPrimvarChains[_i] = _e->Get(_i); } } else { _o->scalarPrimvarChains.resize(0); } }
+  { auto _e = manifest(); if (_e) { if(_o->manifest) { _e->UnPackTo(_o->manifest.get(), _resolver); } else { _o->manifest = std::unique_ptr<rigExec::fb::RigExecWireManifest>(_e->UnPack(_resolver)); } } else if (_o->manifest) { _o->manifest.reset(); } }
+  { auto _e = opGraph(); if (_e) { if(_o->opGraph) { _e->UnPackTo(_o->opGraph.get(), _resolver); } else { _o->opGraph = std::unique_ptr<rigExec::fb::RigExecWireOpGraph>(_e->UnPack(_resolver)); } } else if (_o->opGraph) { _o->opGraph.reset(); } }
 }
 
 inline ::flatbuffers::Offset<File> CreateFile(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireFile *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -28154,6 +29636,8 @@ inline ::flatbuffers::Offset<File> File::Pack(::flatbuffers::FlatBufferBuilder &
   auto _boolArrays = _o->boolArrays.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::BoolArray>> (_o->boolArrays.size(), [](size_t i, _VectorArgs *__va) { return CreateBoolArray(*__va->__fbb, &(__va->__o->boolArrays[i]), __va->__rehasher); }, &_va ) : 0;
   auto _windowedOps = _o->windowedOps.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::WindowedOp>> (_o->windowedOps.size(), [](size_t i, _VectorArgs *__va) { return CreateWindowedOp(*__va->__fbb, &(__va->__o->windowedOps[i]), __va->__rehasher); }, &_va ) : 0;
   auto _scalarPrimvarChains = _o->scalarPrimvarChains.size() ? _fbb.CreateVector(_o->scalarPrimvarChains) : 0;
+  auto _manifest = _o->manifest ? CreateManifest(_fbb, _o->manifest.get(), _rehasher) : 0;
+  auto _opGraph = _o->opGraph ? CreateOpGraph(_fbb, _o->opGraph.get(), _rehasher) : 0;
   return rigExec::fb::CreateFile(
       _fbb,
       _formatVersion,
@@ -28189,7 +29673,9 @@ inline ::flatbuffers::Offset<File> File::Pack(::flatbuffers::FlatBufferBuilder &
       _tokenArrays,
       _boolArrays,
       _windowedOps,
-      _scalarPrimvarChains);
+      _scalarPrimvarChains,
+      _manifest,
+      _opGraph);
 }
 
 inline const ::flatbuffers::TypeTable *InputTagTypeTable() {
@@ -28358,13 +29844,15 @@ inline const ::flatbuffers::TypeTable *SlotDomainTypeTable() {
     { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::SlotDomainTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_ENUM, 39, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_ENUM, 41, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }
@@ -28399,13 +29887,17 @@ inline const ::flatbuffers::TypeTable *StepKindTypeTable() {
     { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::StepKindTypeTable
   };
+  static const int64_t values[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32 };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_ENUM, 29, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_ENUM, 32, type_codes, type_refs, nullptr, values, nullptr
   };
   return &tt;
 }
@@ -28740,14 +30232,15 @@ inline const ::flatbuffers::TypeTable *ConstraintFlagsTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
     { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::ConstraintFlagsTypeTable
   };
-  static const int64_t values[] = { 1, 2, 4 };
+  static const int64_t values[] = { 1, 2, 4, 8 };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_ENUM, 3, type_codes, type_refs, nullptr, values, nullptr
+    ::flatbuffers::ST_ENUM, 4, type_codes, type_refs, nullptr, values, nullptr
   };
   return &tt;
 }
@@ -29726,7 +31219,8 @@ inline const ::flatbuffers::TypeTable *PoseInterpolatorTypeTable() {
     { ::flatbuffers::ET_SEQUENCE, 0, 0 },
     { ::flatbuffers::ET_SEQUENCE, 0, 4 },
     { ::flatbuffers::ET_INT, 1, -1 },
-    { ::flatbuffers::ET_INT, 1, -1 }
+    { ::flatbuffers::ET_INT, 1, -1 },
+    { ::flatbuffers::ET_UCHAR, 0, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::InputTypeTable,
@@ -29736,7 +31230,7 @@ inline const ::flatbuffers::TypeTable *PoseInterpolatorTypeTable() {
     rigExec::fb::AnimatedMapsTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 20, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 21, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }
@@ -30032,8 +31526,6 @@ inline const ::flatbuffers::TypeTable *CommitTypeTable() {
     { ::flatbuffers::ET_INT, 1, -1 },
     { ::flatbuffers::ET_SEQUENCE, 1, 0 },
     { ::flatbuffers::ET_INT, 1, -1 },
-    { ::flatbuffers::ET_BOOL, 0, -1 },
-    { ::flatbuffers::ET_INT, 0, -1 },
     { ::flatbuffers::ET_SEQUENCE, 1, 1 },
     { ::flatbuffers::ET_UINT, 1, -1 },
     { ::flatbuffers::ET_UINT, 1, -1 },
@@ -30066,7 +31558,7 @@ inline const ::flatbuffers::TypeTable *CommitTypeTable() {
     rigExec::fb::AncestorReadListTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 31, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 29, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }
@@ -30644,7 +32136,9 @@ inline const ::flatbuffers::TypeTable *RevisionTypeTable() {
     { ::flatbuffers::ET_INT, 0, -1 },
     { ::flatbuffers::ET_INT, 0, -1 },
     { ::flatbuffers::ET_SEQUENCE, 1, 9 },
-    { ::flatbuffers::ET_SEQUENCE, 1, 9 }
+    { ::flatbuffers::ET_SEQUENCE, 1, 9 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::RevisionBindingTypeTable,
@@ -30659,7 +32153,7 @@ inline const ::flatbuffers::TypeTable *RevisionTypeTable() {
     rigExec::fb::ExternalDeclaredInputTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 45, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 47, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }
@@ -31210,6 +32704,141 @@ inline const ::flatbuffers::TypeTable *WindowedOpTypeTable() {
   return &tt;
 }
 
+inline const ::flatbuffers::TypeTable *ManifestEntryTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, nullptr, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *ManifestTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    rigExec::fb::ManifestEntryTypeTable
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 6, type_codes, type_refs, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *OpNodeInputTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_INT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_CHAR, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 1, -1 }
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 6, type_codes, nullptr, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *OpNodeTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 1, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    rigExec::fb::OpNodeInputTypeTable
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, type_refs, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *OpGraphOutputTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_STRING, 0, -1 }
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, nullptr, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *OpChainTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_INT, 1, -1 },
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_UCHAR, 1, -1 }
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, nullptr, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *OpLookupTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_INT, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 0, -1 }
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, nullptr, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *OpHostOutputTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, nullptr, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *OpGraphTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 2 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 3 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 4 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 5 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    rigExec::fb::OpNodeTypeTable,
+    rigExec::fb::IntPairTypeTable,
+    rigExec::fb::OpGraphOutputTypeTable,
+    rigExec::fb::OpChainTypeTable,
+    rigExec::fb::OpLookupTypeTable,
+    rigExec::fb::OpHostOutputTypeTable
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 6, type_codes, type_refs, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
 inline const ::flatbuffers::TypeTable *FileTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
     { ::flatbuffers::ET_UINT, 0, -1 },
@@ -31245,7 +32874,9 @@ inline const ::flatbuffers::TypeTable *FileTypeTable() {
     { ::flatbuffers::ET_SEQUENCE, 1, 24 },
     { ::flatbuffers::ET_SEQUENCE, 1, 25 },
     { ::flatbuffers::ET_SEQUENCE, 1, 26 },
-    { ::flatbuffers::ET_UINT, 1, -1 }
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 27 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 28 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::F64TypeTable,
@@ -31274,10 +32905,12 @@ inline const ::flatbuffers::TypeTable *FileTypeTable() {
     rigExec::fb::Matrix4dArrayTypeTable,
     rigExec::fb::TokenArrayTypeTable,
     rigExec::fb::BoolArrayTypeTable,
-    rigExec::fb::WindowedOpTypeTable
+    rigExec::fb::WindowedOpTypeTable,
+    rigExec::fb::ManifestTypeTable,
+    rigExec::fb::OpGraphTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 34, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 36, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }

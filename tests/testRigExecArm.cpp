@@ -1,16 +1,16 @@
 #include "rigExecSchema/schemaNames.h"
 // RigExec end-to-end evaluation tests over the spec §4.5/§4.6 arm assets:
-// OpenExec-evaluated transforms (controls, FK, IK, blend, joints), native
-// USD animation resolution parity, and the staged geometry mover pipeline.
+// evaluated transforms (controls, FK, IK, blend, joints), animated inputs,
+// and the staged geometry mover pipeline.
 // argv[1] = path to the examples directory (containing ArmRig.usda and
 // ArmShotAnim.usda). The codeless schema plugin is expected at
 // <examples>/../plugin/rigExecSchema/resources.
-#include "rigExec/inputReplay.h"
-#include "rigExec/rigEvaluator.h"
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/tapSet.h"
-#include "rigExec/types.h"
+#include "rigExec/internal/inputReplay.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExecStoredSolve.h"
+#include "rigExec/api/types.h"
 #include "rigExecMath/avarScale.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/geometryKernels.h"
@@ -74,6 +74,43 @@ static bool
 Near(const GfVec3d &a, const GfVec3d &b, double tol = 1e-6)
 {
     return (a - b).GetLength() <= tol;
+}
+
+static bool
+SameFrame(const RigExecPointFrame &a, const RigExecPointFrame &b)
+{
+    return a.flags == b.flags &&
+           std::memcmp(a.points.data(), b.points.data(), sizeof a.points) == 0;
+}
+
+static bool
+SameFrames(const std::vector<RigExecPointFrame> &a,
+           const std::vector<RigExecPointFrame> &b)
+{
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(), SameFrame);
+}
+
+// The compiled rig's pose at \p time, solver aggregates included.
+static RigExecRigPose
+CompiledPose(const UsdStageRefPtr &stage, const SdfPath &rigPath,
+             UsdTimeCode time)
+{
+    RigExecRigEvaluator eval(stage, rigPath);
+    eval.SetSolverGuidesEnabled(true);
+    std::vector<std::string> errors;
+    CHECK(eval.Compile(&errors));
+    const RigExecRigPose pose = eval.Evaluate(time);
+    CHECK(pose.valid);
+    return pose;
+}
+
+template <class Map>
+static typename Map::mapped_type
+Published(const Map &map, const SdfPath &path)
+{
+    const auto it = map.find(path);
+    CHECK(it != map.end());
+    return it != map.end() ? it->second : typename Map::mapped_type();
 }
 
 static std::array<GfVec3d, 4>
@@ -148,7 +185,7 @@ GetRestLandmarks(const UsdPrim &prim, UsdTimeCode time)
 }
 
 // Reconstructs an Ir-contract control's frame directly, for parity with
-// the exec-computed result: posed = avars * rest (unconnected fallback).
+// the evaluated result: posed = avars * rest (unconnected fallback).
 static RigExecPointFrame
 DirectControlFrame(const UsdPrim &control, UsdTimeCode time)
 {
@@ -159,17 +196,8 @@ DirectControlFrame(const UsdPrim &control, UsdTimeCode time)
     return frame;
 }
 
-static const TfToken
-    _computePointFrame(SchemaComputationText::computePointFrame);
-static const TfToken _computeMatrix(SchemaComputationText::computeMatrix);
-static const TfToken
-    _computePointFrameArray(SchemaComputationText::computePointFrameArray);
-
-// View-free joints are posed by their solver through an in-memory binding
-// that RigExecRigEvaluator resolves in Compile() and supplies to exec as a
-// per-joint value override in Evaluate(). A joint's frame is therefore only
-// complete through the evaluator, not from a raw source-stage tap: query it
-// through RigExecRigPose (base phase == the old raw computePointFrame).
+// View-free joints are posed by their solver inside the evaluator, so a
+// joint's frame is read through RigExecRigPose.
 static RigExecPointFrame
 CompiledJointFrame(const UsdStageRefPtr &stage, const SdfPath &rigPath,
                    const SdfPath &jointPath, UsdTimeCode time)
@@ -195,43 +223,25 @@ TestRestPose(const std::string &examplesDir)
     if (!stage)
         return;
 
-    RigExecTapSet taps(stage);
     const SdfPath shoulderPath("/ArmAsset/Rig/Joints/Shoulder");
     const SdfPath wristPath("/ArmAsset/Rig/Joints/Shoulder/Elbow/Wrist");
-    const RigExecTapId shoulderTap =
-        taps.Add(RigExecValueAddress::Prim(shoulderPath, _computePointFrame));
-    const RigExecTapId wristTap =
-        taps.Add(RigExecValueAddress::Prim(wristPath, _computePointFrame));
-    const RigExecTapId wristMatrixTap =
-        taps.Add(RigExecValueAddress::Prim(wristPath, _computeMatrix));
-    const RigExecTapId fkTap = taps.Add(RigExecValueAddress::Prim(
-        SdfPath("/ArmAsset/Rig/Solvers/FK"), _computePointFrameArray));
-    taps.Prepare();
-
-    const RigExecSnapshot snap = taps.Evaluate(UsdTimeCode::Default());
-    CHECK(snap.IsValid());
-    // Every requested tap produced a value (a defaulted value must never
-    // masquerade as a result).
-    CHECK(snap.IsComplete());
+    const RigExecRigPose pose =
+        CompiledPose(stage, SdfPath("/ArmAsset/Rig"), UsdTimeCode::Default());
 
     // Rest pose in, rest pose out (weight 0 selects FK; FK inputs equal
     // their rests).
-    const auto shoulder = snap.Get<RigExecPointFrame>(shoulderTap);
-    const auto wrist = snap.Get<RigExecPointFrame>(wristTap);
+    const auto shoulder = Published(pose.jointFramesBase, shoulderPath);
+    const auto wrist = Published(pose.jointFramesBase, wristPath);
     CHECK(shoulder.IsValid());
     CHECK(Near(shoulder.Origin(), GfVec3d(0, 10, 0)));
     CHECK(Near(wrist.Origin(), GfVec3d(8, 10, 0)));
 
-    // Paired matrix view: rest pose gives identity.
-    const auto wristMatrix = snap.Get<GfMatrix4d>(wristMatrixTap);
-    CHECK(Near(wristMatrix.TransformAffine(GfVec3d(1, 2, 3)), GfVec3d(1, 2, 3),
-               1e-9));
-
-    // Aggregate solver result is extractable and complete.
-    const auto fk = snap.Get<RigExecPointFrameArray>(fkTap);
-    CHECK(fk.GetSize() == 3);
-    if (fk.GetSize() == 3) {
-        CHECK(Near(fk.frames[2].Origin(), GfVec3d(8, 10, 0)));
+    // Aggregate solver result is published and complete.
+    const auto fk =
+        Published(pose.solverFrames, SdfPath("/ArmAsset/Rig/Solvers/FK"));
+    CHECK(fk.size() == 3);
+    if (fk.size() == 3) {
+        CHECK(Near(fk[2].Origin(), GfVec3d(8, 10, 0)));
     }
 }
 
@@ -255,18 +265,11 @@ TestIkAndBlend(const std::string &examplesDir)
             SdfPath("/ArmAsset/Rig/Solvers/IKFKBlend.inputs:weight"))
         .Set(1.0f);
 
-    RigExecTapSet taps(stage);
-    const RigExecTapId ikTap = taps.Add(RigExecValueAddress::Prim(
-        SdfPath("/ArmAsset/Rig/Solvers/IK"), _computePointFrameArray));
-    taps.Prepare();
     // ArmRig's IK names Shoulder/Elbow/Wrist itself, so the kernel
     // measures its own bones (4 and 4) from their rests. IKFKBlend
     // still POSES those joints -- the IK's rigExec:joints is a rest
     // reference because its aggregate is consumed by the blend.
-    const RigExecSnapshot snap = taps.Evaluate(UsdTimeCode::Default());
-    CHECK(snap.IsValid());
-
-    // Parity: the exec-evaluated IK result must match the direct math
+    // Parity: the evaluated IK result must match the direct math
     // solve fed with directly reconstructed control frames.
     const UsdPrim root =
         stage->GetPrimAtPath(SdfPath("/ArmAsset/Rig/Controls/ShoulderFK"));
@@ -276,7 +279,7 @@ TestIkAndBlend(const std::string &examplesDir)
     params.upperLength = 4;
     params.lowerLength = 4;
     // Authored as float attributes: read them back for exact parity with
-    // the exec-evaluated inputs.
+    // the evaluated inputs.
     params.stretch = double(1.0f);
     params.softness = double(0.15f);
     params.preferredBendRadians = -0.35;
@@ -294,20 +297,28 @@ TestIkAndBlend(const std::string &examplesDir)
         DirectControlFrame(handIk, UsdTimeCode::Default()),
         DirectControlFrame(pole, UsdTimeCode::Default()), rests, params);
 
-    const auto ik = snap.Get<RigExecPointFrameArray>(ikTap);
-    CHECK(ik.GetSize() == 3);
-    if (ik.GetSize() == 3) {
+    RigExecPointFrameArray ik;
+    CHECK(RigExecStoredSolve(stage, SdfPath("/ArmAsset/Rig"),
+                             SdfPath("/ArmAsset/Rig/Solvers/IK"),
+                             UsdTimeCode::Default(), &ik));
+    const auto ikFrames = Published(
+        CompiledPose(stage, SdfPath("/ArmAsset/Rig"), UsdTimeCode::Default())
+            .solverFrames,
+        SdfPath("/ArmAsset/Rig/Solvers/IK"));
+    CHECK(SameFrames(ikFrames, ik.frames));
+    CHECK(ikFrames.size() == 3);
+    if (ikFrames.size() == 3) {
         for (int i = 0; i < 3; ++i) {
             for (int p = 0; p < 4; ++p) {
                 const bool ok =
-                    Near(ik.frames[i].points[p], expected[i].points[p], 1e-9);
+                    Near(ikFrames[i].points[p], expected[i].points[p], 1e-9);
                 CHECK(ok);
                 if (!ok) {
                     std::printf(
                         "  frame %d point %d exec (%g %g %g) "
                         "expected (%g %g %g)\n",
-                        i, p, ik.frames[i].points[p][0],
-                        ik.frames[i].points[p][1], ik.frames[i].points[p][2],
+                        i, p, ikFrames[i].points[p][0],
+                        ikFrames[i].points[p][1], ikFrames[i].points[p][2],
                         expected[i].points[p][0], expected[i].points[p][1],
                         expected[i].points[p][2]);
                 }
@@ -331,20 +342,6 @@ TestIkAndBlend(const std::string &examplesDir)
 
     // The wrist reaches (or soft-clamps toward) the authored goal.
     CHECK((wrist.Origin() - GfVec3d(6, 13, 2)).GetLength() < 0.5);
-
-    // Semantic lock (view-free): the solver binding exists only inside the
-    // evaluator, so a RAW source-stage joint tap at this animated IK frame
-    // returns the fallback pose, NOT the solved one.
-    // Downstream consumers must read the compiled rig; this asserts the
-    // documented break so it cannot silently regress.
-    RigExecTapSet rawTaps(stage);
-    const RigExecTapId rawWristTap = rawTaps.Add(RigExecValueAddress::Prim(
-        SdfPath("/ArmAsset/Rig/Joints/Shoulder/Elbow/Wrist"),
-        _computePointFrame));
-    rawTaps.Prepare();
-    const auto rawWrist = rawTaps.Evaluate(UsdTimeCode::Default())
-                              .Get<RigExecPointFrame>(rawWristTap);
-    CHECK(!Near(rawWrist.Origin(), wrist.Origin(), 1e-6));
 }
 
 // View-free solver->joint binding validation is enforced in Phase A,
@@ -622,27 +619,8 @@ TestShotAnimation(const std::string &examplesDir)
         return;
 
     const SdfPath rigPath("/Shot/HeroArm/Rig");
-    const SdfPath weightPath = rigPath.AppendPath(SdfPath("Solvers/IKFKBlend"))
-                                   .AppendProperty(TfToken("inputs:weight"));
-
-    RigExecTapSet taps(stage);
-    const RigExecTapId weightTap =
-        taps.Add(RigExecValueAddress::Property(weightPath));
-    taps.Prepare();
     const SdfPath wristPath =
         rigPath.AppendPath(SdfPath("Joints/Shoulder/Elbow/Wrist"));
-
-    // Native USD animation value resolution parity (spec §5.6): the exec
-    // computeValue of the spline-driven weight matches timed Get().
-    const UsdAttribute weightAttr = stage->GetAttributeAtPath(weightPath);
-    for (double t : {1001.0, 1006.5, 1012.0, 1013.0, 1024.0, 1048.0}) {
-        const RigExecSnapshot snap = taps.Evaluate(UsdTimeCode(t));
-        CHECK(snap.IsValid());
-        float authored = 0;
-        CHECK(weightAttr.Get(&authored, UsdTimeCode(t)));
-        const float computed = snap.Get<float>(weightTap);
-        CHECK(std::abs(computed - authored) < 1e-6);
-    }
 
     // Frame 1001: weight 0 -> FK rest pose.
     {
@@ -808,7 +786,7 @@ TestGeometryMovers(const std::string &examplesDir)
         pose.movedProperties.find(SdfPath("/ArmAsset/Geom/ArmBody.extent"));
     CHECK(extentIt != pose.movedProperties.end());
 
-    // Scalar-reference parity (spec §7.4): the generated OpenExec
+    // Scalar-reference parity (spec §7.4): the evaluated
     // application chain and the CPU reference kernels agree exactly.
     const auto cpuIt = pose.movedPropertiesCpu.find(bodyPoints);
     CHECK(cpuIt != pose.movedPropertiesCpu.end());
@@ -1039,7 +1017,7 @@ TestBlendDeltasUseBase()
 static size_t
 DerivedEvaluateCount(const RigExecRigEvaluator &evaluator)
 {
-    // Observe actual common operation execution, not a retired profiler label.
+    // Counted from the op trace of the last run.
     const auto trace = evaluator.GetLastOpTrace();
     return size_t(
         std::count_if(trace.begin(), trace.end(),
@@ -1436,8 +1414,8 @@ TestMatrixMoverUniversalEnvelope()
     const VtVec3fArray base = {GfVec3f(0, 0, 0), GfVec3f(1, 0, 0),
                                GfVec3f(2, 0, 0)};
 
-    auto evaluate = [&](float defaultWeight,
-                        const VtFloatArray *spatial) -> RigExecRigPose {
+    auto build = [&](float defaultWeight,
+                     const VtFloatArray *spatial) -> UsdStageRefPtr {
         const UsdStageRefPtr stage = UsdStage::CreateInMemory();
         const UsdPrim points =
             stage->DefinePrim(SdfPath("/Asset/Geom/P"), TfToken("Points"));
@@ -1472,7 +1450,11 @@ TestMatrixMoverUniversalEnvelope()
             mover.CreateRelationship(TfToken("rigExec:weightObject"), false)
                 .SetTargets({weight.GetPath()});
         }
-        return EvaluateEnvelopeFixture(stage);
+        return stage;
+    };
+    auto evaluate = [&](float defaultWeight,
+                        const VtFloatArray *spatial) -> RigExecRigPose {
+        return EvaluateEnvelopeFixture(build(defaultWeight, spatial));
     };
 
     for (const float weight : {0.0f, 0.5f, 1.0f}) {
@@ -1495,20 +1477,41 @@ TestMatrixMoverUniversalEnvelope()
                    GfVec3d(base[i]) + GfVec3d(0, 10.0 * spatial[i], 0)));
     }
 
-    // The common envelope is normalized.  Bad scalar values fail this one
-    // application atomically and preserve the preceding value.
+    // The common envelope is normalized. A weight outside [0, 1] stops the
+    // frame with the mover's error and publishes nothing; the next valid
+    // weight recovers.
+    const std::string mover = "/Asset/Rig/Movers/M: ";
+    const std::string why =
+        "MatrixDeform: a default weight is not finite or outside [0, 1]";
     for (const float invalid :
          {-0.01f, 1.01f, std::numeric_limits<float>::quiet_NaN()}) {
-        const RigExecRigPose pose = evaluate(invalid, nullptr);
-        const VtVec3fArray moved = EnvelopePoints(pose, target);
-        CHECK(moved == base);
-        CHECK(std::any_of(pose.diagnostics.begin(), pose.diagnostics.end(),
-                          [](const std::string &diagnostic) {
-                              return diagnostic.find("defaultWeight") !=
-                                         std::string::npos ||
-                                     diagnostic.find("weight") !=
-                                         std::string::npos;
+        const UsdStageRefPtr stage = build(0.5f, nullptr);
+        const UsdAttribute weight = stage->GetAttributeAtPath(
+            SdfPath("/Asset/Rig/Movers/M.inputs:defaultWeight"));
+        RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+        std::vector<std::string> errors;
+        CHECK(evaluator.Compile(&errors));
+        CHECK(evaluator.Evaluate(UsdTimeCode::Default()).valid);
+        CHECK(weight.Set(invalid));
+        const RigExecRigPose failed =
+            evaluator.Evaluate(UsdTimeCode::Default());
+        CHECK(!failed.valid);
+        CHECK(failed.movedProperties.find(target) ==
+              failed.movedProperties.end());
+        CHECK(std::any_of(failed.diagnostics.begin(), failed.diagnostics.end(),
+                          [&](const std::string &line) {
+                              return line.rfind(mover, 0) == 0 &&
+                                     line.find(why) != std::string::npos;
                           }));
+        CHECK(weight.Set(0.5f));
+        const RigExecRigPose recovered =
+            evaluator.Evaluate(UsdTimeCode::Default());
+        CHECK(recovered.valid);
+        const VtVec3fArray moved = EnvelopePoints(recovered, target);
+        CHECK(moved.size() == base.size());
+        for (size_t i = 0; i < moved.size() && i < base.size(); ++i) {
+            CHECK(Near(GfVec3d(moved[i]), GfVec3d(base[i]) + GfVec3d(0, 5, 0)));
+        }
     }
 }
 
@@ -2028,22 +2031,6 @@ TestSmoothMoverUniversalEnvelope()
             GfVec3d(base[i]) + (center - GfVec3d(base[i])) * spatial[i];
         CHECK(Near(GfVec3d(fieldMoved[i]), expected));
     }
-
-    // The old type-specific spelling must fail closed rather than compose as
-    // an ignored custom attribute.
-    const UsdStageRefPtr legacy = makeStage(1.0f, nullptr);
-    legacy->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/S"))
-        .CreateAttribute(TfToken("inputs:strength"), SdfValueTypeNames->Float,
-                         true)
-        .Set(0.5f);
-    RigExecRigEvaluator legacyEvaluator(legacy, SdfPath("/Asset/Rig"));
-    legacyEvaluator.cpuReference = true;
-    std::vector<std::string> errors;
-    CHECK(!legacyEvaluator.Compile(&errors));
-    CHECK(std::any_of(errors.begin(), errors.end(), [](const std::string &e) {
-        return e.find("inputs:strength") != std::string::npos &&
-               e.find("inputs:defaultWeight") != std::string::npos;
-    }));
 }
 
 // The scalar property domain uses the same contract.  A one-element constant
@@ -2107,22 +2094,6 @@ TestPropertyMoverUniversalEnvelope()
     }
     const float field = 0.75f;
     CHECK(std::abs(valueAt(makeStage(0.25f, &field)) - 8.0f) < 1e-6f);
-
-    // It is not an alias: only BlendInput keeps that spelling for channel
-    // amplitude.
-    const UsdStageRefPtr legacy = makeStage(1.0f, nullptr);
-    legacy->GetPrimAtPath(SdfPath("/Asset/Rig/Movers/Add"))
-        .CreateAttribute(TfToken("inputs:weight"), SdfValueTypeNames->Float,
-                         true)
-        .Set(0.5f);
-    RigExecRigEvaluator legacyEvaluator(legacy, SdfPath("/Asset/Rig"));
-    legacyEvaluator.cpuReference = true;
-    std::vector<std::string> errors;
-    CHECK(!legacyEvaluator.Compile(&errors));
-    CHECK(std::any_of(errors.begin(), errors.end(), [](const std::string &e) {
-        return e.find("inputs:weight") != std::string::npos &&
-               e.find("inputs:defaultWeight") != std::string::npos;
-    }));
 }
 
 // Negative compile: a weight object whose target does not canonicalize to
@@ -2541,8 +2512,9 @@ TestPureSolverToSolverCycleRejected(const std::string &examplesDir)
         CHECK(!requiredKeys[0].empty() && !requiredKeys[1].empty());
         bool encountered = false;
         for (const auto &step : B.steps)
-            if (step.kind == RigExecBakedStepKind::Solve &&
-                step.object == blend->second) {
+            if (RigExecBakedIdentityOf(B, step).kind ==
+                    RigExecBakedStepKind::Solve &&
+                RigExecBakedSolverOf(B, step) == blend->second) {
                 encountered = true;
                 CHECK(step.descriptorKey == record.solveDescriptorKey);
                 CHECK(step.semanticPredecessorKeys == requiredKeys);
@@ -2652,11 +2624,6 @@ TestPureSolverToSolverCycleRejected(const std::string &examplesDir)
 
 // Aim constraints revise a joint's final frame, and the revision points the
 // authored aim axis at the target.
-// Nothing asserted this before: the mover-graph parity suite only covers point
-// chains, and an aim moves a transform provider's FRAME. So the whole
-// pose-domain revision path could have been a no-op and every test would still
-// have passed -- which matters now that it is applied in memory rather than
-// through a generated RigExecPointFrameMoverApplication.
 // 08_AimEyes: EyeL/EyeR sit at (-1,10,0)/(1,10,0), LookAt at (0,10,6), and
 // both aims declare rigExec:aimAxis = "z" at weight 1. So each eye's final
 // frame must (a) differ from its base and (b) have its Z axis pointing at the
@@ -4592,9 +4559,9 @@ _BlinkReadout(const RigExecRigPose &pose, const char *name)
 // expects while dragged. Dragged to 1.4, the base readers read 1.4 and the
 // final readers 1.0; with the clamp disabled every revision passes
 // through, so both read 1.4; with no authored value the drag is still a
-// base, so the chain runs from it; and a drag that is not finite skips the
-// chain with the line an authored one prints, leaving every reader on the
-// dragged value. A held drag moved without being lifted reads at each step
+// base, so the chain runs from it, while the undragged frame fails with no
+// base; and a drag that is not finite fails the frame with the line an
+// authored one prints. A held drag moved without being lifted reads at each step
 // what a drag placed straight at that value reads: 1.4 -> 1.5 leaves the
 // clamped final on 1.0 while the base readers move, and 1.5 -> 0.5 moves
 // both. A double drag on the float blink is the float base it narrows to.
@@ -4616,7 +4583,7 @@ TestBlinkDragEqualsRelease()
         {"blink 1.4", true, true, true, 1.4f, 1.4f, 1.0f},
         {"blink 1.4, clamp disabled", true, true, false, 1.4f, 1.4f, 1.4f},
         {"blink 0.5, nothing authored", true, false, true, 0.5f, 0.5f, 0.5f},
-        // The readouts cannot add a NaN and pass through, keeping 0.
+        // A NaN base fails the frame.
         {"blink NaN", false, true, true, nan, 0.0f, 0.0f},
     };
     {
@@ -4634,6 +4601,30 @@ TestBlinkDragEqualsRelease()
                 {RigExecValueOverride{blink.GetPrimPath(), TfToken(),
                                       blink.GetNameToken(), VtValue(c.drag)}});
             const RigExecRigPose dragged = evaluator.Evaluate(time);
+            if (!std::isfinite(c.drag)) {
+                const auto nonFinite = [&](const RigExecRigPose &pose) {
+                    const std::string text = "property chain " +
+                                             blink.GetString() +
+                                             ": authored base is not finite";
+                    return !pose.valid &&
+                           std::any_of(
+                               pose.diagnostics.begin(), pose.diagnostics.end(),
+                               [&](const std::string &line) {
+                                   return line.find(text) != std::string::npos;
+                               });
+                };
+                CHECK(nonFinite(dragged));
+                CHECK(nonFinite(evaluator.Evaluate(time)));
+                evaluator.ClearInteractiveOverrides();
+                CHECK(_SameReadings(label + ", lifted", authored,
+                                    evaluator.Evaluate(time)));
+                stage->GetAttributeAtPath(blink).Set(c.drag);
+                CHECK(nonFinite(evaluator.Evaluate(time)));
+                RigExecRigEvaluator fresh(stage, rigPath);
+                CHECK(fresh.Compile(nullptr));
+                CHECK(nonFinite(fresh.Evaluate(time)));
+                continue;
+            }
             CHECK(dragged.valid);
             {
                 // The program answered the drag, not a dynamic fallback.
@@ -4649,17 +4640,8 @@ TestBlinkDragEqualsRelease()
             }
             CHECK(read);
             const auto published = dragged.movedProperties.find(blink);
-            if (std::isfinite(c.drag)) {
-                CHECK(published != dragged.movedProperties.end() &&
-                      published->second == VtValue(c.final));
-            } else {
-                CHECK(published == dragged.movedProperties.end());
-                CHECK(std::count(dragged.diagnostics.begin(),
-                                 dragged.diagnostics.end(),
-                                 "property chain " + blink.GetString() +
-                                     ": authored base is not finite; chain "
-                                     "skipped") == 1);
-            }
+            CHECK(published != dragged.movedProperties.end() &&
+                  published->second == VtValue(c.final));
             if (c.lid) {
                 const auto frame = dragged.controlFrames.find(lid);
                 CHECK(frame != dragged.controlFrames.end() &&
@@ -4669,8 +4651,25 @@ TestBlinkDragEqualsRelease()
             CHECK(_SameReadings(label + ", held", dragged,
                                 evaluator.Evaluate(time)));
             evaluator.ClearInteractiveOverrides();
-            CHECK(_SameReadings(label + ", lifted", authored,
-                                evaluator.Evaluate(time)));
+            if (c.authored) {
+                CHECK(_SameReadings(label + ", lifted", authored,
+                                    evaluator.Evaluate(time)));
+            } else {
+                // With no drag and nothing authored the chain has no base.
+                const auto unbased = [&](const RigExecRigPose &pose) {
+                    const std::string text = "property chain " +
+                                             blink.GetString() +
+                                             ": target has no authored value";
+                    return !pose.valid &&
+                           std::any_of(
+                               pose.diagnostics.begin(), pose.diagnostics.end(),
+                               [&](const std::string &line) {
+                                   return line.find(text) != std::string::npos;
+                               });
+                };
+                CHECK(unbased(authored));
+                CHECK(unbased(evaluator.Evaluate(time)));
+            }
 
             stage->GetAttributeAtPath(blink).Set(c.drag);
             const RigExecRigPose released = evaluator.Evaluate(time);
@@ -5693,17 +5692,20 @@ TestWeightDescriptorValidationAndCompiledRig()
         CHECK(evaluator.Evaluate(UsdTimeCode::Default()).valid);
     }
     {
-        // Numeric packet contents are value state, unlike the dense array's
-        // descriptor cardinality.  A strict violation therefore compiles and
-        // fails just this mover revision back to the preceding points.
+        // Painted values are known at Build: a strict violation refuses
+        // the rig.
         const UsdStageRefPtr badValue = makeStage(VtFloatArray{1, 2, 1});
         RigExecRigEvaluator evaluator(badValue, SdfPath("/Asset/Rig"));
         evaluator.cpuReference = true;
-        CHECK(evaluator.Compile(nullptr));
+        evaluator.Compile(nullptr);
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
-        CHECK(pose.valid);
-        CHECK(EnvelopePoints(pose, SdfPath("/Asset/Geom/P.points")) ==
-              VtVec3fArray({GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(2, 0, 0)}));
+        CHECK(!pose.valid);
+        CHECK(std::any_of(
+            pose.diagnostics.begin(), pose.diagnostics.end(),
+            [](const std::string &line) {
+                return line.find("/Asset/Rig/Weights/W: a weight is not finite "
+                                 "or outside [0, 1]") != std::string::npos;
+            }));
     }
     {
         // A points property authored only at a time sample is a valid domain;

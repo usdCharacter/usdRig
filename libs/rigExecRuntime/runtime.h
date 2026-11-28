@@ -1,4 +1,4 @@
-// rigExecRuntime: zero-USD .rigexec playback.
+// rigExecRuntime: .rigexec playback.
 // Opens a baked .rigexec file (one FlatBuffer, rigExecBinary/format.h),
 // replays its cluster DAG over the inputs the caller sets, and publishes
 // joint matrices and deformed points -- no USD headers, no USD library. The
@@ -18,13 +18,15 @@
 // same atomic counter. It never waits on the dispatcher, only on ranges
 // already claimed, and the helpers join with Execute's wait. Successful
 // points match the serial loop, including NaN payloads.
-// The reader holds no locks: one reader per thread, or external synchronization.
+// The reader holds no locks: one reader per thread, or external
+// synchronization.
 #ifndef RIGEXEC_RUNTIME_H
 #define RIGEXEC_RUNTIME_H
 
+#include "rigExec/api/registry.h"
 #include "rigExecBinary/external.h"
 #include "rigExecBinary/moverDefinition.h"
-#include "rigExecRuntime/runtimeMath.h"
+#include "rigExecMath/runtimeMath.h"
 #include "rigExecRuntime/values.h"
 
 #include <cstddef>
@@ -217,6 +219,16 @@ struct RigExecRuntimePropertyValue {
     RrPropertyValue value;
 };
 
+// An op node output the file publishes by name (File.op_graph): its value
+// as the last Execute computed it, of registered type `type` (an index into
+// RigExecRegistry), or null before the first Execute and after one that
+// failed. The pointer stays valid until the next Execute.
+struct RigExecRuntimeOpOutput {
+    std::string name;
+    uint32_t type = kRigExecInvalidIndex;
+    const void *value = nullptr;
+};
+
 // The generation's actual kernel invocations in the shared executor.
 struct RigExecRuntimeCounters {
     uint64_t executedOpCount = 0;
@@ -244,15 +256,32 @@ public:
     static std::unique_ptr<RigExecRuntimeReader>
     Open(const uint8_t *bytes, size_t size, std::string *error);
 
-    // Bind a host's USD-free modules at Open. Unused definitions are allowed;
-    // duplicate names, incomplete callbacks and failed preparation are errors.
-    // Module code must stay loaded for the reader's lifetime.
+    // Bind a host's modules at Open. Unused definitions are allowed; duplicate
+    // names, incomplete callbacks and failed preparation are errors. Module
+    // code must stay loaded for the reader's lifetime.
     static std::unique_ptr<RigExecRuntimeReader>
     Open(const uint8_t *bytes, size_t size,
          const RigExecMoverDefinition *movers, size_t moverCount,
          std::string *error);
     bool InstallMoverDefinitions(const RigExecMoverDefinition *movers,
                                  size_t moverCount, std::string *error);
+
+    // A file with op nodes (format 35) runs them through the op registry,
+    // which holds the type and op libraries the host built in. This Open
+    // registers \p opLibraries when the process has no registry yet;
+    // otherwise each of them must already be registered. Without a
+    // registry, Open refuses a file with op nodes.
+    static std::unique_ptr<RigExecRuntimeReader>
+    Open(const uint8_t *bytes, size_t size,
+         const RigExecMoverDefinition *movers, size_t moverCount,
+         const RigExecRegistryInit &opLibraries, std::string *error);
+
+    // The op node outputs the file publishes, in file order.
+    size_t GetOpOutputCount() const;
+    // Output \p index; false past the count.
+    bool GetOpOutput(size_t index, RigExecRuntimeOpOutput *out) const;
+    // The index of the output published as \p name.
+    bool FindOpOutput(const std::string &name, size_t *index) const;
 
     // The inputs: every attribute a read of the rig walks, sorted by path.
     size_t GetInputCount() const;
@@ -341,8 +370,14 @@ public:
     std::string GetTokenText(uint32_t token) const;
 
     // Replays the cluster DAG over the inputs. False naming the first
-    // failing step; outputs keep their previous values.
+    // failing step; until the next Execute that succeeds, every output
+    // getter answers nothing and GetDiagnostics holds this run's failure.
     bool Execute(std::string *error);
+    // False after an Execute that failed, until one succeeds.
+    bool IsValid() const
+    {
+        return !_failed;
+    }
 
     // Windowed operations (secondary motion, cloth) solve from the inputs
     // they captured at earlier ticks as well as the current one
@@ -604,6 +639,9 @@ private:
     std::shared_ptr<const std::vector<uint8_t>> _historyBytes;
     std::unique_ptr<RigExecRuntimeReader> _history;
     bool _RunHistoryTick(std::string *error);
+    bool _Execute(std::string *error);
+    void _Invalidate(const std::string &error);
+    bool _RequireExternalKernels(std::string *error) const;
 
     // What the input getters answer past the count: a Double +0.0, every
     // other member zero.
@@ -624,6 +662,7 @@ private:
         _weightOrder, _providerOrder;
     std::vector<std::string> _diagnostics;
     RigExecRuntimeCounters _counters;
+    bool _failed = false;
 };
 
 // Serial and parallel skin on one synthetic mesh, including a NaN payload.

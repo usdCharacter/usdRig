@@ -8,13 +8,12 @@
 #include "rigExecSchema/schemaNames.h"
 #include "registry.h"
 
-#include "rigExec/backgroundScheduler.h"
-#include "rigExec/bakedClusters.h"
-#include "rigExec/frameCache.h"
-#include "rigExec/frozenContext.h"
-#include "rigExec/outputAffectedIndex.h"
-#include "rigExec/profiler.h"
-#include "rigExec/tapSet.h"
+#include "rigExecPlayback/backgroundScheduler.h"
+#include "rigExec/internal/bakedClusters.h"
+#include "rigExec/api/frameCache.h"
+#include "rigExec/api/frozenContext.h"
+#include "rigExec/internal/outputAffectedIndex.h"
+#include "rigExec/api/profiler.h"
 
 #include "pxr/base/tf/stringUtils.h"
 #include "pxr/base/tf/token.h"
@@ -344,8 +343,8 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
         _NoticeEditControls(notice, disposition, patchedPaths, *index);
     const RigExecBakedClusterSet dirty = index->AffectedByControls(controls);
     // Weight-object edits: a notice path at or under a weight object an
-    // entry read (WeightPacket steps resolve through step.object, outside
-    // the avar-only index, so the provenance read set is the oracle).
+    // entry read (weight packet op nodes resolve through their object,
+    // outside the avar-only index, so the provenance read set is the oracle).
     const std::vector<SdfPath> noticePaths = _NoticeEditPaths(notice);
     const uint64_t newConstants = [&]() {
         RigExecProfileScope scope(bridge.MutableProfiler(),
@@ -545,7 +544,6 @@ RigExecImagingRegistry::_OnObjectsChanged(
                                    guideTime, automatic, retryOnValues);
         return;
     }
-    RigExecTapSet::PrepareStageChange(UsdStageRefPtr(sender), notice);
     std::shared_ptr<RigExecBackgroundScheduler> scheduler;
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -554,10 +552,7 @@ RigExecImagingRegistry::_OnObjectsChanged(
     // Retiring cache rows and fencing their running jobs is atomic with
     // worker cache/index publication. The fence precedes the registry
     // lock, and is released before publishing any scene-index notices.
-    std::unique_lock<std::mutex> fenceLock;
-    if (scheduler) {
-        fenceLock = std::unique_lock<std::mutex>(scheduler->FenceMutex());
-    }
+    RigExecPublishFence fence(scheduler.get());
     std::set<SdfPath> readRoots;
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -583,7 +578,7 @@ RigExecImagingRegistry::_OnObjectsChanged(
     // the final frame (solvers, joints, movers, controls, weights, driver geometry,
     // guide styling): re-evaluate at the current time. The evaluator's
     // compiled rig signature turns structural edits into recompiles; value edits
-    // flow through exec invalidation on the shared layers.
+    // reach it through its own notice handling.
     auto touchesInput = [&readRoots](const SdfPath &path) {
         const SdfPath primPath = path.GetPrimPath();
         for (const SdfPath &root : readRoots) {
@@ -778,9 +773,7 @@ RigExecImagingRegistry::_OnObjectsChanged(
             }
             time = _lastTime;
         }
-        if (fenceLock.owns_lock()) {
-            fenceLock.unlock();
-        }
+        fence.Release();
         SetTime(time);
     }
 }

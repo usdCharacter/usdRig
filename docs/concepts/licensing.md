@@ -109,7 +109,7 @@ confirming more than that.
 | `thirdparty/lzma` | Igor Pavlov | public domain — no SPDX id | `thirdparty/lzma/DOC/lzma-sdk.txt`, provenance in `thirdparty/lzma/NOTICE.md` | 26.04 |
 | OpenRigLogic ports | Epic Games, Inc. | MIT | quoted in the installed `THIRD_PARTY_NOTICES.md`; no separate text file, no header in the three port files | `9ca65ac08b64a1ea5f0d79466e64706b3ac524ba` |
 | Squarebit Eye shader | Squarebit LLC (Squarebit Studios) | Squarebit Eye EULA | URL only, [squarebitstudios.com/squarebit-eye/eula](https://www.squarebitstudios.com/squarebit-eye/eula) | — |
-| `libs/rigExecRuntime/runtimeMath.h` | Pixar | TOST-1.0 | header notice, upstream license link | — |
+| `libs/rigExecMath/runtimeMath.h` | Pixar | TOST-1.0 | header notice, upstream license link | — |
 | `plugin/rigExecUsdview/volumeWeightUI.py` | Pixar | OpenUSD terms | existing header notice | — |
 
 A public citation is not a license. The methods in

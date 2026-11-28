@@ -10,11 +10,12 @@
 //  - an interactive override is a value the static reads must prefer over
 //    the stage, and the layout is read through exactly that route.
 // With --baked <examples>, the baked program's own layout handles instead.
-#include "rigExec/bakedProgram.h"
-#include "rigExec/bakedProgramImpl.h"
-#include "rigExec/bakedSchedule.h"
-#include "rigExec/moverGraph.h"
-#include "rigExec/rigEvaluator.h"
+#include "rigExec/api/bakedProgram.h"
+#include "rigExec/internal/bakedProgramImpl.h"
+#include "rigExec/internal/bakedSchedule.h"
+#include "rigExec/internal/moverGraph.h"
+#include "rigExec/api/rigEvaluator.h"
+#include "rigExec/internal/evaluatorTesting.h"
 #include "rigExecInputActionsAdapters.h"
 
 #include "pxr/base/arch/env.h"
@@ -253,9 +254,9 @@ TestInteractiveOverrideOnTheLayout()
     // deformation by some other route: the cache is emptied by an override
     // that names a layout attribute, which is the YES branch of the
     // predicate SetInteractiveOverrides narrowed the clear to.
-    CHECK(evaluator.GetSkinTopologyCacheSize() > 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator) > 0);
     evaluator.SetInteractiveOverrides({override});
-    CHECK(evaluator.GetSkinTopologyCacheSize() == 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator) == 0);
     CheckSkinned(evaluator.Evaluate(UsdTimeCode::Default()), 0.0f, 1.0f,
                  "overridden weights");
 
@@ -590,18 +591,18 @@ TestAnOverrideUpstreamOfTheLayoutDropsTheCache()
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
     CompileOrReport(&evaluator);
     CHECK(deformed(&evaluator) == linearPoints);
-    CHECK(evaluator.GetSkinTopologyCacheSize() > 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator) > 0);
 
     RigExecValueOverride override;
     override.prim = kSkin;
     override.attribute = TfToken("inputs:method");
     override.value = VtValue(TfToken("dualQuaternion"));
     evaluator.SetInteractiveOverrides({override});
-    CHECK(evaluator.GetSkinTopologyCacheSize() == 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator) == 0);
     CHECK(deformed(&evaluator) == dualPoints);
 
     evaluator.ClearInteractiveOverrides();
-    CHECK(evaluator.GetSkinTopologyCacheSize() == 0);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator) == 0);
     CHECK(deformed(&evaluator) == linearPoints);
 }
 
@@ -624,7 +625,8 @@ TestAnUnrelatedOverrideKeepsTheCache()
     CompileOrReport(&evaluator);
     CheckSkinned(evaluator.Evaluate(UsdTimeCode::Default()), 1.0f, 0.0f,
                  "before the drag");
-    const size_t cached = evaluator.GetSkinTopologyCacheSize();
+    const size_t cached =
+        RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator);
     CHECK(cached > 0);
 
     RigExecValueOverride override;
@@ -632,14 +634,14 @@ TestAnUnrelatedOverrideKeepsTheCache()
     override.attribute = TfToken("avars:tx");
     override.value = VtValue(20.0);
     evaluator.SetInteractiveOverrides({override});
-    CHECK(evaluator.GetSkinTopologyCacheSize() == cached);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator) == cached);
     // tx = 20 against a rest of 10 is two units of the influence's
     // displacement, which is what CheckSkinned's first argument scales.
     CheckSkinned(evaluator.Evaluate(UsdTimeCode::Default()), 2.0f, 0.0f,
                  "during the drag");
-    CHECK(evaluator.GetSkinTopologyCacheSize() == cached);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator) == cached);
     evaluator.ClearInteractiveOverrides();
-    CHECK(evaluator.GetSkinTopologyCacheSize() == cached);
+    CHECK(RigExecEvaluatorTesting::SkinTopologyCacheSize(evaluator) == cached);
     CheckSkinned(evaluator.Evaluate(UsdTimeCode::Default()), 1.0f, 0.0f,
                  "after the drag");
 }
@@ -1472,8 +1474,10 @@ TestTheLayoutHandleSurvivesUnrelatedNotices()
             bool initialized = false;
             if (extra != B.index.end())
                 for (size_t i = 0; i < B.steps.size(); ++i)
-                    if (B.steps[i].kind == RigExecBakedStepKind::AvarInputs &&
-                        B.steps[i].object == extra->second &&
+                    if (rigExec::RigExecBakedIdentityOf(B, B.steps[i]).kind ==
+                            RigExecBakedStepKind::AvarInputs &&
+                        rigExec::RigExecBakedIdentityOf(B, B.steps[i]).object ==
+                            extra->second &&
                         i < B.opExecution.ran.size() && B.opExecution.ran[i])
                         initialized = true;
             CHECK(initialized);

@@ -319,15 +319,15 @@ _AccumulatePlaneWeightDefaultPose(const PXR_NS::UsdPrim &prim,
                                   const _WeightGuideFacts &facts,
                                   PXR_NS::GfRange3d &range)
 {
-    const PXR_NS::TfToken axisName =
-        attrs.token(SchemaAttr::rigExecPlaneAxis, SchemaValue::y);
+    const PXR_NS::TfToken axisName = attrs.token(
+        SchemaAttr::rigExecPlaneAxis, SchemaFallback::rigExecPlaneAxis);
     const int axis = axisName == SchemaValue::x
                          ? 0
                          : (axisName == SchemaValue::y
                                 ? 1
                                 : (axisName == SchemaValue::z ? 2 : -1));
-    const PXR_NS::TfToken bounds =
-        attrs.token(SchemaAttr::rigExecPlaneBounds, SchemaValue::unbounded);
+    const PXR_NS::TfToken bounds = attrs.token(
+        SchemaAttr::rigExecPlaneBounds, SchemaFallback::rigExecPlaneBounds);
     const double extentU = attrs.floatNumber(SchemaAttr::inputsExtentU, 1.0);
     const double extentV = attrs.floatNumber(SchemaAttr::inputsExtentV, 1.0);
     if (axis < 0 ||

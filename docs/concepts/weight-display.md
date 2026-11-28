@@ -74,5 +74,5 @@ graph. Release commits the spline once; Escape restores the original influence.
 The temporary samples are never authored to the stage.
 
 The optional `inputs:falloffSamples` array also works as a sampled graph input.
-An empty array uses the authored profile. `.rigexec` format 27 carries it as a
-runtime input; a file from formats 20–26 plays with its compiled falloff table.
+An empty array uses the authored profile. A `.rigexec` file carries it as a
+runtime input.

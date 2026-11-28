@@ -1,6 +1,6 @@
 #include "rigExecGpu/gpuDeformExecutor.h"
 
-#include "rigExec/gpuDeformTranslation.h"
+#include "rigExec/internal/gpuDeformTranslation.h"
 #include "rigExecGpu/clothShader.h"
 #include "rigExecGpu/glContext.h"
 #include "rigExecGpu/gpuDeformShader.h"

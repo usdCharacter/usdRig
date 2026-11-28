@@ -23,9 +23,9 @@
 //     is still functional afterwards.
 //   * DROP. Corrupt input is declined, never served: invalid poses,
 //     oversized entries, and null out-params all miss.
-#include "rigExec/frameCache.h"
-#include "rigExec/frameCacheSparsity.h"
-#include "rigExec/frozenContext.h"
+#include "rigExec/api/frameCache.h"
+#include "rigExec/internal/frameCacheSparsity.h"
+#include "rigExec/api/frozenContext.h"
 
 // These headers only name the baked program's implementation and the
 // frozen snapshot, so editing either rebuilds just the sources that read
@@ -179,10 +179,10 @@ TestAnEmptyCacheMisses()
 {
     RigExecFrameCache cache;
     const RigExecFrameCacheKey key{1, 2};
-    RigExecRigPose pose;
-    pose.valid = true;
+    const auto untouched = std::make_shared<const RigExecRigPose>();
+    std::shared_ptr<const RigExecRigPose> pose = untouched;
     CHECK(!cache.Lookup(key, &pose));
-    CHECK(pose.valid);
+    CHECK(pose == untouched);
     const RigExecFrameCacheStats stats = cache.Stats();
     CHECK(stats.hits == 0);
     CHECK(stats.misses == 1);
@@ -215,9 +215,9 @@ TestPublishThenLookupHits()
     const RigExecFrameCacheKey key{4, 9};
     const RigExecRigPose published = MakePose(2.5, 3);
     CHECK(cache.Publish(key, UsdTimeCode(6.0), published));
-    RigExecRigPose found;
+    std::shared_ptr<const RigExecRigPose> found;
     CHECK(cache.Lookup(key, &found));
-    CHECK(PosesMatch(published, found));
+    CHECK(PosesMatch(published, *found));
     const RigExecFrameCacheStats stats = cache.Stats();
     CHECK(stats.hits == 1);
     CHECK(stats.misses == 0);
@@ -227,6 +227,30 @@ TestPublishThenLookupHits()
     CHECK(stats.bytes == RigExecFrameCachePoseBytes(published));
 }
 
+// A stored pose is shared, never copied: Publish of a shared pose stores
+// that pose, every hit hands it out, and a re-key under another key shares
+// it too, with each entry accounting the same pose bytes.
+void
+TestStoredPoseIsShared()
+{
+    RigExecFrameCache cache;
+    const auto published = std::make_shared<RigExecRigPose>(MakePose(2.5, 3));
+    CHECK(cache.Publish({4, 9}, UsdTimeCode(6.0), published));
+    std::shared_ptr<const RigExecRigPose> first;
+    std::shared_ptr<const RigExecRigPose> second;
+    CHECK(cache.Lookup({4, 9}, &first));
+    CHECK(cache.Lookup({4, 9}, &second));
+    CHECK(first == published);
+    CHECK(second == published);
+    CHECK(cache.Publish({4, 10}, UsdTimeCode(7.0), first));
+    std::shared_ptr<const RigExecRigPose> rekeyed;
+    CHECK(cache.Lookup({4, 10}, &rekeyed));
+    CHECK(rekeyed == published);
+    CHECK(cache.Stats().bytes == 2 * RigExecFrameCachePoseBytes(*published));
+    CHECK(!cache.Publish({4, 11}, UsdTimeCode(1.0),
+                         std::shared_ptr<const RigExecRigPose>()));
+}
+
 // Either digest half misses: the compiled rig the program was built for and the
 // control state are both key material, and neighbors of a held key are cold.
 void
@@ -234,7 +258,7 @@ TestEitherDigestHalfMisses()
 {
     RigExecFrameCache cache;
     CHECK(cache.Publish({1, 2}, UsdTimeCode(1.0), MakePose(1.0, 1)));
-    RigExecRigPose pose;
+    std::shared_ptr<const RigExecRigPose> pose;
     CHECK(!cache.Lookup({9, 2}, &pose));
     CHECK(!cache.Lookup({1, 8}, &pose));
     CHECK(cache.Lookup({1, 2}, &pose));
@@ -256,9 +280,9 @@ TestTimeIsNotKeyMaterial()
     const RigExecFrameCacheStats stats = cache.Stats();
     CHECK(stats.published == 2);
     CHECK(stats.entryCount == 1);
-    RigExecRigPose found;
+    std::shared_ptr<const RigExecRigPose> found;
     CHECK(cache.Lookup(key, &found));
-    CHECK(PosesMatch(MakePose(2.0, 1), found));
+    CHECK(PosesMatch(MakePose(2.0, 1), *found));
 }
 
 // An invalid pose is not a pose: Publish declines it and the store is
@@ -274,7 +298,7 @@ TestPublishInvalidPoseDeclines()
     CHECK(stats.published == 0);
     CHECK(stats.entryCount == 0);
     CHECK(stats.bytes == 0);
-    RigExecRigPose found;
+    std::shared_ptr<const RigExecRigPose> found;
     CHECK(!cache.Lookup({1, 2}, &found));
 }
 
@@ -286,7 +310,7 @@ TestEvictDropsAndCounts()
     RigExecFrameCache cache;
     CHECK(cache.Publish({1, 2}, UsdTimeCode(1.0), MakePose(1.0, 1)));
     CHECK(cache.Evict({1, 2}));
-    RigExecRigPose pose;
+    std::shared_ptr<const RigExecRigPose> pose;
     CHECK(!cache.Lookup({1, 2}, &pose));
     CHECK(!cache.Evict({1, 2}));
     const RigExecFrameCacheStats stats = cache.Stats();
@@ -307,7 +331,7 @@ TestCapRoundTripsAndClearZeroesCounters()
     CHECK(cache.GetByteCap() == 1024 * 1024);
 
     CHECK(cache.Publish({1, 2}, UsdTimeCode(1.0), MakePose(1.0, 1)));
-    RigExecRigPose pose;
+    std::shared_ptr<const RigExecRigPose> pose;
     CHECK(cache.Lookup({1, 2}, &pose));
     CHECK(!cache.Lookup({9, 9}, &pose));
     CHECK(cache.Stats().hits == 1);
@@ -869,10 +893,10 @@ TestLRUEvictsLeastRecentlyUsed()
     CHECK(stats.bytes == 2 * entry);
     CHECK(stats.bytes <= cache.GetByteCap());
 
-    RigExecRigPose pose;
+    std::shared_ptr<const RigExecRigPose> pose;
     CHECK(!cache.Lookup({1, 1}, &pose));
     CHECK(cache.Lookup({1, 2}, &pose));
-    CHECK(PosesMatch(MakePose(2.0, 1), pose));
+    CHECK(PosesMatch(MakePose(2.0, 1), *pose));
     CHECK(cache.Lookup({1, 3}, &pose));
 }
 
@@ -886,7 +910,7 @@ TestLookupRefreshesRecency()
     cache.SetByteCap(2 * entry);
     CHECK(cache.Publish({1, 1}, UsdTimeCode(1.0), MakePose(1.0, 1)));
     CHECK(cache.Publish({1, 2}, UsdTimeCode(2.0), MakePose(2.0, 1)));
-    RigExecRigPose pose;
+    std::shared_ptr<const RigExecRigPose> pose;
     CHECK(cache.Lookup({1, 1}, &pose));
     CHECK(cache.Publish({1, 3}, UsdTimeCode(3.0), MakePose(3.0, 1)));
 
@@ -909,9 +933,9 @@ TestOverwriteRefreshesRecency()
     CHECK(cache.Publish({1, 1}, UsdTimeCode(3.0), MakePose(9.0, 1)));
     CHECK(cache.Publish({1, 3}, UsdTimeCode(4.0), MakePose(3.0, 1)));
 
-    RigExecRigPose pose;
+    std::shared_ptr<const RigExecRigPose> pose;
     CHECK(cache.Lookup({1, 1}, &pose));
-    CHECK(PosesMatch(MakePose(9.0, 1), pose));
+    CHECK(PosesMatch(MakePose(9.0, 1), *pose));
     CHECK(!cache.Lookup({1, 2}, &pose));
     CHECK(cache.Lookup({1, 3}, &pose));
 }
@@ -947,7 +971,7 @@ TestLoweringCapEvictsDown()
     CHECK(stats.entryCount == 1);
     CHECK(stats.bytes == entry);
     CHECK(stats.evictions == 2);
-    RigExecRigPose pose;
+    std::shared_ptr<const RigExecRigPose> pose;
     CHECK(!cache.Lookup({1, 1}, &pose));
     CHECK(!cache.Lookup({1, 2}, &pose));
     CHECK(cache.Lookup({1, 3}, &pose));
@@ -983,7 +1007,7 @@ TestConcurrentLookupDuringPublish()
                         ++publishes;
                     }
                 } else {
-                    RigExecRigPose pose;
+                    std::shared_ptr<const RigExecRigPose> pose;
                     cache.Lookup(key, &pose);
                     ++lookups;
                 }
@@ -1004,9 +1028,9 @@ TestConcurrentLookupDuringPublish()
     // Still functional afterwards: a fresh key round-trips.
     const RigExecFrameCacheKey fresh{7, 999};
     CHECK(cache.Publish(fresh, UsdTimeCode(1.0), MakePose(1.0, 1)));
-    RigExecRigPose pose;
+    std::shared_ptr<const RigExecRigPose> pose;
     CHECK(cache.Lookup(fresh, &pose));
-    CHECK(PosesMatch(MakePose(1.0, 1), pose));
+    CHECK(PosesMatch(MakePose(1.0, 1), *pose));
 }
 
 // Concurrent publishers of one key converge: hundreds of overwrites leave a
@@ -1034,10 +1058,10 @@ TestConcurrentPublishOfOneKey()
     const RigExecFrameCacheStats stats = cache.Stats();
     CHECK(stats.published == size_t(kThreads * kOps));
     CHECK(stats.entryCount == 1);
-    RigExecRigPose pose;
+    std::shared_ptr<const RigExecRigPose> pose;
     CHECK(cache.Lookup(key, &pose));
-    CHECK(pose.valid);
-    CHECK(pose.jointFramesFinal.size() == 1);
+    CHECK(pose->valid);
+    CHECK(pose->jointFramesFinal.size() == 1);
 }
 
 // Clear races background publishers without losing count: three threads
@@ -1091,7 +1115,7 @@ TestClearDuringConcurrentPublishKeepsAccountingHonest()
     // A wrapped counter would evict this immediately after publishing it.
     const RigExecFrameCacheKey fresh{5, 999};
     CHECK(cache.Publish(fresh, UsdTimeCode(1.0), MakePose(1.0, 1)));
-    RigExecRigPose pose;
+    std::shared_ptr<const RigExecRigPose> pose;
     CHECK(cache.Lookup(fresh, &pose));
     CHECK(cache.Stats().entryCount == 1);
 }
@@ -1108,6 +1132,7 @@ main()
     TestAnEmptyCacheMisses();
     TestLookupWithNullPoseMisses();
     TestPublishThenLookupHits();
+    TestStoredPoseIsShared();
     TestEitherDigestHalfMisses();
     TestTimeIsNotKeyMaterial();
     TestPublishInvalidPoseDeclines();
