@@ -132,4 +132,26 @@ RigExecDispatchRunAutoClavicle(const RigExecBoundAutoClavicle &operation,
                     values, error);
 }
 
+bool
+RigExecDispatchEnsureOpRegistry(std::string *error)
+{
+    return Dispatch(&RigExecSceneHooks::ensureOpRegistry, error, error);
+}
+
+bool
+RigExecDispatchBindsExternalOp(const RigExecRevisionBinding &binding)
+{
+    const auto *hooks = g_hooks.load(std::memory_order_acquire);
+    return hooks && hooks->bindsExternalOp && hooks->bindsExternalOp(binding);
+}
+
+bool
+RigExecDispatchBuildExternalOp(const RigExecRevisionBinding &binding,
+                               RigExecRigDescBuilder &builder,
+                               RigExecExternalOpPlan *plan, std::string *error)
+{
+    return Dispatch(&RigExecSceneHooks::buildExternalOp, error, binding,
+                    builder, plan, error);
+}
+
 } // namespace rigExec

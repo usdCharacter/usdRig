@@ -46,6 +46,23 @@ const rigExec::RigExecPortHandle &SmoothEnabled();
 const rigExec::RigExecPortHandle &SmoothDefaultWeight();
 const rigExec::RigExecPortHandle &SmoothPacket();
 
+/// Blends a full-strength Candidate back toward the entering Points by a
+/// mover's weights, as Smooth weighs: an External revision's op computes the
+/// candidate, this applies the engine's enabled flag and envelope. A
+/// candidate point that is not finite is an error.
+const rigExec::RigExecOpHandle &MoverBlend();
+
+// MoverBlend: Candidate and Points (Vec3fArray, pointwise, the candidate
+// giving the count), optional Envelope, Enabled, DefaultWeight and Packet
+// as Smooth's, Out.
+const rigExec::RigExecPortHandle &MoverBlendCandidate();
+const rigExec::RigExecPortHandle &MoverBlendPoints();
+const rigExec::RigExecPortHandle &MoverBlendEnvelope();
+const rigExec::RigExecPortHandle &MoverBlendEnabled();
+const rigExec::RigExecPortHandle &MoverBlendDefaultWeight();
+const rigExec::RigExecPortHandle &MoverBlendPacket();
+const rigExec::RigExecPortHandle &MoverBlendOut();
+
 // VolumeCorrect: Points, Reference (double), optional Strength (float,
 // unfed 1) and Envelope, Out.
 const rigExec::RigExecPortHandle &VolumeCorrectPoints();

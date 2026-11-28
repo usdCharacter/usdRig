@@ -181,6 +181,7 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
         const auto &revisions = geometry.chains[c].revisions;
         for (size_t r = 0; r < revisions.size(); ++r) {
             if (revisions[r].op == uint8_t(RigExecWireExternalRevisionOp) &&
+                !revisions[r].rangeRole &&
                 !program.externalIndex.count(
                     std::make_pair(uint32_t(c), uint32_t(r)))) {
                 return fail("a plugin revision carries no external mover "

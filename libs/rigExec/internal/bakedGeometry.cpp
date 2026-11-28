@@ -63,6 +63,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -1967,13 +1968,17 @@ KeyBlendChannels(const RoleReads &reads,
     return true;
 }
 
-/// Whether \p op runs as op chain members in every chain shape.
+/// Whether \p revision runs as op chain members in every chain shape: an
+/// External one when its mover's op plugin binds it.
 bool
-RevisionRunsAsOps(RigExecRevisionOp op)
+RevisionRunsAsOps(const RigExecBakedProgramImpl::GeomRevision &revision)
 {
+    const RigExecRevisionOp op = revision.op;
     return op == RigExecRevisionOp::Matrix || op == RigExecRevisionOp::Smooth ||
            op == RigExecRevisionOp::DeltaMush ||
-           op == RigExecRevisionOp::Lattice;
+           op == RigExecRevisionOp::Lattice ||
+           (op == RigExecRevisionOp::External &&
+            RigExecDispatchBindsExternalOp(revision.binding));
 }
 
 /// Gives every revision of \p chain its role, groups, gates, pins and
@@ -1994,7 +1999,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
     const bool eligible =
         split || std::any_of(chain->revisions.begin(), chain->revisions.end(),
                              [](const auto &revision) {
-                                 return RevisionRunsAsOps(revision.op);
+                                 return RevisionRunsAsOps(revision);
                              });
     const size_t groups = split ? cut : 1;
     chain->groupBounds.clear();
@@ -2020,6 +2025,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
         revision.opMushEdges = VtIntArray();
         revision.opLattice = false;
         revision.opWhole = false;
+        revision.opExternal = false;
         revision.blendChunked = false;
         revision.groupWritten.clear();
         revision.enteringWriter.clear();
@@ -2069,7 +2075,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
                           .path);
         }
         candidate[r] = ClassifyRevision(reads, &revision, &pinned[r]);
-        if (candidate[r] == GeomRole::Whole && RevisionRunsAsOps(revision.op)) {
+        if (candidate[r] == GeomRole::Whole && RevisionRunsAsOps(revision)) {
             // Its op member runs whole, reading per frame what the
             // classification could not pin.
             revision.pins.clear();
@@ -2128,8 +2134,12 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
                     for (const uint32_t g : revision.blendChannelGroups[c])
                         revision.chunks[g].key.push_back(int(c));
             }
+            // A plugin mover's op writes every group.
+            revision.opExternal =
+                revision.op == RigExecRevisionOp::External && revision.opWhole;
             std::vector<char> written;
-            if (GateRevision(reads, *chain, &revision, &written, &pinned[r])) {
+            if (!revision.opExternal &&
+                GateRevision(reads, *chain, &revision, &written, &pinned[r])) {
                 revision.groupWritten = std::move(written);
             }
             revision.opMatrix = OpMatrixHolds(reads, &revision, &pinned[r]);
@@ -6628,6 +6638,56 @@ RigExecBakedLookUpRevision(RigExecBakedProgramImpl &B, uint32_t index,
         const TfToken &held = v.UncheckedGet<TfToken>();
         return held.IsEmpty() ? std::string() : std::string(held.GetText());
     };
+    if (lookup.source == uint8_t(eval::OpLookupSource::ExternalInput)) {
+        if (lookup.part < 0 || size_t(lookup.part) >= leaves.decl.keys.size())
+            return fail();
+        VtValue &held = B.revisionLeafHold[index];
+        held = leaf(lookup.part);
+        const auto array = [&](auto *none) {
+            using A = std::remove_pointer_t<decltype(none)>;
+            if (!held.IsHolding<A>())
+                return fail();
+            const A &a = held.UncheckedGet<A>();
+            return lend(a.cdata(), a.size());
+        };
+        using K = eval::OpExternalKind;
+        switch (eval::OpExternalKindOf(type)) {
+        case K::Bool:
+            return held.IsHolding<bool>()
+                       ? put(uint8_t(held.UncheckedGet<bool>() ? 1 : 0))
+                       : fail();
+        case K::Int:
+            return held.IsHolding<int>()
+                       ? put(int32_t(held.UncheckedGet<int>()))
+                       : fail();
+        case K::Float:
+            return held.IsHolding<float>() ? put(held.UncheckedGet<float>())
+                                           : fail();
+        case K::Double:
+            return held.IsHolding<double>() ? put(held.UncheckedGet<double>())
+                                            : fail();
+        case K::Vec3f:
+            return held.IsHolding<GfVec3f>() ? put(held.UncheckedGet<GfVec3f>())
+                                             : fail();
+        case K::Mat4d:
+            return held.IsHolding<GfMatrix4d>()
+                       ? put(held.UncheckedGet<GfMatrix4d>())
+                       : fail();
+        case K::IntArray:
+            return array(static_cast<VtIntArray *>(nullptr));
+        case K::FloatArray:
+            return array(static_cast<VtFloatArray *>(nullptr));
+        case K::DoubleArray:
+            return array(static_cast<VtDoubleArray *>(nullptr));
+        case K::Vec2fArray:
+            return array(static_cast<VtVec2fArray *>(nullptr));
+        case K::Vec3fArray:
+            return array(static_cast<VtVec3fArray *>(nullptr));
+        case K::None:
+            break;
+        }
+        return fail();
+    }
     switch (Read(lookup.read)) {
     case Read::RestPoints:
     case Read::MushSmoothWeights: {

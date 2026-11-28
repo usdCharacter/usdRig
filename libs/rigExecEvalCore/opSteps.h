@@ -16,6 +16,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace rigExec {
@@ -144,6 +145,10 @@ enum class OpLookupSource : uint8_t {
     /// Solver `object`'s input `part` (OpSolverRead), from the pose
     /// versions it reads and the rests composed this run.
     SolverInput = 60,
+    /// An External revision `object`'s declared input: its leaf `part`,
+    /// as the input type it feeds reads it (small values copied, arrays
+    /// lent).
+    ExternalInput = 80,
 };
 
 /// OpLookup::read of a RestInputs lookup: the RestCompose input it answers.
@@ -478,6 +483,45 @@ enum class OpRevisionRead : uint8_t {
     LatticePointSpace = 30,
 };
 
+/// What an ExternalInput lookup answers, by the standard type of the input
+/// it feeds; None for a type it cannot fill.
+enum class OpExternalKind : uint8_t {
+    None,
+    Bool,
+    Int,
+    Float,
+    Double,
+    Vec3f,
+    Mat4d,
+    IntArray,
+    FloatArray,
+    DoubleArray,
+    Vec2fArray,
+    Vec3fArray,
+};
+
+inline OpExternalKind
+OpExternalKindOf(const RigExecTypeDesc &type)
+{
+    if (!type.nameSpace || !type.name ||
+        std::string_view(type.nameSpace) != "std")
+        return OpExternalKind::None;
+    const std::string_view name(type.name);
+    using K = OpExternalKind;
+    return name == "Bool"          ? K::Bool
+           : name == "Int"         ? K::Int
+           : name == "Float"       ? K::Float
+           : name == "Double"      ? K::Double
+           : name == "Vec3f"       ? K::Vec3f
+           : name == "Mat4d"       ? K::Mat4d
+           : name == "IntArray"    ? K::IntArray
+           : name == "FloatArray"  ? K::FloatArray
+           : name == "DoubleArray" ? K::DoubleArray
+           : name == "Vec2fArray"  ? K::Vec2fArray
+           : name == "Vec3fArray"  ? K::Vec3fArray
+                                   : K::None;
+}
+
 /// Whether a lookup of \p source is one the host answers through
 /// LookUpSpace.
 constexpr bool
@@ -747,6 +791,7 @@ OpLookupSourceRuns(uint8_t source)
            source == uint8_t(OpLookupSource::List) ||
            source == uint8_t(OpLookupSource::Selected) ||
            source == uint8_t(OpLookupSource::RevisionLeaf) ||
+           source == uint8_t(OpLookupSource::ExternalInput) ||
            source == uint8_t(OpLookupSource::CommitVersions) ||
            OpConstraintLookupSource(source) ||
            source == uint8_t(OpLookupSource::SolverInput) ||
@@ -1482,8 +1527,8 @@ BindOpStepState(const OpStepLayout &layout, Host &host, OpStepState *state,
 /// family: LookUpProperty, LookUpPoseVersion, LookUpWeight,
 /// LookUpChainVersion, LookUpWeightField, LookUpCommit, LookUpConstraint,
 /// LookUpCompose or LookUpSolver(index, lookup, type, value, error), or,
-/// for a RevisionLeaf read past Radial, LookUpRevision(index, lookup, type,
-/// value, error), a Matrix lookup through Matrix(source, slot), and a FrameRecord
+/// for a RevisionLeaf read past Radial or an ExternalInput,
+/// LookUpRevision(index, lookup, type, value, error), a Matrix lookup through Matrix(source, slot), and a FrameRecord
 /// or ConstraintDelta lookup through PresentMatrix(lookup), null when
 /// absent. A List or Selected lookup resolves through OpLookUpAt.
 template <class Host>
@@ -1502,6 +1547,8 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
         return host.LookUpChainVersion(index, lookup, type, value, error);
     case OpLookupSource::WeightFieldInputs:
         return host.LookUpWeightField(index, lookup, type, value, error);
+    case OpLookupSource::ExternalInput:
+        return host.LookUpRevision(index, lookup, type, value, error);
     case OpLookupSource::RevisionLeaf: {
         if (lookup.read > uint8_t(OpRevisionRead::Radial))
             return host.LookUpRevision(index, lookup, type, value, error);

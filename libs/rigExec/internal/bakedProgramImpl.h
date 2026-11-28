@@ -900,9 +900,14 @@ struct RigExecBakedGeomRevision {
     /// A smooth, delta mush or lattice the classification made Whole: its
     /// member runs once over every group, every setting looked up per frame.
     bool opWhole = false;
+    /// An External revision its mover's op plugin binds: the plugin's op
+    /// computes its full-strength candidate as a whole member, a MoverBlend
+    /// member blends it in.
+    bool opExternal = false;
     bool OpNodes() const
     {
-        return opMatrix || opSmooth || opMush || opLattice || blendChunked;
+        return opMatrix || opSmooth || opMush || opLattice || blendChunked ||
+               opExternal;
     }
     bool opMatrixRadial = false;
     bool opMatrixRadialLeaf = false;

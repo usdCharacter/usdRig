@@ -9,6 +9,10 @@
 #include "rigExec/api/evaluator.h"
 #include "rigExec/api/registry.h"
 #include "rigExec/api/rigEvaluator.h"
+#include "rigExecBake/bake.h"
+#include "rigExecFrozenParity.h"
+#include "rigExecMath/envelope.h"
+#include "rigExecRuntime/runtime.h"
 #include "rigExecScene/externalOps.h"
 #include "rigExecScene/opPlugins.h"
 #include "rigExecStdTypes/stdTypes.h"
@@ -70,6 +74,8 @@ RunOp(const std::vector<VtValue> &inputs, float weight,
     binding.moverPath = SdfPath("/Rig/External");
     binding.target = kBody;
     binding.externalSchema = TfToken("ExternalQuadraticMover");
+    // The binder reads how many inputs the mover declares.
+    binding.externalInputs.resize(inputs.size());
     const std::vector<GfVec3f> base = points;
     RigExecExternalOpValues values;
     values.inputs = &inputs;
@@ -96,9 +102,73 @@ RunOp(const std::vector<VtValue> &inputs, float weight,
     CHECK(out && out->Size() == points.size());
     if (!out || out->Size() != points.size())
         return false;
+    // The op's full-strength result, blended in as the engine does.
     for (size_t i = 0; i < points.size(); ++i)
-        points[i] = GfVec3f((*out)[i][0], (*out)[i][1], (*out)[i][2]);
+        points[i] = RigExecBlendEnvelope(
+            points[i], GfVec3f((*out)[i][0], (*out)[i][1], (*out)[i][2]),
+            weight);
     return true;
+}
+
+/// The native evaluator runs the mover as the plugin's op, as a frozen job
+/// and the .rigexec do, which plays it with no plugin code but the op
+/// library and poses its declared input.
+void
+Evaluators()
+{
+    auto stage = Stage();
+    RigExecRigEvaluator rig(stage, SdfPath("/Rig"));
+    std::vector<std::string> errors;
+    CHECK(rig.Compile(&errors));
+    std::string why;
+    const bool frozen =
+        RigExecFrozenMatchesLive(&rig, SdfPath("/Rig"), UsdTimeCode(1), &why);
+    if (!frozen)
+        std::printf("frozen: %s\n", why.c_str());
+    CHECK(frozen);
+    const RigExecRigPose pose = rig.Evaluate(UsdTimeCode(1));
+    CHECK(pose.valid && pose.movedProperties.count(kBody));
+    if (!pose.valid || !pose.movedProperties.count(kBody))
+        return;
+    const VtVec3fArray native =
+        pose.movedProperties.at(kBody).Get<VtVec3fArray>();
+    RigExecBakeOpts options;
+    options.time = 1.0;
+    RigExecBakeResult result;
+    std::string error;
+    const bool baked = RigExecBakeToBinary(rig, options, &result, &error);
+    if (!baked)
+        std::printf("bake: %s\n", error.c_str());
+    CHECK(baked);
+    auto reader = baked ? RigExecRuntimeReader::Open(
+                              result.bytes.data(), result.bytes.size(), &error)
+                        : nullptr;
+    if (baked && !reader)
+        std::printf("open: %s\n", error.c_str());
+    CHECK(reader);
+    if (!reader)
+        return;
+    CHECK(reader->GetExternalMoverTypes().empty());
+    const auto body = [&]() -> const RigExecRuntimePoints * {
+        for (const auto &points : reader->GetPoints())
+            if (points.path == kBody.GetString())
+                return &points;
+        return nullptr;
+    };
+    const bool ran = reader->Execute(&error);
+    if (!ran)
+        std::printf("execute: %s\n", error.c_str());
+    CHECK(ran && body() && body()->points.size() == native.size());
+    if (!ran || !body() || body()->points.size() != native.size())
+        return;
+    bool same = true;
+    for (size_t i = 0; i < native.size(); ++i)
+        for (size_t a = 0; a < 3; ++a)
+            same = same && body()->points[i][a] == native[i][a];
+    CHECK(same);
+    CHECK(reader->SetInput("/Rig/External.inputs:gain", 2.0, &error));
+    CHECK(reader->Execute(&error));
+    CHECK(body() && body()->points[0][2] == 8.0f);
 }
 
 /// The native evaluator and the op agree on the body's points. With
@@ -136,9 +206,13 @@ Compare(const UsdStageRefPtr &stage, const std::vector<VtValue> &inputs,
     const bool same = ran && points.size() == native.size() &&
                       std::memcmp(points.data(), native.cdata(),
                                   native.size() * sizeof(GfVec3f)) == 0;
-    if (!same)
-        std::printf("%s: the op differs from native (%s)\n", what,
-                    error.c_str());
+    if (!same && ran && !points.empty() && !native.empty())
+        std::printf("%s: the op's (%g %g %g) differs from native's (%g %g "
+                    "%g)\n",
+                    what, points[0][0], points[0][1], points[0][2],
+                    native[0][0], native[0][1], native[0][2]);
+    else if (!same)
+        std::printf("%s: the op failed (%s)\n", what, error.c_str());
     CHECK(same);
 }
 
@@ -167,6 +241,7 @@ main(int argc, char **argv)
               0);
 
     Compare(Stage(), {VtValue(0.75f)}, 1.0f, "gain");
+    Evaluators();
     {
         auto stage = Stage();
         auto mover = stage->GetPrimAtPath(SdfPath("/Rig/External"));

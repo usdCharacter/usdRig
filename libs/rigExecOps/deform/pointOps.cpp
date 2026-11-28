@@ -3,6 +3,7 @@
 #include "rigExecOps/authoring.h"
 #include "rigExecOps/deform/weightPacket.h"
 #include "rigExecOps/fieldIo.h"
+#include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
 #include "rigExecSchema/schemaNames.h"
 #include "rigExecMath/meshConnectivity.h"
@@ -19,6 +20,15 @@ namespace rigExecOps {
 
 RIGEXEC_DEFINE_OP_HANDLE(Smooth)
 RIGEXEC_DEFINE_OP_HANDLE(VolumeCorrect)
+RIGEXEC_DEFINE_OP_HANDLE(MoverBlend)
+
+RIGEXEC_DEFINE_PORT_HANDLE(MoverBlendCandidate)
+RIGEXEC_DEFINE_PORT_HANDLE(MoverBlendPoints)
+RIGEXEC_DEFINE_PORT_HANDLE(MoverBlendEnvelope)
+RIGEXEC_DEFINE_PORT_HANDLE(MoverBlendEnabled)
+RIGEXEC_DEFINE_PORT_HANDLE(MoverBlendDefaultWeight)
+RIGEXEC_DEFINE_PORT_HANDLE(MoverBlendPacket)
+RIGEXEC_DEFINE_PORT_HANDLE(MoverBlendOut)
 
 RIGEXEC_DEFINE_PORT_HANDLE(SmoothPoints)
 RIGEXEC_DEFINE_PORT_HANDLE(SmoothCounts)
@@ -202,6 +212,94 @@ SmoothRange(const rigExec::RigExecOpBatch &batch, size_t k,
     return true;
 }
 
+/// This frame's pass through and the weight at every point when a default
+/// weight or a packet gives them, written by prepare.
+struct MoverBlendState {
+    bool pass = false;
+    std::vector<float> dense;
+};
+
+bool
+MoverBlendValidate(const rigExec::RigExecOpCheck &check, std::string *error)
+{
+    const int envelopes = int(Fed(check, MoverBlendEnvelope())) +
+                          int(Fed(check, MoverBlendDefaultWeight())) +
+                          int(Fed(check, MoverBlendPacket()));
+    if (envelopes > 1)
+        return Fail(error, "MoverBlend",
+                    "one of an envelope, a default weight and a weight "
+                    "packet");
+    if (!SameCount(CheckElements(check, MoverBlendCandidate()),
+                   CheckElements(check, MoverBlendPoints())))
+        return Fail(error, "MoverBlend",
+                    "the candidate's length differs from the points");
+    return EnvelopeFits(check, MoverBlendCandidate(), MoverBlendEnvelope(),
+                        "MoverBlend", error);
+}
+
+bool
+MoverBlendPrepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
+                  std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    if (In<Points>(io, MoverBlendPoints())->Size() != count)
+        return Fail(error, "MoverBlend",
+                    "the candidate's length differs from the points");
+    if (!EnvelopeFits(*In<Points>(io, MoverBlendCandidate()),
+                      In<RigExecArray<float>>(io, MoverBlendEnvelope()),
+                      "MoverBlend", error))
+        return false;
+    MoverBlendState &state =
+        *static_cast<MoverBlendState *>(rigExec::RigExecBatchState(batch, k));
+    const uint8_t *enabled = In<uint8_t>(io, MoverBlendEnabled());
+    const float *weight = In<float>(io, MoverBlendDefaultWeight());
+    const weightPacket::PointWeights *packet =
+        In<weightPacket::PointWeights>(io, MoverBlendPacket());
+    state.pass = enabled && !*enabled;
+    state.dense.clear();
+    if (weight && !state.pass && *weight != 1.0f) {
+        if (!std::isfinite(*weight) || *weight < 0.0f || *weight > 1.0f)
+            return Fail(error, "MoverBlend",
+                        "a default weight is not finite or outside [0, 1]");
+        state.dense.assign(count, *weight);
+    }
+    if (packet && !state.pass &&
+        !rigExec::eval::EnvelopeIsFullStrength(
+            weightPacket::PacketView(*packet)) &&
+        !weightPacket::ResolvePacket(*packet, count, &state.dense))
+        return Fail(error, "MoverBlend",
+                    "the weight packet does not resolve over the points");
+    return true;
+}
+
+bool
+MoverBlendRange(const rigExec::RigExecOpBatch &batch, size_t k,
+                const rigExec::RigExecOpRange &range, std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const MoverBlendState &state = *static_cast<const MoverBlendState *>(
+        rigExec::RigExecBatchState(batch, k));
+    const size_t n = range.end - range.begin;
+    const Vec3f *in = RangeIn<Vec3f>(io, range, MoverBlendPoints());
+    const Vec3f *candidate = RangeIn<Vec3f>(io, range, MoverBlendCandidate());
+    Vec3f *out = RangeOut<Vec3f>(io, range, MoverBlendOut());
+    if (state.pass) {
+        std::copy(in, in + n, out);
+        return true;
+    }
+    for (size_t i = 0; i < n; ++i)
+        if (!std::isfinite(candidate[i][0]) ||
+            !std::isfinite(candidate[i][1]) || !std::isfinite(candidate[i][2]))
+            return Fail(error, "MoverBlend", "a candidate point is not finite");
+    std::copy(candidate, candidate + n, out);
+    BlendEnvelopeAt(in,
+                    state.dense.empty()
+                        ? RangeIn<float>(io, range, MoverBlendEnvelope())
+                        : state.dense.data() + range.begin,
+                    out, n);
+    return true;
+}
+
 bool
 VolumeCorrectOne(const RigExecOpIo &io, std::string *error)
 {
@@ -299,6 +397,22 @@ const rigExec::RigExecPortDesc kSmoothPorts[] = {
     {&SmoothPacket(), &rigExecRig::PointWeightsType(), kOptional, "packet"},
 };
 
+const rigExec::RigExecPortDesc kMoverBlendPorts[] = {
+    {&MoverBlendCandidate(), &rigExecStd::Vec3fArray(),
+     kRigExecPortInput | rigExec::kRigExecPortPointwise, "candidate"},
+    {&MoverBlendPoints(), &rigExecStd::Vec3fArray(),
+     kRigExecPortInput | rigExec::kRigExecPortPointwise, "points"},
+    {&MoverBlendEnvelope(), &rigExecStd::FloatArray(),
+     kOptional | rigExec::kRigExecPortPointwise, "envelope"},
+    {&MoverBlendEnabled(), &rigExecStd::BoolType(), kOptional, "enabled"},
+    {&MoverBlendDefaultWeight(), &rigExecStd::FloatType(), kOptional,
+     "defaultWeight"},
+    {&MoverBlendPacket(), &rigExecRig::PointWeightsType(), kOptional, "packet"},
+    {&MoverBlendOut(), &rigExecStd::Vec3fArray(),
+     kRigExecPortOutput | rigExec::kRigExecPortPointwise, "out",
+     rigExec::RigExecOutputBound::Input, &MoverBlendCandidate()},
+};
+
 const rigExec::RigExecPortDesc kVolumePorts[] = {
     {&VolumeCorrectPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
      "points"},
@@ -330,6 +444,18 @@ const rigExec::RigExecOpDesc kSmoothDesc = [] {
     return d;
 }();
 
+const rigExec::RigExecOpDesc kMoverBlendDesc = [] {
+    rigExec::RigExecOpDesc d = PointDesc(
+        "MoverBlend", kMoverBlendPorts, std::size(kMoverBlendPorts), nullptr,
+        rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged);
+    d.validate = &MoverBlendValidate;
+    d.schema = &internalOps::kMoverBlend;
+    d.range.prepare = &MoverBlendPrepare;
+    d.range.run = &MoverBlendRange;
+    d.state = StateOf<MoverBlendState>();
+    return d;
+}();
+
 const rigExec::RigExecOpDesc kVolumeDesc = [] {
     rigExec::RigExecOpDesc d =
         PointDesc("VolumeCorrect", kVolumePorts, std::size(kVolumePorts),
@@ -346,6 +472,7 @@ RegisterPointOps(rigExec::RigExecOpRegistrar &registrar)
 {
     registrar.Add(Smooth(), kSmoothDesc);
     registrar.Add(VolumeCorrect(), kVolumeDesc);
+    registrar.Add(MoverBlend(), kMoverBlendDesc);
 }
 
 } // namespace rigExecOps

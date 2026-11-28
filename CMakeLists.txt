@@ -825,7 +825,7 @@ foreach(_mode scopeUsed scopeOther)
 endforeach()
 add_executable(testRigExecOpPluginScene tests/testRigExecOpPluginScene.cpp)
 target_link_libraries(testRigExecOpPluginScene PRIVATE rigExec rigExecScene
-    rigExecBuiltins plug usd)
+    rigExecBuiltins rigExecBake rigExecRuntime plug usd)
 add_dependencies(testRigExecOpPluginScene testExternalMover testQuadraticOps)
 rigexec_add_test(NAME testRigExecOpPluginScene COMMAND testRigExecOpPluginScene
     "$<TARGET_GENEX_EVAL:testExternalMover,$<TARGET_PROPERTY:testExternalMover,RIGEXEC_PLUGIN_RESOURCE_DIR>>"

@@ -51,7 +51,8 @@ public:
             const auto &revisions = program.chains[c].revisions;
             for (size_t r = 0; r < revisions.size(); ++r) {
                 const auto &revision = revisions[r];
-                if (revision.op != RigExecRevisionOp::External) {
+                if (revision.op != RigExecRevisionOp::External ||
+                    revision.OpNodes()) {
                     continue;
                 }
                 const TfToken type = revision.moverPrim.GetTypeName();

@@ -1,6 +1,8 @@
 // Installs the translation entry points the evaluator calls. Linked into
 // librigExecScene, not librigExec.
 #include "rigExec/api/sceneDispatch.h"
+#include "rigExecScene/externalOps.h"
+#include "rigExecScene/opPlugins.h"
 #include "rigExecScene/registerScene.h"
 #include "rigExecScene/usdSceneAccess.h"
 
@@ -25,7 +27,10 @@ const RigExecSceneHooks hooks = {&CaptureStage,
                                  &RigExecTranslateSceneSolver,
                                  &RigExecTranslateSceneConstraint,
                                  &RigExecBindAutoClavicle,
-                                 &RigExecRunAutoClavicle};
+                                 &RigExecRunAutoClavicle,
+                                 &RigExecEnsureSceneOpRegistry,
+                                 &RigExecBindsExternalOp,
+                                 &RigExecBuildExternalOp};
 
 } // namespace
 

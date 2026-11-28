@@ -2,6 +2,7 @@
 
 #include "rigExec/api/compile.h"
 #include "rigExecBuiltins/builtins.h"
+#include "rigExecMath/envelope.h"
 #include "rigExecMath/rangeRunner.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
 #include "rigExecScene/opPlugins.h"
@@ -177,9 +178,18 @@ RigExecRunExternalOp(const RigExecRevisionBinding &binding,
             *error = "external op changed the point count";
         return false;
     }
+    // A plugin binder's op answers the full-strength points; the envelope
+    // blends them in.
+    std::vector<float> weights;
+    if (runner.external.planned &&
+        !p.weights.ResolveAll(points.size(), &weights))
+        return Fail(error, "envelope does not resolve over the points");
     for (size_t i = 0; i < out->Size(); ++i) {
         const Vec3f &v = (*out)[i];
-        points[i] = GfVec3f(v[0], v[1], v[2]);
+        const GfVec3f full(v[0], v[1], v[2]);
+        points[i] = runner.external.planned
+                        ? RigExecBlendEnvelope(points[i], full, weights[i])
+                        : full;
     }
     return true;
 }

@@ -7,6 +7,7 @@
 
 #include "rigExecScene/autoClavicleGraph.h"
 #include "rigExecScene/constraintSceneTranslation.h"
+#include "rigExecScene/externalOps.h"
 #include "rigExecScene/geometrySceneTranslation.h"
 #include "rigExecScene/poseSceneTranslation.h"
 #include "rigExecScene/sceneDescriptors.h"
@@ -54,6 +55,11 @@ struct RigExecSceneHooks {
                              std::string *) = nullptr;
     bool (*runAutoClavicle)(const RigExecBoundAutoClavicle &,
                             RigExecTypedValueStore *, std::string *) = nullptr;
+    bool (*ensureOpRegistry)(std::string *) = nullptr;
+    bool (*bindsExternalOp)(const RigExecRevisionBinding &) = nullptr;
+    bool (*buildExternalOp)(const RigExecRevisionBinding &,
+                            RigExecRigDescBuilder &, RigExecExternalOpPlan *,
+                            std::string *) = nullptr;
 };
 
 // The table and its functions must remain alive for the process lifetime.
@@ -101,6 +107,20 @@ bool RigExecDispatchBindAutoClavicle(
 
 bool RigExecDispatchRunAutoClavicle(const RigExecBoundAutoClavicle &operation,
                                     RigExecTypedValueStore *values,
+                                    std::string *error);
+
+/// Initializes the op registry with the built-in libraries and the op
+/// plugins discovery finds.
+bool RigExecDispatchEnsureOpRegistry(std::string *error);
+
+/// Whether an op plugin's binder binds \p binding's External mover; false
+/// without the scene library.
+bool RigExecDispatchBindsExternalOp(const RigExecRevisionBinding &binding);
+
+/// Adds \p binding's op node to \p builder through its binder.
+bool RigExecDispatchBuildExternalOp(const RigExecRevisionBinding &binding,
+                                    RigExecRigDescBuilder &builder,
+                                    RigExecExternalOpPlan *plan,
                                     std::string *error);
 
 } // namespace rigExec

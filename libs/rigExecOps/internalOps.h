@@ -61,6 +61,9 @@ inline constexpr rigExec::RigExecSchemaInfo kFkJointGroups =
     Internal("An FK chain's joint groups applied to its frames.");
 inline constexpr rigExec::RigExecSchemaInfo kMoverTransform =
     Internal("A mover's transform in its geometry's point frame.");
+inline constexpr rigExec::RigExecSchemaInfo kMoverBlend =
+    Internal("A plugin mover's full-strength points blended in by its "
+             "weights.");
 inline constexpr rigExec::RigExecSchemaInfo kSkinMatrices =
     Internal("One bind set's skinning matrices, folded once per frame.");
 inline constexpr rigExec::RigExecSchemaInfo kVolumePlacement =

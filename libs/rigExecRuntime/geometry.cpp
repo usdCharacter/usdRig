@@ -52,6 +52,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <type_traits>
 #include <chrono>
 #include <functional>
 #include <thread>
@@ -8357,6 +8358,80 @@ RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
     const auto attr = [&](RrGeoAttr name, bool rest = false) {
         return RrGeoAttrRead(rev, name, rest);
     };
+    if (lookup.source == uint8_t(eval::OpLookupSource::ExternalInput)) {
+        const RigExecWireRevision &wire =
+            program->geometry->chains[size_t(chain)].revisions[size_t(r)];
+        if (lookup.part < 0 || size_t(lookup.part) >= wire.leafSites.size())
+            return fail();
+        const RigExecWireExternalDeclaredInput &site =
+            wire.leafSites[size_t(lookup.part)];
+        const RigExecWireInputTag tag = site.read->tag;
+        using K = eval::OpExternalKind;
+        const K kind = eval::OpExternalKindOf(type);
+        if (RigExecFormatIsArrayTag(tag)) {
+            const void *raw = RrReadExternalArray(program, site);
+            const auto array = [&](RigExecWireInputTag want, auto *none) {
+                using V = std::remove_pointer_t<decltype(none)>;
+                if (tag != want)
+                    return fail();
+                const auto *a = static_cast<const V *>(raw);
+                return a ? lend(a->data(), a->size()) : lend(nullptr, 0);
+            };
+            using Tag = RigExecWireInputTag;
+            switch (kind) {
+            case K::IntArray:
+                return array(Tag::IntArray,
+                             static_cast<std::vector<int32_t> *>(nullptr));
+            case K::FloatArray:
+                return array(Tag::FloatArray,
+                             static_cast<std::vector<float> *>(nullptr));
+            case K::DoubleArray:
+                return array(Tag::DoubleArray,
+                             static_cast<std::vector<double> *>(nullptr));
+            case K::Vec2fArray:
+                return array(Tag::Vec2fArray,
+                             static_cast<std::vector<RrVec2f> *>(nullptr));
+            case K::Vec3fArray:
+                return array(Tag::Vec3fArray,
+                             static_cast<std::vector<RrVec3f> *>(nullptr));
+            default:
+                return fail();
+            }
+        }
+        RrWireValue scalar;
+        if (!RrReadExternalScalar(program, site, &scalar))
+            return fail();
+        using Tag = RigExecWireInputTag;
+        switch (kind) {
+        case K::Bool:
+            return tag == Tag::Bool ? put(uint8_t(scalar.bits ? 1 : 0))
+                                    : fail();
+        case K::Int:
+            return tag == Tag::Int ? put(int32_t(uint32_t(scalar.bits)))
+                                   : fail();
+        case K::Float: {
+            if (tag != Tag::Float)
+                return fail();
+            const uint32_t bits = uint32_t(scalar.bits);
+            float v = 0.0f;
+            std::memcpy(&v, &bits, sizeof(v));
+            return put(v);
+        }
+        case K::Double: {
+            if (tag != Tag::Double)
+                return fail();
+            double v = 0.0;
+            std::memcpy(&v, &scalar.bits, sizeof(v));
+            return put(v);
+        }
+        case K::Vec3f:
+            return tag == Tag::Vec3f ? put(scalar.vec3f) : fail();
+        case K::Mat4d:
+            return tag == Tag::Matrix4d ? put(scalar.matrix) : fail();
+        default:
+            return fail();
+        }
+    }
     switch (Read(lookup.read)) {
     case Read::RestPoints:
         RrGeoReadVec3fArray(program, scratch, attr(RrGeoAttrRestPoints, true),

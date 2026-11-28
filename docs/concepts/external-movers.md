@@ -469,11 +469,13 @@ callbacks; the reader keeps the packets (`PushHistory`, `ExecuteHistory`,
 ## Build an op plugin
 
 An op library can ship as an OpenUSD plugin of its own. A mover then runs on
-that library's op through the op core, with no core code naming either. Until the generic USD binder arrives, the mover itself still
-comes from a mover plugin as above, and the op plugin adds a *binder* for its
-schema type: how the mover's declared inputs and provider values become the
-op's payload and inputs. The baked program, the frozen evaluator and
-`.rigexec` playback keep running the mover's External callbacks.
+that library's op through the op core, with no core code naming either. Until
+the generic USD binder arrives, the mover itself still comes from a mover
+plugin as above (its schema, binding and `declareExternalInputs`), and the op
+plugin adds a *binder* for its schema type. When a binder binds a mover, the
+native evaluator, the frozen evaluator and `.rigexec` playback all run the
+mover on its op as a member of its point chain's op chain; the mover's
+`assembleExternal`, `applyExternal` and encoding callbacks are not called.
 
 Declare the plugin with `rigexec_add_op_plugin` from
 [rigExecOpPlugin.cmake](../../cmake/rigExecOpPlugin.cmake), available inside
@@ -490,9 +492,22 @@ The sources define the op library's entry with
 `RIGEXEC_OP_LIBRARY_ENTRY(quadraticOps)` (see `rigExec/api/registry.h`),
 and with `BINDERS` a binder table with
 `RIGEXEC_EXTERNAL_OP_BINDERS_ENTRY(quadraticOps)`
-(`rigExecScene/externalOps.h`): one `RigExecExternalOpBinder` per schema
-type, with `add`, `write` and `stale` functions shaped like the built-in
-movers' binders in `libs/rigExecScene/externalOps.cpp`. `TYPE_LIBRARIES`
+(`rigExecScene/externalOps.h`, binder ABI 2): one `RigExecExternalOpBinder`
+per schema type, whose `build` adds the op's node at Build from compile facts
+alone (the revision binding and its declared inputs' keys, never a frame's
+values) and lists, per op input, what feeds it (`RigExecExternalOpFeed`): the
+points entering the revision, the target's base points, declared input `k`
+(read each frame as the port's standard type reads it; a type that does not
+match fails the compile), the transform provider, or influence `k`. The
+mapping is static graph data: the `.rigexec` holds it as lookups, and the
+runtime resolves it with no plugin code, so a posed playback moves a declared
+input through `SetInput`. The op computes the full-strength points as one
+whole range member: declare it ranged (`kRigExecOpRanged`) with a
+`range.plan` that answers `Whole` and the points input
+`kRigExecPortNeighbourhood`. The engine keeps `inputs:enabled`,
+`inputs:defaultWeight` and the weight object's envelope: a `MoverBlend` member
+after the op blends its result in and fails the frame on a point that is not
+finite. `TYPE_LIBRARIES`
 lists type library entries the plugin also defines, and `SCHEMA` with
 `SCHEMA_TYPE` adds a codeless schema the same way `rigexec_add_mover` does.
 `BINDS` lists the schema types the binders bind; with `BINDERS`, the
@@ -522,7 +537,10 @@ output the frame wrote reports no valid value until an evaluation succeeds.
 An op never passes its input through in place of a result it could not
 compute, and never publishes a status or validity output in place of an
 error. The fixture's `Quadratic` op validates the gain the host writes and
-the envelope's length, and fails its run only on a point that is not finite.
+the base and reference it reads, and fails its run on a negative gain.
+A standalone host opens such a `.rigexec` with the op library passed at
+`Open` (`RigExecRuntimeReader::Open(bytes, size, nullptr, 0, opLibraries,
+error)`); no kernel is installed for the mover.
 
 The generated `plugInfo.json` marks the library with
 

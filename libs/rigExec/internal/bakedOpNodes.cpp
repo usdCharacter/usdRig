@@ -3,6 +3,7 @@
 #include "rigExec/api/compile.h"
 #include "rigExec/api/opFields.h"
 #include "rigExec/api/rigEvaluator.h"
+#include "rigExec/api/sceneDispatch.h"
 #include "rigExec/internal/compile/rigDescData.h"
 #include "rigExec/internal/crossDomainInputs.h"
 #include "rigExec/api/registry.h"
@@ -544,6 +545,40 @@ DropRevisionChunks(RigExecBakedProgramImpl *B, std::vector<int> stored)
             step = moved[size_t(step)];
 }
 
+/// Whether a declared input of leaf type \p leaf can feed an input of
+/// \p port's type (eval::OpExternalKind).
+bool
+LeafFeeds(RigExecRevisionLeafType leaf, const RigExecTypeHandle *port)
+{
+    using T = RigExecRevisionLeafType;
+    switch (leaf) {
+    case T::Bool:
+        return port == &rigExecStd::BoolType();
+    case T::Int:
+        return port == &rigExecStd::IntType();
+    case T::Float:
+        return port == &rigExecStd::FloatType();
+    case T::Double:
+        return port == &rigExecStd::DoubleType();
+    case T::Vec3f:
+        return port == &rigExecStd::Vec3fType();
+    case T::Matrix4d:
+        return port == &rigExecStd::Mat4dType();
+    case T::IntArray:
+        return port == &rigExecStd::IntArray();
+    case T::FloatArray:
+        return port == &rigExecStd::FloatArray();
+    case T::DoubleArray:
+        return port == &rigExecStd::DoubleArray();
+    case T::Vec2fArray:
+        return port == &rigExecStd::Vec2fArray();
+    case T::Vec3fArray:
+        return port == &rigExecStd::Vec3fArray();
+    default:
+        return false;
+    }
+}
+
 /// A member fed node to node by the op revision before it: the two nodes
 /// and the member's revision.
 struct PointJoin {
@@ -936,6 +971,98 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                 stores(blend, rigExecOps::BlendShapeOut());
                 continue;
             }
+            if (revision.opExternal) {
+                RigExecExternalOpPlan plan;
+                if (!RigExecDispatchBuildExternalOp(revision.binding, *builder,
+                                                    &plan, error))
+                    return false;
+                const RigExecOpDesc &desc =
+                    *RigExecRegistry::Get().Op(*plan.op).desc;
+                if (!desc.range.run || !desc.range.plan)
+                    return Fail(error, revision.moverPathText +
+                                           ": its op does not run as a whole "
+                                           "range member");
+                const RigExecBakedPathLeaves &leaves = revision.leaves;
+                for (const RigExecExternalOpFeed &feed : plan.feeds) {
+                    using Source = RigExecExternalOpSource;
+                    const RigExecPortDesc &port =
+                        desc.ports[feed.port->Index()];
+                    switch (feed.source) {
+                    case Source::Points:
+                        if (!(port.flags & kRigExecPortNeighbourhood))
+                            return Fail(error, revision.moverPathText +
+                                                   ": its op reads the points "
+                                                   "through an input that is "
+                                                   "not a neighbourhood");
+                        points(plan.node, *feed.port, true);
+                        break;
+                    case Source::BasePoints:
+                        leafRead(plan.node, *feed.port,
+                                 eval::OpRevisionRead::ChainBase);
+                        break;
+                    case Source::Input: {
+                        const int k =
+                            leaves.decl.externalBegin < 0
+                                ? -1
+                                : leaves.decl.externalBegin + int(feed.index);
+                        if (k < 0 ||
+                            feed.index >=
+                                revision.binding.externalInputs.size() ||
+                            !LeafFeeds(leaves.decl.keys[size_t(k)].type,
+                                       port.type))
+                            return Fail(error,
+                                        revision.moverPathText +
+                                            ": its declared input " +
+                                            std::to_string(feed.index) +
+                                            " does not hold op input " +
+                                            (port.name ? port.name : "") +
+                                            "'s type");
+                        bind(plan.node, *feed.port,
+                             {{uint8_t(L::ExternalInput), uint32_t(id), k, 0}});
+                        break;
+                    }
+                    case Source::Transform: {
+                        std::vector<eval::OpLookup> candidates;
+                        if (atPrim)
+                            for (const int record : revision.transformRecords)
+                                candidates.push_back({uint8_t(L::FrameRecord),
+                                                      uint32_t(record), -1, 0});
+                        if (revision.transformSlot < 0)
+                            return Fail(error, revision.moverPathText +
+                                                   ": its op reads a transform "
+                                                   "it names none of");
+                        candidates.push_back(table(revision.transformSlot));
+                        bind(plan.node, *feed.port, candidates);
+                        break;
+                    }
+                    case Source::Influence:
+                        if (feed.index >= revision.influenceSlots.size() ||
+                            revision.influenceSlots[feed.index] < 0)
+                            return Fail(error, revision.moverPathText +
+                                                   ": its op reads an "
+                                                   "influence it names none "
+                                                   "of");
+                        bind(
+                            plan.node, *feed.port,
+                            phased(records(feed.index),
+                                   table(revision.influenceSlots[feed.index])));
+                        break;
+                    }
+                }
+                const RigExecNodeId blend =
+                    builder->AddOp(rigExecOps::MoverBlend());
+                builder->Connect(plan.node, *plan.out, blend,
+                                 rigExecOps::MoverBlendCandidate());
+                points(blend, rigExecOps::MoverBlendPoints(), false);
+                enabled(blend, rigExecOps::MoverBlendEnabled());
+                if (!weighs(blend, rigExecOps::MoverBlendEnvelope(),
+                            rigExecOps::MoverBlendPacket(),
+                            rigExecOps::MoverBlendDefaultWeight()))
+                    return false;
+                nodeRevision->push_back({plan.node, id});
+                stores(blend, rigExecOps::MoverBlendOut());
+                continue;
+            }
             if (revision.opSmooth) {
                 rigExecOps::SmoothPayload payload;
                 payload.whole = revision.opWhole;
@@ -1251,6 +1378,12 @@ RigExecBakedIdentityOf(const RigExecBakedProgramImpl &B,
                 members[segment] < op->nodeRevision.size() &&
                 op->nodeRevision[members[segment]] >= 0)
                 id = op->nodeRevision[members[segment]];
+            // A revision whose op runs as two segments (a plugin op, then
+            // its blend) names its later segments' steps by their own kind.
+            if (segment > 0 && segment < members.size() &&
+                members[segment - 1] < op->nodeRevision.size() &&
+                op->nodeRevision[members[segment - 1]] == id)
+                return {step.kind, step.object, step.part};
             return {K::RevisionChunk, id, int(uint32_t(step.part) % groups)};
         }
     }
@@ -1307,7 +1440,8 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
              chain.revisions)
             matrices = matrices || revision.OpNodes();
     if ((!B.opNodeOrigins.empty() || matrices) &&
-        !RigExecEnsureBuiltinRegistry(error))
+        !(RigExecSceneAvailable() ? RigExecDispatchEnsureOpRegistry(error)
+                                  : RigExecEnsureBuiltinRegistry(error)))
         return false;
     std::vector<RigExecBakedOpFeed> packets, fields;
     std::vector<std::pair<RigExecNodeId, int>> nodeRevision;

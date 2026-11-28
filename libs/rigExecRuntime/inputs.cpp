@@ -817,19 +817,36 @@ RrInputsOpen(RrProgram *program, const RigExecWireFile *file,
         if (read.rawFallbackSlot >= 0)
             externalSource(uint32_t(read.rawFallbackSlot));
     };
+    const auto declared = [&](const RigExecWireExternalDeclaredInput &input) {
+        if (input.time != fb::ExternalInputTime::AtTime ||
+            input.flavour == fb::ExternalInputFlavour::Present)
+            return;
+        if (input.flavour == fb::ExternalInputFlavour::Raw) {
+            if (!input.read->walk.empty())
+                externalSource(input.read->walk.front());
+        } else {
+            externalWalk(*input.read);
+            if (input.bodyWalk)
+                externalWalk(*input.bodyWalk);
+        }
+    };
     for (const auto &external : file->externalMovers)
-        for (const auto &input : external.declaredInputs) {
-            if (input.time != fb::ExternalInputTime::AtTime ||
-                input.flavour == fb::ExternalInputFlavour::Present)
+        for (const auto &input : external.declaredInputs)
+            declared(input);
+    // An External op's declared inputs, which ExternalInput lookups read.
+    if (file->opGraph && file->geometry)
+        for (const auto &lookup : file->opGraph->lookups) {
+            if (!lookup ||
+                lookup->source !=
+                    uint8_t(eval::OpLookupSource::ExternalInput) ||
+                lookup->object >= file->geometry->revisionIndex.size())
                 continue;
-            if (input.flavour == fb::ExternalInputFlavour::Raw) {
-                if (!input.read->walk.empty())
-                    externalSource(input.read->walk.front());
-            } else {
-                externalWalk(*input.read);
-                if (input.bodyWalk)
-                    externalWalk(*input.bodyWalk);
-            }
+            const auto &at = file->geometry->revisionIndex[lookup->object];
+            const auto &sites = file->geometry->chains[size_t(at.first)]
+                                    .revisions[size_t(at.second)]
+                                    .leafSites;
+            if (lookup->part >= 0 && size_t(lookup->part) < sites.size())
+                declared(sites[size_t(lookup->part)]);
         }
     state.slotAuthored.assign(slots, 0);
     state.slotRanAuthored.assign(slots, 0);

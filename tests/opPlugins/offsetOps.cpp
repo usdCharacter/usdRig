@@ -67,35 +67,17 @@ const rigExec::RigExecOpLibraryDesc kLibrary = [] {
 }();
 
 bool
-Add(const rigExec::RigExecRevisionBinding &,
-    const rigExec::RigExecExternalOpValues &, rigExec::RigExecRigDescBuilder &,
-    rigExec::RigExecExternalOpNode &, std::string *error)
+Build(const rigExec::RigExecRevisionBinding &, rigExec::RigExecRigDescBuilder &,
+      rigExec::RigExecExternalOpPlan &, std::string *error)
 {
     if (error)
         *error = "the offset binder binds no mover";
     return false;
 }
 
-bool
-Write(const rigExec::RigExecRevisionBinding &,
-      const rigExec::RigExecExternalOpValues &,
-      const rigExec::RigExecExternalOpNode &, rigExec::RigExecEvaluator &,
-      std::string *)
-{
-    return false;
-}
-
-bool
-Stale(const rigExec::RigExecRevisionBinding &,
-      const rigExec::RigExecExternalOpValues &,
-      const rigExec::RigExecExternalOpNode &)
-{
-    return true;
-}
-
 const rigExec::RigExecExternalOpBinder kBinders[] = {
     {sizeof(rigExec::RigExecExternalOpBinder),
-     rigExec::testOffsetOpsSchema::Type, &Offset, &Add, &Write, &Stale},
+     rigExec::testOffsetOpsSchema::Type, &Offset, &Build},
 };
 
 const rigExec::RigExecExternalOpBinderTable kBinderTable = {

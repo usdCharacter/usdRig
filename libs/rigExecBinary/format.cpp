@@ -1381,6 +1381,7 @@ private:
                         : uint8_t(0xff);
                 const bool mush = op == uint8_t(fb::RevisionOp::DeltaMush);
                 const bool lattice = op == uint8_t(fb::RevisionOp::Lattice);
+                const bool external = op == uint8_t(fb::RevisionOp::External);
                 const bool smooth = op == uint8_t(fb::RevisionOp::Smooth);
                 const bool blend = op == uint8_t(fb::RevisionOp::BlendShape) &&
                                    RigExecFormatIsChunkBlend(
@@ -1391,7 +1392,7 @@ private:
                                             .blendChannels,
                                         lookup->part);
                 if ((lookup->read > 2 && lookup->read < 13 && !mush) ||
-                    (lookup->read == 13 && !mush && !lattice) ||
+                    (lookup->read == 13 && !mush && !lattice && !external) ||
                     (lookup->read > 13 && lookup->read < 16 && !lattice) ||
                     (lookup->read == 16 && !blend) ||
                     ((lookup->read == 17 || lookup->read == 18) && !mush &&
@@ -1401,6 +1402,29 @@ private:
                     return _Bad("op_graph.lookups: a smooth, delta mush, "
                                 "lattice or blend shape input lookup reads a "
                                 "revision of another operation");
+                continue;
+            }
+            if (lookup && lookup->source == 80) {
+                const auto &geometry = _f.geometry;
+                bool holds = false;
+                if (geometry && _Has(geometry->revisionIndex, lookup->object)) {
+                    const auto &at = geometry->revisionIndex[lookup->object];
+                    if (_Has(geometry->chains, at.first) &&
+                        _Has(geometry->chains[size_t(at.first)].revisions,
+                             at.second)) {
+                        const auto &revision =
+                            geometry->chains[size_t(at.first)]
+                                .revisions[size_t(at.second)];
+                        holds =
+                            revision.op == uint8_t(fb::RevisionOp::External) &&
+                            revision.rangeRole && !lookup->read &&
+                            _Has(revision.leafSites, lookup->part);
+                    }
+                }
+                if (!holds)
+                    return _Bad("op_graph.lookups: an external input lookup "
+                                "reads no declared input of a plugin "
+                                "revision");
                 continue;
             }
             if (lookup && lookup->source == 11)
@@ -1682,6 +1706,15 @@ private:
             if (output && output->target == 4 &&
                 output->node < graph.nodes.size())
                 stores[output->node] = int64_t(output->object);
+        // A node feeding a storing node reads that node's revision too: a
+        // plugin mover's op feeds the MoverBlend that stores it.
+        for (size_t m = 0; m < graph.nodes.size(); ++m)
+            if (stores[m] >= 0)
+                for (const auto &input : graph.nodes[m]->inputs)
+                    if (input->node >= 0 &&
+                        size_t(input->node) < graph.nodes.size() &&
+                        stores[size_t(input->node)] < 0)
+                        stores[size_t(input->node)] = stores[m];
         for (size_t n = 0; n < graph.nodes.size(); ++n) {
             size_t poses = 0;
             std::vector<uint32_t> owned;
@@ -1862,7 +1895,8 @@ private:
                                    "its field's consumer");
                 } else if (lookup.source == 4 && _fieldNode[n] != object) {
                     return bad(" reads a field its node does not weigh");
-                } else if (lookup.source == 10 && stores[n] != object) {
+                } else if ((lookup.source == 10 || lookup.source == 80) &&
+                           stores[n] != object) {
                     return bad(" reads the inputs of a revision its node does "
                                "not store");
                 } else if (lookup.source == 30 && _commitNode[n] != object) {
@@ -8134,6 +8168,7 @@ private:
                   (revision.op != uint8_t(fb::RevisionOp::Smooth) &&
                    revision.op != uint8_t(fb::RevisionOp::DeltaMush) &&
                    revision.op != uint8_t(fb::RevisionOp::Lattice) &&
+                   revision.op != uint8_t(fb::RevisionOp::External) &&
                    !RigExecFormatIsChunkBlend(revision))) &&
                  !need(D::RevisionTransforms, id)) ||
                 (revision.weightObject >= 0 &&
@@ -8787,11 +8822,12 @@ private:
         if (r.wholeRole &&
             (!ranges || r.op == uint8_t(fb::RevisionOp::Matrix) ||
              !RigExecFormatRunsAsOps(r))) {
-            return _Bad(row + ": whole_role on no smooth, delta mush or "
-                              "lattice op member");
+            return _Bad(row + ": whole_role on no smooth, delta mush, "
+                              "lattice or plugin op member");
         }
         if (!keyed) {
-            if (ranges && !RigExecFormatIsRangeOp(r.op)) {
+            if (ranges && !RigExecFormatIsRangeOp(r.op) &&
+                !RigExecFormatRunsAsOps(r)) {
                 return _Bad(row + ": " + _N(r.chunks.size()) +
                             " chunks, but not chunked");
             }
@@ -10396,7 +10432,7 @@ private:
             for (size_t r = 0; r < chains[c].revisions.size(); ++r) {
                 if (chains[c].revisions[r].op ==
                         uint8_t(fb::RevisionOp::External) &&
-                    !claimed[c][r]) {
+                    !chains[c].revisions[r].rangeRole && !claimed[c][r]) {
                     return _Bad("geometry.chains[" + _N(c) + "].revisions[" +
                                 _N(r) +
                                 "]: a plugin mover without its "

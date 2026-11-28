@@ -9,10 +9,12 @@
 #include "rigExecSchema/schemaTokens.h"
 #include "rigExecScene/clothDeclaredInputs.h"
 #include "rigExecScene/layeredSkinInputs.h"
+#include "rigExecScene/opPlugins.h"
 #include "rigExecScene/patchInputs.h"
 #include "rigExecScene/surfaceBindingInputs.h"
 #include "rigExecStdTypes/stdTypes.h"
 
+#include "pxr/base/gf/vec2f.h"
 #include "pxr/base/tf/token.h"
 #include "pxr/base/vt/array.h"
 #include "pxr/base/vt/types.h"
@@ -24,6 +26,23 @@
 namespace rigExec {
 
 namespace {
+
+/// A built-in mover's op, written from one frame's values until its binder
+/// builds from compile facts.
+struct LegacyBinder {
+    const char *schemaType = "";
+    const RigExecOpHandle &(*op)() = nullptr;
+    bool (*add)(const RigExecRevisionBinding &, const RigExecExternalOpValues &,
+                RigExecRigDescBuilder &, RigExecExternalOpNode &,
+                std::string *) = nullptr;
+    bool (*write)(const RigExecRevisionBinding &,
+                  const RigExecExternalOpValues &,
+                  const RigExecExternalOpNode &, RigExecEvaluator &,
+                  std::string *) = nullptr;
+    bool (*stale)(const RigExecRevisionBinding &,
+                  const RigExecExternalOpValues &,
+                  const RigExecExternalOpNode &) = nullptr;
+};
 
 using rigExecStd::Mat4d;
 using rigExecStd::RigExecArray;
@@ -772,17 +791,15 @@ ClothStale(const RigExecRevisionBinding &binding,
 
 // --- Table ----------------------------------------------------------------
 
-const RigExecExternalOpBinder kBuiltinBinders[] = {
-    {sizeof(RigExecExternalOpBinder), SchemaTypeName::RigExecPatchMover,
-     &rigExecOps::Patch, &AddPatch, &WritePatch, &PatchStale},
-    {sizeof(RigExecExternalOpBinder),
-     SchemaTypeName::RigExecSurfaceBindingMover, &rigExecOps::SurfaceBinding,
+const LegacyBinder kBuiltinBinders[] = {
+    {SchemaTypeName::RigExecPatchMover, &rigExecOps::Patch, &AddPatch,
+     &WritePatch, &PatchStale},
+    {SchemaTypeName::RigExecSurfaceBindingMover, &rigExecOps::SurfaceBinding,
      &AddSurfaceBinding, &WriteSurfaceBinding, &SurfaceBindingStale},
-    {sizeof(RigExecExternalOpBinder), SchemaTypeName::RigExecLayeredSkinMover,
-     &rigExecOps::LayeredSkin, &AddLayeredSkin, &WriteLayeredSkin,
-     &LayeredSkinStale},
-    {sizeof(RigExecExternalOpBinder), SchemaTypeName::RigExecClothMover,
-     &rigExecOps::Cloth, &AddCloth, &WriteCloth, &ClothStale},
+    {SchemaTypeName::RigExecLayeredSkinMover, &rigExecOps::LayeredSkin,
+     &AddLayeredSkin, &WriteLayeredSkin, &LayeredSkinStale},
+    {SchemaTypeName::RigExecClothMover, &rigExecOps::Cloth, &AddCloth,
+     &WriteCloth, &ClothStale},
 };
 
 // Written once by RigExecAddExternalOpBinders before `added` is set; read
@@ -790,12 +807,18 @@ const RigExecExternalOpBinder kBuiltinBinders[] = {
 std::vector<const RigExecExternalOpBinder *> gAddedBinders;
 std::atomic<bool> gAdded{false};
 
-const RigExecExternalOpBinder *
-FindBinder(const char *schemaType)
+const LegacyBinder *
+FindLegacy(const char *schemaType)
 {
-    for (const RigExecExternalOpBinder &binder : kBuiltinBinders)
+    for (const LegacyBinder &binder : kBuiltinBinders)
         if (std::strcmp(binder.schemaType, schemaType) == 0)
             return &binder;
+    return nullptr;
+}
+
+const RigExecExternalOpBinder *
+FindAdded(const char *schemaType)
+{
     if (gAdded.load(std::memory_order_acquire))
         for (const RigExecExternalOpBinder *binder : gAddedBinders)
             if (std::strcmp(binder->schemaType, schemaType) == 0)
@@ -803,12 +826,109 @@ FindBinder(const char *schemaType)
     return nullptr;
 }
 
-const RigExecExternalOpBinder *
-Find(const RigExecRevisionBinding &binding)
+const LegacyBinder *
+Legacy(const RigExecRevisionBinding &binding)
 {
     return binding.externalSchema.IsEmpty()
                ? nullptr
-               : FindBinder(binding.externalSchema.GetText());
+               : FindLegacy(binding.externalSchema.GetText());
+}
+
+/// \p binding's plugin binder, after op plugin discovery.
+const RigExecExternalOpBinder *
+Planned(const RigExecRevisionBinding &binding)
+{
+    if (binding.externalSchema.IsEmpty() ||
+        !RigExecEnsureSceneOpRegistry(nullptr))
+        return nullptr;
+    return FindAdded(binding.externalSchema.GetText());
+}
+
+/// \p value as an input of \p type: written to \p id, or false.
+bool
+SetValue(RigExecEvaluator &evaluator, const RigExecInputId &id,
+         const RigExecTypeHandle *type, const VtValue &value,
+         std::string *error)
+{
+    const auto set = [&](const auto &v) {
+        return evaluator.SetInput(id, &v, error);
+    };
+    const auto vec3fs = [&](const VtVec3fArray &a) { return set(ToStd(a)); };
+    if (type == &rigExecStd::BoolType() && value.IsHolding<bool>())
+        return set(uint8_t(value.UncheckedGet<bool>() ? 1 : 0));
+    if (type == &rigExecStd::IntType() && value.IsHolding<int>())
+        return set(int32_t(value.UncheckedGet<int>()));
+    if (type == &rigExecStd::FloatType() && value.IsHolding<float>())
+        return set(value.UncheckedGet<float>());
+    if (type == &rigExecStd::DoubleType() && value.IsHolding<double>())
+        return set(value.UncheckedGet<double>());
+    if (type == &rigExecStd::Vec3fType() && value.IsHolding<GfVec3f>()) {
+        const GfVec3f &v = value.UncheckedGet<GfVec3f>();
+        return set(Vec3f(v[0], v[1], v[2]));
+    }
+    if (type == &rigExecStd::Mat4dType() && value.IsHolding<GfMatrix4d>())
+        return set(ToStd(value.UncheckedGet<GfMatrix4d>()));
+    if (type == &rigExecStd::IntArray() && value.IsHolding<VtIntArray>())
+        return set(ToArray(value.UncheckedGet<VtIntArray>()));
+    if (type == &rigExecStd::FloatArray() && value.IsHolding<VtFloatArray>())
+        return set(ToArray(value.UncheckedGet<VtFloatArray>()));
+    if (type == &rigExecStd::DoubleArray() && value.IsHolding<VtDoubleArray>())
+        return set(ToArray(value.UncheckedGet<VtDoubleArray>()));
+    if (type == &rigExecStd::Vec3fArray() && value.IsHolding<VtVec3fArray>())
+        return vec3fs(value.UncheckedGet<VtVec3fArray>());
+    return Fail(error, "a declared input does not hold its op input's type");
+}
+
+/// Writes one frame of \p node's feeds.
+bool
+WritePlanned(const RigExecExternalOpValues &values,
+             const std::vector<GfVec3f> &points,
+             const RigExecExternalOpNode &node, RigExecEvaluator &evaluator,
+             std::string *error)
+{
+    const RigExecOpDesc &desc = *RigExecRegistry::Get().Op(*node.op).desc;
+    for (size_t i = 0; i < node.plan.feeds.size(); ++i) {
+        const RigExecExternalOpFeed &feed = node.plan.feeds[i];
+        const RigExecInputId &id = node.inputs[i];
+        bool ok = false;
+        switch (feed.source) {
+        case RigExecExternalOpSource::Points: {
+            const RigExecArray<Vec3f> in = ToStd(points.data(), points.size());
+            ok = evaluator.SetInput(id, &in, error);
+            break;
+        }
+        case RigExecExternalOpSource::BasePoints: {
+            const std::vector<GfVec3f> &base =
+                values.basePoints ? *values.basePoints : points;
+            const RigExecArray<Vec3f> in = ToStd(base.data(), base.size());
+            ok = evaluator.SetInput(id, &in, error);
+            break;
+        }
+        case RigExecExternalOpSource::Input:
+            if (!values.inputs || feed.index >= values.inputs->size())
+                return Fail(error, "a declared input the mover lacks");
+            ok = SetValue(evaluator, id, desc.ports[feed.port->Index()].type,
+                          (*values.inputs)[feed.index], error);
+            break;
+        case RigExecExternalOpSource::Transform:
+            if (!values.transform)
+                return Fail(error, "no transform");
+            ok = SetValue(evaluator, id, &rigExecStd::Mat4dType(),
+                          VtValue(*values.transform), error);
+            break;
+        case RigExecExternalOpSource::Influence:
+            if (!values.influenceTransforms ||
+                feed.index >= values.influenceTransforms->size())
+                return Fail(error, "an influence the mover lacks");
+            ok = SetValue(evaluator, id, &rigExecStd::Mat4dType(),
+                          VtValue((*values.influenceTransforms)[feed.index]),
+                          error);
+            break;
+        }
+        if (!ok)
+            return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -823,10 +943,9 @@ RigExecAddExternalOpBinders(
     for (size_t i = 0; i < binders.size(); ++i) {
         const RigExecExternalOpBinder *binder = binders[i];
         if (!binder || binder->structSize != sizeof(RigExecExternalOpBinder) ||
-            !binder->schemaType || !binder->op || !binder->add ||
-            !binder->write || !binder->stale)
+            !binder->schemaType || !binder->op || !binder->build)
             return Fail(error, "an incomplete op binder");
-        bool taken = FindBinder(binder->schemaType) != nullptr;
+        bool taken = FindLegacy(binder->schemaType) != nullptr;
         for (size_t j = 0; j < i && !taken; ++j)
             taken =
                 std::strcmp(binders[j]->schemaType, binder->schemaType) == 0;
@@ -839,11 +958,43 @@ RigExecAddExternalOpBinders(
     return true;
 }
 
+bool
+RigExecBindsExternalOp(const RigExecRevisionBinding &binding)
+{
+    return Planned(binding) != nullptr;
+}
+
+bool
+RigExecBuildExternalOp(const RigExecRevisionBinding &binding,
+                       RigExecRigDescBuilder &builder,
+                       RigExecExternalOpPlan *plan, std::string *error)
+{
+    const RigExecExternalOpBinder *binder = Planned(binding);
+    if (!binder)
+        return Fail(error, binding.moverPath.GetString() +
+                               ": no op plugin binds its mover");
+    RigExecExternalOpPlan built;
+    if (!binder->build(binding, builder, built, error))
+        return false;
+    if (built.node == kRigExecInvalidIndex || !built.out)
+        return Fail(error, binding.moverPath.GetString() +
+                               ": its binder named no node or output");
+    for (const RigExecExternalOpFeed &feed : built.feeds)
+        if (!feed.port)
+            return Fail(error, binding.moverPath.GetString() +
+                                   ": its binder feeds no port");
+    built.op = &binder->op();
+    *plan = std::move(built);
+    return true;
+}
+
 const RigExecOpHandle *
 RigExecExternalOpHandle(const RigExecRevisionBinding &binding)
 {
-    const RigExecExternalOpBinder *op = Find(binding);
-    return op ? &op->op() : nullptr;
+    if (const LegacyBinder *legacy = Legacy(binding))
+        return &legacy->op();
+    const RigExecExternalOpBinder *planned = Planned(binding);
+    return planned ? &planned->op() : nullptr;
 }
 
 bool
@@ -852,15 +1003,27 @@ RigExecAddExternalOp(const RigExecRevisionBinding &binding,
                      RigExecRigDescBuilder *builder,
                      RigExecExternalOpNode *node, std::string *error)
 {
-    const RigExecExternalOpBinder *op = Find(binding);
-    if (!op)
-        return Fail(error, "mover has no op");
     if (!builder || !node || !values.inputs)
         return Fail(error, "null external op destination or inputs");
     RigExecExternalOpNode result;
-    result.op = &op->op();
-    if (!op->add(binding, values, *builder, result, error))
+    if (const LegacyBinder *op = Legacy(binding)) {
+        result.op = &op->op();
+        if (!op->add(binding, values, *builder, result, error))
+            return false;
+        *node = std::move(result);
+        return true;
+    }
+    const RigExecExternalOpBinder *planned = Planned(binding);
+    if (!planned)
+        return Fail(error, "mover has no op");
+    result.op = &planned->op();
+    result.planned = true;
+    if (!RigExecBuildExternalOp(binding, *builder, &result.plan, error))
         return false;
+    result.node = result.plan.node;
+    for (const RigExecExternalOpFeed &feed : result.plan.feeds)
+        result.inputs.push_back(builder->BindInput(result.node, *feed.port));
+    result.out = builder->BindOutput(result.node, *result.plan.out);
     *node = std::move(result);
     return true;
 }
@@ -873,11 +1036,15 @@ RigExecWriteExternalOpInputs(const RigExecRevisionBinding &binding,
                              const RigExecExternalOpNode &node,
                              RigExecEvaluator *evaluator, std::string *error)
 {
-    const RigExecExternalOpBinder *op = Find(binding);
-    if (!op || node.op != &op->op())
-        return Fail(error, "node is not this mover's op");
     if (!evaluator || !values.inputs)
         return Fail(error, "null evaluator or inputs");
+    if (node.planned)
+        return node.op == RigExecExternalOpHandle(binding)
+                   ? WritePlanned(values, points, node, *evaluator, error)
+                   : Fail(error, "node is not this mover's op");
+    const LegacyBinder *op = Legacy(binding);
+    if (!op || node.op != &op->op())
+        return Fail(error, "node is not this mover's op");
     if (!op->write(binding, values, node, *evaluator, error))
         return false;
     std::vector<float> resolved;
@@ -895,7 +1062,9 @@ RigExecExternalOpNodeStale(const RigExecRevisionBinding &binding,
                            const RigExecExternalOpValues &values,
                            const RigExecExternalOpNode &node)
 {
-    const RigExecExternalOpBinder *op = Find(binding);
+    if (node.planned)
+        return node.op != RigExecExternalOpHandle(binding);
+    const LegacyBinder *op = Legacy(binding);
     if (!op || node.op != &op->op())
         return true;
     return values.inputs && op->stale(binding, values, node);

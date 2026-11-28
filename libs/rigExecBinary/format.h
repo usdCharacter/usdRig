@@ -785,8 +785,9 @@ RigExecFormatIsRangeRevision(const fb::RigExecWireRevision &r)
     return !r.chunked && (r.rangeRole || r.chunks.size() >= 2);
 }
 
-/// Whether \p r runs as op chain members: a Range Matrix, Smooth, DeltaMush
-/// or Lattice revision, which folds no transform of its own.
+/// Whether \p r runs as op chain members: a Range Matrix, Smooth, DeltaMush,
+/// Lattice or plugin (External) revision, which folds no transform of its
+/// own.
 inline bool
 RigExecFormatRunsAsOps(const fb::RigExecWireRevision &r)
 {
@@ -794,7 +795,8 @@ RigExecFormatRunsAsOps(const fb::RigExecWireRevision &r)
            (r.op == uint8_t(fb::RevisionOp::Matrix) ||
             r.op == uint8_t(fb::RevisionOp::Smooth) ||
             r.op == uint8_t(fb::RevisionOp::DeltaMush) ||
-            r.op == uint8_t(fb::RevisionOp::Lattice));
+            r.op == uint8_t(fb::RevisionOp::Lattice) ||
+            r.op == uint8_t(fb::RevisionOp::External));
 }
 
 // Format 29: sparse blend chunks carry their channel indices in key.
