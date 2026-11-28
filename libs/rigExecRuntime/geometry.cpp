@@ -22,6 +22,7 @@
 #include "rigExecRuntime/affineMath.h"
 #include "rigExecRuntime/labels.h"
 #include "rigExecRuntime/store.h"
+#include "rigExecRigTypes/rigTypes.h"
 #include "rigExecMath/deltaMushKernel.h"
 #include "rigExecMath/deltaMushSettings.h"
 #include "rigExecMath/latticeKernel.h"
@@ -1957,14 +1958,6 @@ RrGeoApplyRevisionKernel(
             p.surfaceToMetric, triangles, &ranges,
             surfaceCache ? &surfaceCache->SnapScratch() : nullptr);
     }
-    case RrGeoOpEmitGuidePoints:
-        if (p.frames.frames.size() != pts->size()) {
-            return false;
-        }
-        for (size_t i = 0; i < pts->size(); ++i) {
-            (*pts)[i] = RrGeoToVec3f(p.frames.frames[i].points[0]);
-        }
-        return true;
     case RrGeoOpRibbon: {
         if (p.bindCoords.size() != pts->size()) {
             return false;
@@ -4758,8 +4751,7 @@ RrGeoAssembleWire(const RrGeoAssembleInputs &in, RrGeoMoverParameters *params)
 }
 
 void
-RrGeoAssembleRibbon(const RrGeoAssembleInputs &in, bool emitGuides,
-                    RrGeoMoverParameters *params)
+RrGeoAssembleRibbon(const RrGeoAssembleInputs &in, RrGeoMoverParameters *params)
 {
     const RrPointFrameArray *frames = nullptr;
     if (in.wire->driverFramesSolver >= 0 &&
@@ -4773,14 +4765,10 @@ RrGeoAssembleRibbon(const RrGeoAssembleInputs &in, bool emitGuides,
         return;
     }
     params->frames = *frames;
-    if (!emitGuides) {
-        RrGeoReadVec2fArray(in.program, in.scratch,
-                            RrGeoBindingRead(in, RrGeoBindBindCoords),
-                            &params->bindCoords);
-        params->valid = !params->bindCoords.empty();
-    } else {
-        params->valid = true;
-    }
+    RrGeoReadVec2fArray(in.program, in.scratch,
+                        RrGeoBindingRead(in, RrGeoBindBindCoords),
+                        &params->bindCoords);
+    params->valid = !params->bindCoords.empty();
 }
 
 void
@@ -5078,10 +5066,7 @@ RrGeoAssembleRevision(const RrGeoAssembleInputs &in)
         break;
     }
     case RrGeoOpRibbon:
-        RrGeoAssembleRibbon(in, false, &params);
-        break;
-    case RrGeoOpEmitGuidePoints:
-        RrGeoAssembleRibbon(in, true, &params);
+        RrGeoAssembleRibbon(in, &params);
         break;
     case RrGeoOpWire:
         RrGeoAssembleWire(in, &params);
@@ -8555,6 +8540,31 @@ RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
         RrGeoReadIntArray(program, scratch, attr(RrGeoAttrPinPoints, true),
                           &rev.lookedUpPins);
         return lend(rev.lookedUpPins.data(), rev.lookedUpPins.size());
+    case Read::DriverFrames: {
+        const int64_t solver = program->geometry->chains[size_t(chain)]
+                                   .revisions[size_t(r)]
+                                   .driverFramesSolver;
+        if (solver < 0 || size_t(solver) >= program->store.aggregates.size() ||
+            type.element || type.size != sizeof(rigExecRig::PointFrameArray))
+            return fail();
+        const RrPointFrameArray &from =
+            program->store.aggregates[size_t(solver)];
+        auto &out = *static_cast<rigExecRig::PointFrameArray *>(value);
+        const auto landmarks = [](const std::array<RrVec3d, 4> &in,
+                                  rigExecRig::PointLandmarks *to) {
+            for (size_t i = 0; i < 4; ++i)
+                (*to)[i] = rigExecStd::Vec3d(in[i][0], in[i][1], in[i][2]);
+        };
+        out.frames.Resize(from.frames.size());
+        out.rests.Resize(from.rests.size());
+        for (size_t k = 0; k < from.frames.size(); ++k) {
+            landmarks(from.frames[k].points, &out.frames[k].points);
+            out.frames[k].flags = from.frames[k].flags;
+        }
+        for (size_t k = 0; k < from.rests.size(); ++k)
+            landmarks(from.rests[k], &out.rests[k]);
+        return true;
+    }
     case Read::MushStep:
         return put(RrGeoReadFloat(program, scratch, attr(RrGeoAttrStep), 0.5f));
     case Read::MushPinBorders:

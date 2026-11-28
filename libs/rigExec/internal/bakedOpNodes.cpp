@@ -16,6 +16,7 @@
 #include "rigExecOps/deform/latticeOp.h"
 #include "rigExecOps/deform/matrixDeformOp.h"
 #include "rigExecOps/deform/pointOps.h"
+#include "rigExecOps/deform/ribbonOp.h"
 #include "rigExecOps/deform/wrinkleOp.h"
 #include "rigExecStdTypes/array.h"
 #include "rigExecStdTypes/stdTypes.h"
@@ -436,6 +437,15 @@ DeclarePortReads(const RigExecBakedProgramImpl &B,
                 lookup.object < B.revisionIndex.size())
                 reads->push_back(RigExecBakedOne(
                     D::ChainBase, B.revisionIndex[lookup.object].first));
+            if (lookup.source == uint8_t(eval::OpLookupSource::RevisionLeaf) &&
+                lookup.read == uint8_t(eval::OpRevisionRead::DriverFrames) &&
+                lookup.object < B.revisionIndex.size()) {
+                const auto &[c, r] = B.revisionIndex[lookup.object];
+                const int solver =
+                    B.chains[size_t(c)].revisions[size_t(r)].driverFramesSolver;
+                if (solver >= 0)
+                    reads->push_back(RigExecBakedOne(D::Aggregate, solver));
+            }
             if (lookup.source == uint8_t(eval::OpLookupSource::List))
                 for (int32_t e = 0; e < lookup.part; ++e) {
                     const eval::OpLookup &element =
@@ -639,7 +649,8 @@ struct PointJoin {
 /// activations read at Build, its channel weights looked up per frame and
 /// keyed to the vertex groups they reach; per volume correct a
 /// VolumeCorrect member measuring the chain's base; per wrinkle a Wrinkle
-/// member, every input looked up per frame. Each member
+/// member and per emit guide points a GuidePoints member over its solver's
+/// frames, every input looked up per frame. Each member
 /// stores its groups and reads the points entering its revision: the
 /// output of the op revision before it in its point chain, so the two share
 /// one range chain, when that one writes every group or this one reads
@@ -1296,6 +1307,28 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                     revision.weightObject >= 0)
                     written(wrinkle, rigExecOps::WrinkleWritten());
                 stores(wrinkle, rigExecOps::WrinkleOut());
+                continue;
+            }
+            if (revision.opWhole &&
+                revision.op == RigExecRevisionOp::EmitGuidePoints) {
+                if (revision.driverFramesSolver < 0)
+                    return Fail(error, revision.moverPathText +
+                                           ": emits guide points from no "
+                                           "solver's frames");
+                const RigExecNodeId guides =
+                    builder->AddOp(rigExecOps::GuidePoints());
+                points(guides, rigExecOps::GuidePointsPoints(), false);
+                enabled(guides, rigExecOps::GuidePointsEnabled());
+                leafRead(guides, rigExecOps::GuidePointsFrames(),
+                         eval::OpRevisionRead::DriverFrames);
+                if (!weighs(guides, rigExecOps::GuidePointsEnvelope(),
+                            rigExecOps::GuidePointsPacket(),
+                            rigExecOps::GuidePointsDefaultWeight()))
+                    return false;
+                if (!writesAll && !revision.weightCurrentPhase &&
+                    revision.weightObject >= 0)
+                    written(guides, rigExecOps::GuidePointsWritten());
+                stores(guides, rigExecOps::GuidePointsOut());
                 continue;
             }
             std::vector<eval::OpLookup> transform;

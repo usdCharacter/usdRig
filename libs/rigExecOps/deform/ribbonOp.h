@@ -25,11 +25,17 @@ const rigExec::RigExecPortHandle &RibbonFrames();
 const rigExec::RigExecPortHandle &RibbonEnvelope();
 const rigExec::RigExecPortHandle &RibbonOut();
 
-// GuidePoints: Points (one per frame), Frames, optional Envelope, Out.
+// GuidePoints: Points (one per frame), Frames (rests parallel to frames),
+// optional Envelope, Out; Enabled, DefaultWeight, Packet and Written as
+// VolumeCorrect's. Runs once over every point.
 const rigExec::RigExecPortHandle &GuidePointsPoints();
 const rigExec::RigExecPortHandle &GuidePointsFrames();
 const rigExec::RigExecPortHandle &GuidePointsEnvelope();
 const rigExec::RigExecPortHandle &GuidePointsOut();
+const rigExec::RigExecPortHandle &GuidePointsEnabled();
+const rigExec::RigExecPortHandle &GuidePointsDefaultWeight();
+const rigExec::RigExecPortHandle &GuidePointsPacket();
+const rigExec::RigExecPortHandle &GuidePointsWritten();
 
 } // namespace rigExecOps
 

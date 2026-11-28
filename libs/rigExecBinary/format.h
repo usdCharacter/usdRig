@@ -797,8 +797,10 @@ RigExecFormatRunsAsOps(const fb::RigExecWireRevision &r)
             r.op == uint8_t(fb::RevisionOp::DeltaMush) ||
             r.op == uint8_t(fb::RevisionOp::Lattice) ||
             r.op == uint8_t(fb::RevisionOp::External) ||
-            (r.wholeRole && (r.op == uint8_t(fb::RevisionOp::VolumeCorrect) ||
-                             r.op == uint8_t(fb::RevisionOp::Wrinkle))));
+            (r.wholeRole &&
+             (r.op == uint8_t(fb::RevisionOp::VolumeCorrect) ||
+              r.op == uint8_t(fb::RevisionOp::Wrinkle) ||
+              r.op == uint8_t(fb::RevisionOp::EmitGuidePoints))));
 }
 
 /// A Range blend shape: a BlendShape op node whose chunks carry, in key,

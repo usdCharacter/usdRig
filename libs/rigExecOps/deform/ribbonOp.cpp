@@ -1,5 +1,6 @@
 #include "rigExecOps/deform/ribbonOp.h"
 
+#include "rigExecOps/deform/weightPacket.h"
 #include "rigExecOps/fieldIo.h"
 #include "rigExecOps/internalOps.h"
 #include "rigExecOps/opIo.h"
@@ -7,8 +8,10 @@
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecMath/dualQuatMath.h"
 
+#include <algorithm>
 #include <iterator>
 #include <string>
+#include <vector>
 
 namespace rigExecOps {
 
@@ -25,6 +28,10 @@ RIGEXEC_DEFINE_PORT_HANDLE(GuidePointsPoints)
 RIGEXEC_DEFINE_PORT_HANDLE(GuidePointsFrames)
 RIGEXEC_DEFINE_PORT_HANDLE(GuidePointsEnvelope)
 RIGEXEC_DEFINE_PORT_HANDLE(GuidePointsOut)
+RIGEXEC_DEFINE_PORT_HANDLE(GuidePointsEnabled)
+RIGEXEC_DEFINE_PORT_HANDLE(GuidePointsDefaultWeight)
+RIGEXEC_DEFINE_PORT_HANDLE(GuidePointsPacket)
+RIGEXEC_DEFINE_PORT_HANDLE(GuidePointsWritten)
 
 namespace {
 
@@ -83,26 +90,87 @@ CheckGuidePoints(const rigExec::RigExecOpCheck &check, std::string *error)
         value && !SameCount(value->frames.Size(),
                             CheckElements(check, GuidePointsPoints())))
         return Fail(error, "GuidePoints", "needs one frame per point");
+    const int envelopes = int(Fed(check, GuidePointsEnvelope())) +
+                          int(Fed(check, GuidePointsDefaultWeight())) +
+                          int(Fed(check, GuidePointsPacket()));
+    if (envelopes > 1)
+        return Fail(error, "GuidePoints",
+                    "one of an envelope, a default weight and a weight "
+                    "packet");
     return EnvelopeFits(check, GuidePointsPoints(), GuidePointsEnvelope(),
                         "GuidePoints", error);
 }
 
-bool
-GuidePointsOne(const RigExecOpIo &io, std::string *error)
+/// This frame's pass through and weights.
+struct GuideState {
+    bool pass = false;
+    std::vector<float> dense;
+};
+
+rigExec::RigExecRangePlan
+GuidePlan(const rigExec::RigExecOpBatch &, size_t)
 {
-    const Points &in = *In<Points>(io, GuidePointsPoints());
+    return rigExec::RigExecRangePlan::Whole;
+}
+
+bool
+GuidePrepare(const rigExec::RigExecOpBatch &batch, size_t k, size_t count,
+             std::string *error)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    GuideState &state =
+        *static_cast<GuideState *>(rigExec::RigExecBatchState(batch, k));
+    const uint8_t *enabled = In<uint8_t>(io, GuidePointsEnabled());
+    state.pass = enabled && !*enabled;
+    state.dense.clear();
+    if (state.pass)
+        return true;
+    if (!EnvelopeFits(*In<Points>(io, GuidePointsPoints()),
+                      In<Envelope>(io, GuidePointsEnvelope()), "GuidePoints",
+                      error))
+        return false;
     const auto &frames =
         *In<rigExecRig::PointFrameArray>(io, GuidePointsFrames());
-    if (frames.frames.Size() != in.Size())
+    if (frames.frames.Size() != count)
         return Fail(error, "GuidePoints", "needs one frame per point");
-    Points &out = Out<Points>(io, GuidePointsOut());
-    out.Assign(in.Size());
-    for (size_t i = 0; i < in.Size(); ++i) {
-        const Vec3d &o = frames.frames[i].points[0];
+    if (frames.rests.Size() != frames.frames.Size())
+        return Fail(error, "GuidePoints", "rests are not parallel to frames");
+    const char *why = "";
+    if (!weightPacket::ResolveMemberWeights(
+            In<float>(io, GuidePointsDefaultWeight()),
+            In<weightPacket::PointWeights>(io, GuidePointsPacket()),
+            In<RigExecArray<int32_t>>(io, GuidePointsWritten()), count,
+            &state.dense, &why))
+        return Fail(error, "GuidePoints", why);
+    return true;
+}
+
+bool
+GuideRange(const rigExec::RigExecOpBatch &batch, size_t k,
+           const rigExec::RigExecOpRange &range, std::string *)
+{
+    const RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    const GuideState &state =
+        *static_cast<const GuideState *>(rigExec::RigExecBatchState(batch, k));
+    const Vec3f *from = RangeIn<Vec3f>(io, range, GuidePointsPoints());
+    Vec3f *out = RangeOut<Vec3f>(io, range, GuidePointsOut());
+    const size_t n = range.end - range.begin;
+    if (state.pass) {
+        std::copy(from, from + n, out);
+        return true;
+    }
+    const auto &frames =
+        *In<rigExecRig::PointFrameArray>(io, GuidePointsFrames());
+    for (size_t i = 0; i < n; ++i) {
+        const Vec3d &o = frames.frames[range.begin + i].points[0];
         out[i] = Vec3f(float(o[0]), float(o[1]), float(o[2]));
     }
-    return BlendEnvelope(in, In<Envelope>(io, GuidePointsEnvelope()), &out,
-                         "GuidePoints", error);
+    BlendEnvelopeAt(from,
+                    state.dense.empty()
+                        ? RangeIn<float>(io, range, GuidePointsEnvelope())
+                        : state.dense.data() + range.begin,
+                    out, n);
+    return true;
 }
 
 bool
@@ -111,15 +179,6 @@ RunRibbon(const rigExec::RigExecOpBatch &batch, size_t *failed,
 {
     return EachInstance(batch, failed, [&](size_t k) {
         return RibbonOne(rigExec::RigExecBatchInstance(batch, k), error);
-    });
-}
-
-bool
-RunGuidePoints(const rigExec::RigExecOpBatch &batch, size_t *failed,
-               std::string *error)
-{
-    return EachInstance(batch, failed, [&](size_t k) {
-        return GuidePointsOne(rigExec::RigExecBatchInstance(batch, k), error);
     });
 }
 
@@ -162,26 +221,42 @@ const rigExec::RigExecPortDesc kPorts[] = {
      rigExec::RigExecOutputBound::Input, &RibbonPoints()},
 };
 
+constexpr uint32_t kOptional = kRigExecPortInput | kRigExecPortOptional;
+
 const rigExec::RigExecPortDesc kGuidePorts[] = {
-    {&GuidePointsPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
-     "points"},
+    {&GuidePointsPoints(), &rigExecStd::Vec3fArray(),
+     kRigExecPortInput | rigExec::kRigExecPortPointwise, "points"},
     {&GuidePointsFrames(), &rigExecRig::PointFrameArrayType(),
      kRigExecPortInput, "frames"},
     {&GuidePointsEnvelope(), &rigExecStd::FloatArray(),
-     kRigExecPortInput | kRigExecPortOptional, "envelope"},
-    {&GuidePointsOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+     kOptional | rigExec::kRigExecPortPointwise, "envelope"},
+    {&GuidePointsOut(), &rigExecStd::Vec3fArray(),
+     kRigExecPortOutput | rigExec::kRigExecPortPointwise, "out",
      rigExec::RigExecOutputBound::Input, &GuidePointsPoints()},
+    {&GuidePointsEnabled(), &rigExecStd::BoolType(), kOptional, "enabled"},
+    {&GuidePointsDefaultWeight(), &rigExecStd::FloatType(), kOptional,
+     "defaultWeight"},
+    {&GuidePointsPacket(), &rigExecRig::PointWeightsType(), kOptional,
+     "packet"},
+    {&GuidePointsWritten(), &rigExecStd::IntArray(), kOptional, "written"},
 };
 
 const rigExec::RigExecOpDesc kRibbonDesc =
     FrameDesc("Ribbon", kPorts, std::size(kPorts), &RunRibbon, &CheckRibbon,
               rigExec::kRigExecOpSeparateBlend);
 
-const rigExec::RigExecOpDesc kGuideDesc = internalOps::WithSchema(
-    FrameDesc("GuidePoints", kGuidePorts, std::size(kGuidePorts),
-              &RunGuidePoints, &CheckGuidePoints,
-              rigExec::kRigExecOpSeparateBlend),
-    internalOps::kGuidePoints);
+const rigExec::RigExecOpDesc kGuideDesc = [] {
+    rigExec::RigExecOpDesc d = internalOps::WithSchema(
+        FrameDesc("GuidePoints", kGuidePorts, std::size(kGuidePorts), nullptr,
+                  &CheckGuidePoints,
+                  rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpRanged),
+        internalOps::kGuidePoints);
+    d.range.plan = &GuidePlan;
+    d.range.prepare = &GuidePrepare;
+    d.range.run = &GuideRange;
+    d.state = StateOf<GuideState>();
+    return d;
+}();
 
 } // namespace
 

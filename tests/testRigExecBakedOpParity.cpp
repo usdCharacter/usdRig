@@ -3390,8 +3390,8 @@ Frames(const UsdStageRefPtr &stage)
 
 // The point movers each rig of the painted set must have compared under a
 // dense and a sparse partial envelope. Matrix, Smooth, DeltaMush, Lattice,
-// VolumeCorrect and Wrinkle revisions run only as op chain members
-// (testRigExecOpsPoints).
+// VolumeCorrect, Wrinkle and EmitGuidePoints revisions run only as op chain
+// members (testRigExecOpsPoints).
 const char *const kPaintedKinds[] = {
     "Skin",
     "Wire",

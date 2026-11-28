@@ -1412,7 +1412,7 @@ private:
             if (lookup && lookup->source == 10) {
                 if (!_f.geometry ||
                     lookup->object >= _f.geometry->revisionIndex.size() ||
-                    lookup->read > 62)
+                    lookup->read > 63)
                     return _Bad("op_graph.lookups: a revision lookup reads no "
                                 "input of a revision");
                 const auto &at = _f.geometry->revisionIndex[lookup->object];
@@ -1432,6 +1432,8 @@ private:
                 const bool volume =
                     op == uint8_t(fb::RevisionOp::VolumeCorrect);
                 const bool wrinkle = op == uint8_t(fb::RevisionOp::Wrinkle);
+                const bool guides =
+                    op == uint8_t(fb::RevisionOp::EmitGuidePoints);
                 const bool chunkBlend =
                     op == uint8_t(fb::RevisionOp::BlendShape) &&
                     RigExecFormatIsChunkBlend(
@@ -1463,7 +1465,7 @@ private:
                     (lookup->read > 20 && lookup->read <= 30 && !lattice) ||
                     (lookup->read > 30 && lookup->read < 60 && !sample) ||
                     (lookup->read >= 60 && lookup->read <= 62 && !wrinkle) ||
-                    lookup->read > 62)
+                    (lookup->read == 63 && !guides) || lookup->read > 63)
                     return _Bad("op_graph.lookups: a revision input lookup "
                                 "reads a revision of another operation");
                 continue;

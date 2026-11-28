@@ -562,6 +562,9 @@ enum class OpRevisionRead : uint8_t {
     WrinkleSettings = 60,
     WrinkleTopology = 61,
     WrinklePinPoints = 62,
+    /// PointFrameArray: the frames and rest landmarks of the solver aggregate
+    /// an emit-guide-points revision reads (rigExec:driverFrames).
+    DriverFrames = 63,
 };
 
 /// What an ExternalInput lookup answers, by the standard type of the input

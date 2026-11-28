@@ -39,6 +39,7 @@
 #include "rigExecMath/latticeKernel.h"
 #include "rigExecMath/pointRanges.h"
 #include "rigExecMath/simdKernels.h"
+#include "rigExecRigTypes/rigTypes.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/tf/diagnostic.h"
@@ -2028,6 +2029,7 @@ RevisionRunsAsOps(const RigExecBakedProgramImpl::GeomRevision &revision)
            op == RigExecRevisionOp::Lattice ||
            op == RigExecRevisionOp::VolumeCorrect ||
            op == RigExecRevisionOp::Wrinkle ||
+           op == RigExecRevisionOp::EmitGuidePoints ||
            (op == RigExecRevisionOp::External &&
             RigExecDispatchBindsExternalOp(revision.binding));
 }
@@ -7047,6 +7049,28 @@ RigExecBakedLookUpRevision(RigExecBakedProgramImpl &B, uint32_t index,
             held = VtValue(VtIntArray());
         const VtIntArray &a = held.UncheckedGet<VtIntArray>();
         return lend(a.cdata(), a.size());
+    }
+    case Read::DriverFrames: {
+        const int solver = c.revisions[size_t(r)].driverFramesSolver;
+        if (solver < 0 || size_t(solver) >= B.aggregates.size() ||
+            type.element || type.size != sizeof(rigExecRig::PointFrameArray))
+            return fail();
+        const RigExecPointFrameArray &from = B.aggregates[size_t(solver)];
+        auto &out = *static_cast<rigExecRig::PointFrameArray *>(value);
+        const auto landmarks = [](const std::array<GfVec3d, 4> &in,
+                                  rigExecRig::PointLandmarks *to) {
+            for (size_t i = 0; i < 4; ++i)
+                (*to)[i] = rigExecStd::Vec3d(in[i][0], in[i][1], in[i][2]);
+        };
+        out.frames.Resize(from.frames.size());
+        out.rests.Resize(from.rests.size());
+        for (size_t k = 0; k < from.frames.size(); ++k) {
+            landmarks(from.frames[k].points, &out.frames[k].points);
+            out.frames[k].flags = from.frames[k].flags;
+        }
+        for (size_t k = 0; k < from.rests.size(); ++k)
+            landmarks(from.rests[k], &out.rests[k]);
+        return true;
     }
     case Read::MushStep:
         return put(scalar(1, 0.5f));
