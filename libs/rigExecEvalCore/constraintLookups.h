@@ -470,6 +470,118 @@ WorldUp(Host &host, size_t w, int32_t mode,
     return true;
 }
 
+/// \p ch at kMatchChannelStride doubles from \p v, as the match ops read
+/// them.
+inline void
+PackMatchChannels(const RigExecIkFkMatchChannels &ch, double *v)
+{
+    for (int k = 0; k < 3; ++k) {
+        v[k] = ch.t[k];
+        v[3 + k] = ch.s[k];
+        v[6 + k] = ch.r[k];
+        v[10 + k] = ch.sign[k];
+        v[15 + k] = double(ch.order[k]);
+    }
+    v[9] = ch.spin;
+    v[13] = ch.units;
+}
+
+} // namespace constraint_lookups
+
+namespace compose_lookups {
+
+using constraint_lookups::Elements;
+using constraint_lookups::Put;
+using constraint_lookups::ToStd;
+
+/// Input \p read (OpComposeRead) of slot \p slot's compose ops, from the
+/// tables \p inputs holds this run.
+template <class Math, class Inputs>
+bool
+LookUpComposeInput(const Inputs &inputs, size_t slot, uint8_t read,
+                   const RigExecTypeDesc &type, void *value)
+{
+    using R = OpComposeRead;
+    if (R(read) == R::ParentPosed) {
+        typename Math::Mat4 m = Math::Identity4();
+        const int parent = inputs.parent(slot);
+        return parent >= 0 && inputs.posedMatrix(size_t(parent), &m) &&
+               Put(type, value, ToStd<Math>(m));
+    }
+    if (R(read) == R::MatchChannels) {
+        RigExecIkFkMatchChannels ch;
+        double *out = nullptr;
+        if (!inputs.matchChannels(slot, &ch) ||
+            !Elements(type, value, constraint_lookups::kMatchChannelStride,
+                      &out))
+            return false;
+        constraint_lookups::PackMatchChannels(ch, out);
+        return true;
+    }
+    PoseSlotComposeT<Math> view;
+    if (!inputs.slotCompose(slot, &view))
+        return false;
+    switch (R(read)) {
+    case R::Avars: {
+        double *out = nullptr;
+        if (!Elements(type, value, 11, &out))
+            return false;
+        std::copy(view.avars11, view.avars11 + 11, out);
+        return true;
+    }
+    case R::RotOrder:
+        return Put(type, value,
+                   uint32_t(RigExecRotOrderCode(view.rotOrder.data(),
+                                                view.rotOrder.size())));
+    case R::RotationSign:
+        return Put(type, value, uint32_t(view.rotationSign));
+    case R::PosedAuthored:
+        return Put(type, value, uint8_t(view.posedAuthored ? 1 : 0));
+    case R::PosedAuthoredMatrix:
+        return Put(type, value, ToStd<Math>(*view.posedAuthoredM));
+    case R::PosedDefault:
+        return Put(type, value, ToStd<Math>(*view.posedD));
+    case R::ParentDefaultInverse:
+        return Put(type, value, ToStd<Math>(*view.parentDinv));
+    case R::ParentSpace:
+        return Put(type, value, ToStd<Math>(*view.parentSpaceM));
+    case R::ParentSpaceAuthored:
+        return Put(type, value, uint8_t(view.parentSpaceAuthored ? 1 : 0));
+    default:
+        return false;
+    }
+}
+
+/// Input \p read (OpSwitchRead) of space switch \p sw, from the tables
+/// \p inputs holds this run.
+template <class Math, class Inputs>
+bool
+LookUpSwitchInput(const Inputs &inputs, size_t sw, uint8_t read,
+                  const RigExecTypeDesc &type, void *value)
+{
+    using R = OpSwitchRead;
+    if (R(read) == R::Active)
+        return Put(type, value, inputs.switchActive(sw));
+    typename Math::Mat4 m = Math::Identity4();
+    if (R(read) != R::SourceDefaults && R(read) != R::SourcePosed)
+        return inputs.switchMatrix(sw, R(read), 0, &m) &&
+               Put(type, value, ToStd<Math>(m));
+    const size_t count = inputs.switchSourceCount(sw);
+    rigExecStd::Mat4d *out = nullptr;
+    if (!Elements(type, value, count, &out))
+        return false;
+    for (size_t k = 0; k < count; ++k) {
+        if (!inputs.switchMatrix(sw, R(read), k, &m))
+            return false;
+        out[k] = ToStd<Math>(m);
+    }
+    return true;
+}
+
+} // namespace compose_lookups
+
+namespace constraint_lookups {
+
 } // namespace constraint_lookups
 
 /// Resolves constraint lookup \p lookup (OpConstraintLookupSource) of
@@ -762,16 +874,7 @@ LookUpConstraint(Host &host, ConstraintStepCache &cache, const OpLookup &lookup,
                                                         &finRead) ||
                     slot < 0 || !host.inputs().matchChannels(size_t(slot), &ch))
                     return Fail(error, "names an incomplete IK/FK match");
-                double *v = out + i * kMatchChannelStride;
-                for (int k = 0; k < 3; ++k) {
-                    v[k] = ch.t[k];
-                    v[3 + k] = ch.s[k];
-                    v[6 + k] = ch.r[k];
-                    v[10 + k] = ch.sign[k];
-                    v[15 + k] = double(ch.order[k]);
-                }
-                v[9] = ch.spin;
-                v[13] = ch.units;
+                PackMatchChannels(ch, out + i * kMatchChannelStride);
             }
             return true;
         }
@@ -782,47 +885,52 @@ LookUpConstraint(Host &host, ConstraintStepCache &cache, const OpLookup &lookup,
         if (r == uint8_t(M::SpacePosed))
             return Put(type, value, cache.spacePosed) || bad();
         uint32_t mode = 0;
-        const RigExecSpaceSwitchInputsT<typename Math::Mat4> *pole =
-            host.inputs().matchPoleSwitch(w, &mode);
+        const int pole = host.inputs().matchPoleSwitch(w, &mode);
         if (r == uint8_t(M::PoleMode))
             return Put(type, value, mode) || bad();
-        const auto matrix = [&](const typename Math::Mat4 *m) {
-            return Put(type, value,
-                       m ? ToStd<Math>(*m) : rigExecStd::Mat4d(1.0)) ||
-                   bad();
-        };
-        const auto sources = [&](bool posed) {
-            const size_t count = pole ? pole->sources.size() : 0;
-            rigExecStd::Mat4d *out = nullptr;
-            if (!Elements(type, value, count, &out))
-                return bad();
-            for (size_t k = 0; k < count; ++k)
-                out[k] = ToStd<Math>(posed ? pole->sources[k].posedSpace
-                                           : pole->sources[k].defaultSpace);
-            return true;
-        };
+        using S = OpSwitchRead;
+        S read = S::Active;
         switch (M(r)) {
         case M::PolePosedDefault:
-            return matrix(pole ? &pole->posedDefault : nullptr);
+            read = S::PosedDefault;
+            break;
         case M::PoleParentDefaultInverse:
-            return matrix(pole ? &pole->parentDefaultInverse : nullptr);
+            read = S::ParentDefaultInverse;
+            break;
         case M::PoleParentPosed:
-            return matrix(pole ? &pole->parentPosed : nullptr);
+            read = S::ParentPosed;
+            break;
         case M::PoleParentDefault:
-            return matrix(pole ? &pole->parentDefault : nullptr);
+            read = S::ParentDefault;
+            break;
         case M::PoleSpaceDefault:
-            return matrix(pole ? &pole->spaceDefault : nullptr);
+            read = S::SpaceDefault;
+            break;
         case M::PoleSpacePosed:
-            return matrix(pole ? &pole->spacePosed : nullptr);
+            read = S::SpacePosed;
+            break;
         case M::PoleSourceDefaults:
-            return sources(false);
+            read = S::SourceDefaults;
+            break;
         case M::PoleSourcePosed:
-            return sources(true);
+            read = S::SourcePosed;
+            break;
         case M::PoleActive:
-            return Put(type, value, pole ? pole->active : 0.0) || bad();
+            break;
         default:
             return bad();
         }
+        if (pole >= 0)
+            return compose_lookups::LookUpSwitchInput<Math>(
+                       host.inputs(), size_t(pole), uint8_t(read), type,
+                       value) ||
+                   bad();
+        if (read == S::Active)
+            return Put(type, value, 0.0) || bad();
+        rigExecStd::Mat4d *none = nullptr;
+        if (read == S::SourceDefaults || read == S::SourcePosed)
+            return Elements(type, value, 0, &none) || bad();
+        return Put(type, value, rigExecStd::Mat4d(1.0)) || bad();
     }
     case L::ConstraintDeltaBase: {
         const int d = facts.deltaBase;

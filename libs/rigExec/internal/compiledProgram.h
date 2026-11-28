@@ -2053,11 +2053,10 @@ struct RigExecBakedSpaceSwitch {
     bool affectRotation[3] = {true, true, true};
     bool affectScale[3] = {true, true, true};
     RigExecSpaceSwitchRecord kernelRecord;
-    RigExecSpaceSwitchInputs kernelInputs;
     /// This run's space match (spaceMatchKernel.h): per source index,
     /// the control's tx ty tz rx ry rz that keep it where it is with
     /// that space selected; published as `<control>.spaces:matchValues`.
-    /// Written only by this switch's compose.
+    /// Written only by this switch's SpaceMatch node.
     std::vector<double> matchValues;
     bool matchValid = false;
 };

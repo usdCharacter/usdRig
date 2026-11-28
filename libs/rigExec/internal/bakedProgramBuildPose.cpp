@@ -463,7 +463,6 @@ RigExecBakedProgram::_BuildPoseInterpolators(_BuildAttempt &build)
             out.activeInput = ctx.Bind<double>(
                 active.GetPrim(), active.GetName(), captured.activeFallback);
         }
-        out.kernelInputs.sources.resize(out.sourceSlots.size());
         B.spaceSwitchBySlot[size_t(out.slot)] = int(B.spaceSwitches.size());
         B.spaceSwitches.push_back(std::move(out));
     }

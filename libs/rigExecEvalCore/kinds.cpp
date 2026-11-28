@@ -4,8 +4,6 @@ namespace rigExec {
 namespace eval {
 
 // The ordinals the shared contract names, pinned against the schema.
-static_assert(static_cast<uint8_t>(fb::StepKind::ComposeSubtree) == 0,
-              "ComposeSubtree is ordinal 0");
 static_assert(static_cast<uint8_t>(fb::StepKind::SnapshotFinals) == 8,
               "the reserved ordinal is 8");
 static_assert(static_cast<uint8_t>(fb::StepKind::ReservedProviderMatrix) == 7,

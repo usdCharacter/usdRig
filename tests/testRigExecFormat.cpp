@@ -517,6 +517,59 @@ _RestStep(RigExecWireFile &f, uint32_t group)
     return step;
 }
 
+// A ComposeSlot op node of slot \p slot (lookups 45 on input ports equal to
+// their read, its base and posed matrix into targets 46 and 47), and the
+// OpNode step that runs it.
+fb::RigExecWireStep
+_ComposeStep(RigExecWireFile &f, uint32_t slot)
+{
+    if (!f.opGraph)
+        f.opGraph = std::make_unique<fb::RigExecWireOpGraph>();
+    uint32_t entry = 0;
+    while (entry < f.manifest->coreOps.size() &&
+           f.manifest->coreOps[entry]->name != "ComposeSlot")
+        ++entry;
+    if (entry == f.manifest->coreOps.size()) {
+        auto added = std::make_unique<fb::RigExecWireManifestEntry>();
+        added->nameSpace = "rig";
+        added->name = "ComposeSlot";
+        added->version = 1;
+        f.manifest->coreOps.push_back(std::move(added));
+    }
+    auto op = std::make_unique<fb::RigExecWireOpNode>();
+    op->op = entry;
+    const uint32_t reads =
+        slot < f.slotMeta->parent.size() && f.slotMeta->parent[slot] >= 0 ? 10
+                                                                          : 9;
+    for (uint32_t read = 0; read < reads; ++read) {
+        auto in = std::make_unique<fb::RigExecWireOpNodeInput>();
+        in->port = read;
+        in->host = 4;
+        in->object = uint32_t(f.opGraph->lookups.size());
+        op->inputs.push_back(std::move(in));
+        auto lookup = std::make_unique<fb::RigExecWireOpLookup>();
+        lookup->source = 45;
+        lookup->object = slot;
+        lookup->part = -1;
+        lookup->read = uint8_t(read);
+        f.opGraph->lookups.push_back(std::move(lookup));
+    }
+    const uint32_t node = uint32_t(f.opGraph->nodes.size());
+    f.opGraph->nodes.push_back(std::move(op));
+    for (uint32_t port = 10; port <= 11; ++port) {
+        auto output = std::make_unique<fb::RigExecWireOpHostOutput>();
+        output->node = node;
+        output->port = port;
+        output->target = uint8_t(port == 10 ? 46 : 47);
+        output->object = slot;
+        f.opGraph->hostOutputs.push_back(std::move(output));
+    }
+    fb::RigExecWireStep step;
+    step.kind = fb::StepKind::OpNode;
+    step.object = int32_t(node);
+    return step;
+}
+
 // A LadderCompose op node of compose group \p group (lookups 44 on input
 // ports equal to their read, its nine outputs into target 44), and the
 // OpNode step that runs it.
@@ -823,9 +876,10 @@ _RichFileBody()
     c.rotationSign = {5};
 
     // One step in one cluster.
+    // Its compose node is added with the fixture heads.
     fb::RigExecWireStep step;
-    step.kind = fb::StepKind::ComposeSubtree;
-    step.object = 0;
+    step.kind = fb::StepKind::OpNode;
+    step.object = -2;
     step.cluster = 0;
     step.reads = {fb::SlotRange(fb::SlotDomain::Avars, 0, 1)};
     step.writes = {fb::SlotRange(fb::SlotDomain::PoseFin, 0, 1)};
@@ -1273,9 +1327,11 @@ _AddFixtureHeads(RigExecWireFile &f)
         heads.push_back(std::move(rest));
         heads.push_back(std::move(ladder));
         for (auto &step : f.steps) {
-            if (step.kind == fb::StepKind::ComposeSubtree)
-                step.reads.push_back(fb::SlotRange(fb::SlotDomain::Ladder,
-                                                   group.begin, group.end));
+            if (step.kind != fb::StepKind::OpNode || step.object != -2)
+                continue;
+            step.object = _ComposeStep(f, uint32_t(group.begin)).object;
+            step.reads.push_back(
+                fb::SlotRange(fb::SlotDomain::Ladder, group.begin, group.end));
         }
     }
     // Actual raw avar producers precede fixture region consumers.
@@ -3505,7 +3561,7 @@ TestStepLabels()
     // The rich file's compose step names a group the file does not hold.
     const RigExecWireFile rich = _RichFile();
     CHECK(RigExecFormatStepLabel(rich, _RegionBegin(rich)) ==
-          "ComposeSubtree /Rig/Ctl");
+          "OpNode /Rig/Ctl");
     CHECK(RigExecFormatStepLabel(rich, _RegionBegin(rich) + 1) ==
           std::to_string(_RegionBegin(rich) + 1));
     const RigExecWireFile volume = _VolumeFile();
@@ -3517,6 +3573,7 @@ TestStepLabels()
         [&](const char *want,
             const std::function<void(RigExecWireFile &)> &mutate) {
             RigExecWireFile file = _Copy(rich);
+            _RegionStep(file, 0).object = 0;
             mutate(file);
             const std::string got =
                 RigExecFormatStepLabel(file, _RegionBegin(file));
@@ -3530,16 +3587,6 @@ TestStepLabels()
     label("ReservedVolumePlacements 0", [](RigExecWireFile &f) {
         _RegionStep(f, 0).kind = StepKind::ReservedVolumePlacements;
         _RegionStep(f, 0).object = 0;
-    });
-    const auto group = [](RigExecWireFile &f) {
-        f.pose->composeGroups.resize(1);
-        f.pose->composeGroups[0].begin = 0;
-        f.pose->composeGroups[0].end = 1;
-    };
-    label("ComposeSubtree /Rig/Ctl", group);
-    label("ComposeSubtree 7", [&group](RigExecWireFile &f) {
-        group(f);
-        _RegionStep(f, 0).object = 7;
     });
     label("Solve /Rig/Ctl", [](RigExecWireFile &f) {
         _RegionStep(f, 0).kind = StepKind::ReservedSolve;
@@ -4102,8 +4149,8 @@ TestPhaseTables()
                    fb::SlotRange(fb::SlotDomain::FrameMatrix, 0, 2)};
            }));
     expect("two composes of one version",
-           "step 3 (ComposeSubtree /Rig/Ctl) writes PoseFin version 0, which "
-           "step 0 (ComposeSubtree /Rig/Ctl) writes too",
+           "step 3 (OpNode /Rig/Ctl) writes PoseFin version 0, which "
+           "step 0 (OpNode /Rig/Ctl) writes too",
            record([](F &f) {
                fb::RigExecWireStep again = _RegionStep(f, 0);
                again.overrideInputs.clear();
@@ -7082,13 +7129,8 @@ TestSolverSemanticMetadataRefusals()
     reject(std::move(wrongOwner),
            "invalid or duplicate canonical Solve identity");
     auto wrongBody = _RichFile();
-    const auto body = std::find_if(
-        wrongBody.steps.begin(), wrongBody.steps.end(), [](const auto &step) {
-            return step.kind == fb::StepKind::ComposeSubtree;
-        });
-    CHECK(body != wrongBody.steps.end());
-    if (body != wrongBody.steps.end())
-        body->semanticPredecessorKeys = {"/Unrelated/category:1/solver"};
+    _RegionStep(wrongBody, 0).semanticPredecessorKeys = {
+        "/Unrelated/category:1/solver"};
     reject(std::move(wrongBody), "semantic prerequisites on a non-Solve body");
 }
 

@@ -1242,6 +1242,11 @@ enum class RigExecBakedOpFamily : uint8_t {
     RestCompose,
     /// A compose group's ladder through LadderCompose: object the group.
     LadderCompose,
+    /// One op node of compose group `object`'s first pose: part -1 the one
+    /// that stores it, 0 its compose when an auto clavicle shifts it, 1 its
+    /// space match, 2 its auto clavicle and 3 + k its clavicle's k-th
+    /// recompose.
+    Compose,
 };
 
 /// Where an op node's step comes from: its family, that family's object and
@@ -3126,6 +3131,14 @@ bool RigExecBakedStoreCompose(RigExecBakedProgramImpl &B,
                               RigExecBakedStep *step,
                               const eval::OpHostOutput &output,
                               const void *value, std::string *error);
+/// How many op nodes compose group \p g runs as, and node \p n's origin
+/// part (RigExecBakedOpFamily::Compose).
+size_t RigExecBakedComposeNodeCount(const RigExecBakedProgramImpl &B, size_t g);
+int RigExecBakedComposeNodePart(const RigExecBakedProgramImpl &B, size_t g,
+                                size_t n);
+/// The compose group a Compose family op step runs, or -1.
+int RigExecBakedComposeGroupOf(const RigExecBakedProgramImpl &B,
+                               const RigExecBakedStep &step);
 /// The solver a Solve step or a solver op node runs, or -1.
 int RigExecBakedSolverOf(const RigExecBakedProgramImpl &B,
                          const RigExecBakedStep &step);
@@ -3949,11 +3962,6 @@ bool RigExecBakedCloneOpState(const RigExecBakedProgramImpl &source,
 bool RigExecBakedOpValueVersion(const RigExecBakedProgramImpl &program,
                                 RigExecBakedSlotDomain domain, uint32_t slot,
                                 uint64_t *version);
-
-/// Runs one pose step. Never touches the pose: everything it produces goes
-/// into \p step.
-void RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
-                             RigExecBakedStep *step, UsdTimeCode time);
 
 /// Runs one geometry step, under the same rule.
 void RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
@@ -4959,15 +4967,7 @@ struct RigExecIkFkMatchChannels;
 void RigExecBakedMatchChannelsOf(const RigExecBakedProgramImpl &B, int slot,
                                  RigExecIkFkMatchChannels *out);
 
-/// Space matching (bakedSpaces.cpp): \p sw's matchValues for the control in
-/// \p slot, which the switch just composed onto \p posed from \p input,
-/// with a refusal's diagnostic appended to \p diagnostics, and the
-/// publication of every switch's values into \p pose.
-void RigExecBakedRunSpaceMatch(const RigExecBakedProgramImpl &B,
-                               RigExecBakedProgramImpl::SpaceSwitch &sw,
-                               int slot, const RigExecSpaceSwitchInputs &input,
-                               const RigExecPointFrame &posed,
-                               std::vector<std::string> *diagnostics);
+/// Every space switch's match values (bakedSpaces.cpp), into \p pose.
 void RigExecBakedPresentSpaceMatches(const RigExecBakedProgramImpl &B,
                                      RigExecRigPose *pose);
 

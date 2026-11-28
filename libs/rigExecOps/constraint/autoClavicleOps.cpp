@@ -161,6 +161,26 @@ AutoClavicleOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         f.limbRestLower = OriginDistance((*rests)[1], (*rests)[2]) +
                           InOr(io, AutoClavicleLowerOffset(), 0.0);
     }
+    const auto finite = [](const double *m) {
+        for (int i = 0; m && i < 16; ++i)
+            if (!std::isfinite(m[i]))
+                return false;
+        return true;
+    };
+    const double *const frames[] = {
+        f.targetPosed,   f.pivotPosed,   f.anchorPosed,  f.anchorDefault,
+        f.fkPosed,       f.fkDefault[0], f.fkDefault[1], f.fkDefault[2],
+        f.ikTargetPosed, f.polePosed};
+    for (const double *frame : frames)
+        if (!finite(frame))
+            return Fail(error, "AutoClavicle",
+                        "has no usable frame for its limb");
+    if (p.hasLimb)
+        for (size_t i = 0; i < 3; ++i)
+            if (!finite(Rows(&(
+                    *In<RigExecArray<Mat4d>>(io, AutoClavicleLimbRests()))[i])))
+                return Fail(error, "AutoClavicle",
+                            "has no usable frame for its limb");
     double delta[3];
     rigExec::RigExecAutoClavicleShift(p.constants, f, delta);
     Out<Vec3d>(io, AutoClavicleDelta()) = Vec3d(delta[0], delta[1], delta[2]);

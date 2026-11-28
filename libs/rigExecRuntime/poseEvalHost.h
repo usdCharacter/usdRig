@@ -5,6 +5,7 @@
 
 #include "poseInternal.h"
 #include "poseMath.h"
+#include "rigExecEvalCore/opSteps.h"
 #include "rigExecEvalCore/pose.h"
 #include "rigExecMath/rangeRunner.h"
 
@@ -81,34 +82,11 @@ public:
         return true;
     }
 
-    size_t composeGroupCount() const
-    {
-        return _program->poses->composeGroups.size();
-    }
-
-    void composeGroupRange(size_t object, int *begin, int *end) const
-    {
-        const auto &group = _program->poses->composeGroups[object];
-        *begin = group.begin;
-        *end = group.end;
-    }
-
     bool isPoseSlot(size_t slot) const
     {
         const auto &meta = *_program->slotMeta;
         return slot < meta.slotKind.size() &&
                meta.slotKind[slot] == RigExecWireSlotKind::FirstFramePose;
-    }
-
-    bool composeSlotBounds(size_t slot) const
-    {
-        const auto &meta = *_program->slotMeta;
-        const RrStore &store = _program->store;
-        const RrPoseScratch *scratch =
-            runtimePoseDetail::_RrScratch(const_cast<RrProgram *>(_program));
-        return slot < meta.slotKind.size() && slot < store.base.size() &&
-               slot < store.fin.size() && slot < store.posedM.size() &&
-               slot < scratch->restM.size();
     }
 
     bool providerActive(size_t slot) const
@@ -233,14 +211,6 @@ public:
         }
         *out = tables[slot];
         return true;
-    }
-
-    void baseFrame(size_t slot, std::array<RrVec3d, 4> *points,
-                   unsigned *flags) const
-    {
-        const RrPointFrame &frame = _program->store.base[slot];
-        *points = frame.points;
-        *flags = frame.flags;
     }
 
     size_t commitObjectCount() const
@@ -399,8 +369,104 @@ public:
         return true;
     }
 
-    const RigExecSpaceSwitchInputsT<RrMat4d> *
-    matchPoleSwitch(size_t object, uint32_t *mode) const
+    /// Space switch \p sw's input \p read (eval::OpSwitchRead, a matrix) as
+    /// its compose reads it, for the source reads source \p k's; a world
+    /// source reads the identity.
+    bool switchMatrix(size_t sw, eval::OpSwitchRead read, size_t k,
+                      RrMat4d *out) const
+    {
+        using R = eval::OpSwitchRead;
+        const auto &switches = _program->poses->spaceSwitches;
+        if (sw >= switches.size())
+            return false;
+        const RigExecWireSpaceSwitch &s = switches[sw];
+        const RrStore &store = _program->store;
+        const RrPoseScratch *scratch = _RrScratch();
+        const auto frame = [&](const RigExecWireFrameVersion *v) {
+            if (!v)
+                return false;
+            if (v->context >= 0) {
+                if (size_t(v->context) >= store.switchFrames.size())
+                    return false;
+                *out = store.switchFrames[size_t(v->context)];
+                return true;
+            }
+            if (!v->recompose.empty())
+                return false;
+            if (v->anchor < 0) {
+                *out = RrMat4d(1.0);
+                return true;
+            }
+            if (size_t(v->anchor) >= store.posedM.size())
+                return false;
+            *out = store.posedM[size_t(v->anchor)];
+            return true;
+        };
+        const auto table = [&](const std::vector<RrMat4d> &t, int slot) {
+            if (slot < 0 || size_t(slot) >= t.size())
+                return false;
+            *out = t[size_t(slot)];
+            return true;
+        };
+        switch (read) {
+        case R::PosedDefault:
+            return table(scratch->posedD, s.slot);
+        case R::ParentDefaultInverse:
+            return table(scratch->parentDinv, s.slot);
+        case R::ParentPosed:
+            return frame(s.parentRead.get());
+        case R::ParentDefault: {
+            const int up = s.slot >= 0 ? parent(size_t(s.slot)) : -1;
+            if (up < 0) {
+                *out = RrMat4d(1.0);
+                return true;
+            }
+            return table(scratch->defaultRoundTrip, up);
+        }
+        case R::SpaceDefault:
+            return table(scratch->defaultRoundTrip, s.spaceSlot);
+        case R::SpacePosed:
+            return s.spaceSlot >= 0 && frame(s.spaceRead.get());
+        case R::SourceDefaults:
+        case R::SourcePosed: {
+            if (k >= s.sourceSlots.size() || k >= s.sourceReads.size())
+                return false;
+            const int source = s.sourceSlots[k];
+            if (source < 0) {
+                *out = RrMat4d(1.0);
+                return true;
+            }
+            if (read == R::SourcePosed)
+                return frame(&s.sourceReads[k]);
+            return table(scratch->defaultRoundTrip, source);
+        }
+        case R::Active:
+            break;
+        }
+        return false;
+    }
+
+    /// Space switch \p sw's selected space, a label as its index.
+    double switchActive(size_t sw) const
+    {
+        const RigExecWireSpaceSwitch &s = _program->poses->spaceSwitches[sw];
+        const RrInputValue selector = _program->ReadSpaceSwitch(sw);
+        if (!s.tokenIndex)
+            return selector.f64;
+        const std::string text = _program->TextOrEmpty(selector.token);
+        const auto found = std::find(s.labels.begin(), s.labels.end(), text);
+        return found != s.labels.end() ? double(found - s.labels.begin()) : 0.0;
+    }
+
+    size_t switchSourceCount(size_t sw) const
+    {
+        const auto &switches = _program->poses->spaceSwitches;
+        return sw < switches.size() ? switches[sw].sourceSlots.size() : 0;
+    }
+
+    /// The space switch of the pole IK/FK match constraint commit
+    /// \p object moves, or -1; \p mode its eval::OpIkFkMatchRead PoleMode.
+    int matchPoleSwitch(size_t object, uint32_t *mode) const
     {
         const size_t ci = size_t(_program->poses->walkSteps[object].index);
         const RigExecWireConstraint &c = _program->poses->constraints[ci];
@@ -408,16 +474,14 @@ public:
         const int pole = c.sources.size() > 6 ? c.sources[6] : -1;
         const bool switched =
             c.matchPoleSwitch >= 0 &&
-            size_t(c.matchPoleSwitch) < scratch->switchInputs.size();
+            size_t(c.matchPoleSwitch) < _program->poses->spaceSwitches.size();
         *mode = c.matchPoleParentRides ? 2u : 0u;
         if (switched && pole >= 0 &&
             size_t(pole) < scratch->posedAuthored.size() &&
             !scratch->posedAuthored[size_t(pole)])
             *mode = 1u;
-        return switched ? &scratch->switchInputs[size_t(c.matchPoleSwitch)]
-                        : nullptr;
+        return switched ? c.matchPoleSwitch : -1;
     }
-
     eval::PoseIkChainView ikChainView(size_t object) const
     {
         const size_t ci = size_t(_program->poses->walkSteps[object].index);
@@ -984,30 +1048,6 @@ class RrPoseState {
 public:
     explicit RrPoseState(RrProgram *program) : _program(program)
     {
-    }
-
-    void beforeSlot(eval::StepKind kind, int begin, int i)
-    {
-        (void)kind;
-        (void)begin;
-        (void)i;
-    }
-
-    void writeBase(size_t slot, const std::array<RrVec3d, 4> &points,
-                   unsigned flags)
-    {
-        _program->store.base[slot] = RrPoseMath::MakeFrame(points, flags);
-    }
-
-    void writeFin(size_t slot, const std::array<RrVec3d, 4> &points,
-                  unsigned flags)
-    {
-        _program->store.fin[slot] = RrPoseMath::MakeFrame(points, flags);
-    }
-
-    void writePosedM(size_t slot, const RrMat4d &matrix)
-    {
-        _program->store.posedM[slot] = matrix;
     }
 
     eval::PoseCommitState commitState(size_t object)

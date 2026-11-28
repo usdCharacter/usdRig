@@ -4505,53 +4505,6 @@ TestASwitchCycleIsDetectedNotEmitted()
                   std::isnan(B.posedM[1][3][0]));
         }
     }
-    {
-        // A real compose descendant must inherit an excluded parent's
-        // unavailable matrix on both first and held generations.
-        RigExecBakedProgramImpl B;
-        B.posedM.assign(3, GfMatrix4d(1));
-        B.base.resize(3);
-        B.fin.resize(3);
-        B.slotKind.assign(3, RigExecBakedSlotKind::FirstFramePose);
-        B.parent = {-1, -1, 0};
-        B.noScaleAvars.assign(3, 0);
-        B.posedAuthored.assign(3, 0);
-        B.posedAuthoredM.assign(3, GfMatrix4d(1));
-        B.parentSpaceAuthored.assign(3, 0);
-        B.parentSpaceM.assign(3, GfMatrix4d(1));
-        B.posedD.assign(3, GfMatrix4d(1));
-        B.parentDinv.assign(3, GfMatrix4d(1));
-        B.rotOrder.assign(3, TfToken("XYZ"));
-        B.avars.assign(33, 0);
-        for (size_t i = 0; i < 3; ++i) {
-            for (size_t k = 3; k < 6; ++k)
-                B.avars[i * 11 + k] = 1;
-            B.avars[i * 11 + 10] = 1;
-        }
-        B.composeGroups.push_back({2, 3, {0}});
-        B.steps.push_back(HandStep({RigExecBakedOne(D::PosedM, 1)},
-                                   {RigExecBakedOne(D::PosedM, 0)}));
-        B.steps.push_back(HandStep({RigExecBakedOne(D::PosedM, 0)},
-                                   {RigExecBakedOne(D::PosedM, 1)}));
-        auto child = HandStep({RigExecBakedOne(D::PosedM, 0)},
-                              {RigExecBakedOne(D::PoseBase, 2),
-                               RigExecBakedOne(D::PoseFin, 2),
-                               RigExecBakedOne(D::PosedM, 2)});
-        child.kind = RigExecBakedStepKind::ComposeSubtree;
-        child.object = 0;
-        B.steps.push_back(child);
-        CHECK(ScheduleByHand(&B));
-        CHECK(B.excludedSteps.size() == 2 && B.steps.size() == 1);
-        for (int visit = 0; visit < 2; ++visit) {
-            B.posedM[0] = GfMatrix4d(1);
-            B.posedM[1] = GfMatrix4d(1);
-            CHECK(RigExecBakedExecuteOpGraph(&B, UsdTimeCode(1), false));
-            CHECK(std::isnan(B.posedM[0][3][0]));
-            CHECK(!B.base[2].IsValid() || B.base[2].IsDegenerate());
-            CHECK(!B.fin[2].IsValid() || B.fin[2].IsDegenerate());
-            CHECK(std::isnan(B.posedM[2][3][0]));
-        }
-    }
 }
 
 /// Every reader of a chain's running points names exactly the version it

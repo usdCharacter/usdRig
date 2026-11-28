@@ -118,9 +118,9 @@ enum SlotDomain : ubyte { Avars = 0, PoseBase, PoseFin, PosedM, FinalMatrix,
 
 /// RigExecBakedStepKind, in the same order. SnapshotFinals (8) is reserved:
 /// never written, and Open refuses a file that holds one.
-enum StepKind : ubyte { ComposeSubtree = 0,
+enum StepKind : ubyte {
   /// Reserved. Open refuses it.
-  ReservedSolve,
+  ReservedSolve = 1,
   /// Reserved. Open refuses it.
   ReservedSolverCommit,
   /// Reserved. Open refuses it.
@@ -469,7 +469,7 @@ table Constants {
 /// One step: identity, declared ranges, edges, dirtiness, schedule. Labels
 /// are rebuilt from the tables (RigExecFormatStepLabel).
 table Step {
-  kind: StepKind;
+  kind: StepKind = OpNode;
   /// What the step works on, by kind: a compose group, a solver, a commit,
   /// a pose interpolator, a revision id, a chain, or a
   /// derived id.

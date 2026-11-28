@@ -1065,7 +1065,7 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
     if (stepIndex >= program->steps->size())
         return false;
     const auto &step = (*program->steps)[stepIndex];
-    if (step.kind == RigExecWireStepKind::ComposeSubtree) {
+    if (RrComposeStep(program->inputState, step)) {
         const auto *pose =
             static_cast<const RrPoseScratch *>(program->pose.get());
         if (!pose)
@@ -1342,7 +1342,6 @@ RrEffectiveInputMemo(const RrProgram *program, uint32_t stepIndex,
                 eval::OpSpaceOutputTarget(output->target))
                 return true;
     switch (step.kind) {
-    case RigExecWireStepKind::ComposeSubtree:
     case RigExecWireStepKind::InfluenceFold:
     case RigExecWireStepKind::RevisionChunk:
     case RigExecWireStepKind::RevisionFuse:
@@ -2034,7 +2033,11 @@ RrInputsBindReads(RrProgram *program, std::string *error)
     }
     state.avarNodeSlot.clear();
     state.interpolatorNode.clear();
+    state.composeNode.clear();
     if (file.opGraph) {
+        state.composeNode.resize(file.opGraph->nodes.size());
+        for (size_t n = 0; n < state.composeNode.size(); ++n)
+            state.composeNode[n] = RrReadsComposeLookup(file, n) ? 1 : 0;
         state.avarNodeSlot.assign(file.opGraph->nodes.size(), -1);
         state.interpolatorNode.assign(file.opGraph->nodes.size(), -1);
         for (const auto &output : file.opGraph->hostOutputs) {

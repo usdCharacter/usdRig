@@ -154,10 +154,6 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
     }
     auto scratch = std::make_shared<RrPoseScratch>();
     const RrMat4d identity = _RrIdentity();
-    scratch->switchInputs.resize(poses.spaceSwitches.size());
-    for (size_t i = 0; i < poses.spaceSwitches.size(); ++i)
-        scratch->switchInputs[i].sources.resize(
-            poses.spaceSwitches[i].sourceSlots.size());
     scratch->restM.assign(slots, identity);
     scratch->selfD.assign(slots, identity);
     scratch->posedD.assign(slots, identity);

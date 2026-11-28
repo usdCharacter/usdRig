@@ -916,13 +916,33 @@ ProbeIkFkMatch(const B &b, int walk)
     const int poleSlot = c.sources[6];
     if (c.matchPoleSwitch >= 0 && poleSlot >= 0 &&
         !b.posedAuthored[size_t(poleSlot)]) {
-        const auto &sw = b.spaceSwitches[size_t(c.matchPoleSwitch)];
+        const size_t index = size_t(c.matchPoleSwitch);
+        const auto &sw = b.spaceSwitches[index];
+        using S = eval::OpSwitchRead;
+        RigExecSpaceSwitchInputs &pole = in.poleSwitch;
+        reads.switchMatrix(index, S::PosedDefault, 0, &pole.posedDefault);
+        reads.switchMatrix(index, S::ParentDefaultInverse, 0,
+                           &pole.parentDefaultInverse);
+        reads.switchMatrix(index, S::ParentPosed, 0, &pole.parentPosed);
+        reads.switchMatrix(index, S::ParentDefault, 0, &pole.parentDefault);
+        pole.active = reads.switchActive(index);
+        pole.hasCarry = sw.spaceSlot >= 0;
+        if (pole.hasCarry) {
+            reads.switchMatrix(index, S::SpaceDefault, 0, &pole.spaceDefault);
+            reads.switchMatrix(index, S::SpacePosed, 0, &pole.spacePosed);
+        }
+        pole.sources.resize(sw.sourceSlots.size());
+        for (size_t k = 0; k < sw.sourceSlots.size(); ++k) {
+            pole.sources[k].world = sw.sourceSlots[k] < 0;
+            reads.switchMatrix(index, S::SourceDefaults, k,
+                               &pole.sources[k].defaultSpace);
+            reads.switchMatrix(index, S::SourcePosed, k,
+                               &pole.sources[k].posedSpace);
+            constants.poleWorld.push_back(sw.sourceSlots[k] < 0 ? 1 : 0);
+        }
         in.poleMode = uint32_t(rigExecOps::IkFkPoleMode::Switch);
-        in.poleSwitch = sw.kernelInputs;
         constants.poleRecord = sw.kernelRecord;
-        constants.poleHasCarry = sw.kernelInputs.hasCarry;
-        for (const auto &source : sw.kernelInputs.sources)
-            constants.poleWorld.push_back(source.world ? 1 : 0);
+        constants.poleHasCarry = pole.hasCarry;
         constants.poleSourceRides = c.matchPoleSourceRides;
     } else if (c.matchPoleParentRides) {
         in.poleMode = uint32_t(rigExecOps::IkFkPoleMode::Ride);
@@ -3331,291 +3351,6 @@ ProbeLadderCompose(const B &b, size_t g)
     }
 }
 
-/// What a baked switch read gives: the checkpoint of its context, else the
-/// anchor's posed matrix, else identity.
-GfMatrix4d
-ReadFrameVersion(const B &b, const B::SpaceSwitch::FrameVersion &read)
-{
-    if (read.context >= 0)
-        return b.switchFrames[size_t(read.context)];
-    return read.anchor >= 0 ? b.posedM[size_t(read.anchor)] : GfMatrix4d(1.0);
-}
-
-/// One slot's first pose through ComposeSlot or SwitchedComposeSlot, before
-/// an auto clavicle shifts it. False with \p error where the op failed.
-bool
-ComposeSlotThroughOp(const B &b, const BakedPoseInputs &in, size_t slot,
-                     std::string *kind, rigExecRig::PointFrame *base,
-                     rigExecStd::Mat4d *posedM, std::string *error)
-{
-    using namespace rigExecOps;
-    const bool active = in.providerActive(slot);
-    const bool noScale = b.noScaleAvars[slot] != 0;
-    const auto avars = OpArray(
-        std::vector<double>(&b.avars[slot * 11], &b.avars[slot * 11] + 11));
-    const TfToken &order = b.rotOrder[slot];
-    const uint32_t rotOrder =
-        SpaceCheckpointRotOrderCode(order.GetText(), order.size());
-    const uint32_t sign =
-        slot < b.rotationSign.size() ? b.rotationSign[slot] : 0u;
-    const uint8_t posedAuthored = b.posedAuthored[slot] != 0;
-    const rigExecStd::Mat4d posedAuthoredM = OpMatrix(b.posedAuthoredM[slot]),
-                            posedD = OpMatrix(b.posedD[slot]),
-                            parentDinv = OpMatrix(b.parentDinv[slot]);
-    const int switchIndex =
-        b.spaceSwitchBySlot.empty() ? -1 : b.spaceSwitchBySlot[slot];
-    if (switchIndex >= 0) {
-        *kind = "SwitchedComposeSlot";
-        const auto &sw = b.spaceSwitches[size_t(switchIndex)];
-        SwitchedComposeSlotPayload payload;
-        payload.active = active;
-        payload.noScale = noScale;
-        for (const auto filter : sw.kernelRecord.filters)
-            payload.space.filters.push_back(int(filter));
-        payload.space.twistAxis = OpVector(sw.kernelRecord.twistAxis);
-        payload.space.affectTranslation = sw.kernelRecord.affectTranslation;
-        payload.space.affectRotation = sw.kernelRecord.affectRotation;
-        payload.space.affectScale = sw.kernelRecord.affectScale;
-        payload.space.hasCarry = sw.spaceSlot >= 0;
-        std::vector<rigExecStd::Mat4d> defaults, posed;
-        for (size_t s = 0; s < sw.sourceSlots.size(); ++s) {
-            const int source = sw.sourceSlots[s];
-            payload.space.world.push_back(source < 0);
-            defaults.push_back(OpMatrix(source >= 0
-                                            ? b.defaultRoundTrip[size_t(source)]
-                                            : GfMatrix4d(1.0)));
-            posed.push_back(
-                OpMatrix(source >= 0 ? ReadFrameVersion(b, sw.sourceReads[s])
-                                     : GfMatrix4d(1.0)));
-        }
-        const auto defaultArray = OpArray(defaults),
-                   posedArray = OpArray(posed);
-        const int parent = b.parent[slot];
-        const rigExecStd::Mat4d parentPosed =
-            OpMatrix(ReadFrameVersion(b, sw.parentRead));
-        const rigExecStd::Mat4d parentDefault = OpMatrix(
-            parent >= 0 ? b.defaultRoundTrip[size_t(parent)] : GfMatrix4d(1.0));
-        const double selected = sw.kernelInputs.active;
-        std::vector<const RigExecPortHandle *> ins = {
-            &SwitchedComposeSlotAvars(),
-            &SwitchedComposeSlotRotOrder(),
-            &SwitchedComposeSlotRotationSign(),
-            &SwitchedComposeSlotPosedAuthored(),
-            &SwitchedComposeSlotPosedAuthoredMatrix(),
-            &SwitchedComposeSlotPosedDefault(),
-            &SwitchedComposeSlotParentDefaultInverse(),
-            &SwitchedComposeSlotParentPosed(),
-            &SwitchedComposeSlotParentDefault(),
-            &SwitchedComposeSlotActive(),
-            &SwitchedComposeSlotSourceDefaults(),
-            &SwitchedComposeSlotSourcePosed()};
-        std::vector<const void *> values = {
-            &avars,          &rotOrder, &sign,         &posedAuthored,
-            &posedAuthoredM, &posedD,   &parentDinv,   &parentPosed,
-            &parentDefault,  &selected, &defaultArray, &posedArray};
-        rigExecStd::Mat4d spaceDefault, spacePosed;
-        if (payload.space.hasCarry) {
-            spaceDefault = OpMatrix(b.defaultRoundTrip[size_t(sw.spaceSlot)]);
-            spacePosed = OpMatrix(ReadFrameVersion(b, sw.spaceRead));
-            ins.push_back(&SwitchedComposeSlotSpaceDefault());
-            ins.push_back(&SwitchedComposeSlotSpacePosed());
-            values.push_back(&spaceDefault);
-            values.push_back(&spacePosed);
-        }
-        SpaceNode &node = SpaceNodeFor(
-            "SwitchedComposeSlot/" + g_where.substr(0, g_where.rfind('@')) +
-                "/" + b.paths[slot].GetString(),
-            SwitchedComposeSlot(), &payload, ins,
-            {&SwitchedComposeSlotBase(), &SwitchedComposeSlotPosedMatrix()});
-        if (!RunSpaceNode(node, values, error))
-            return false;
-        *base = SpaceOut<rigExecRig::PointFrame>(node, 0);
-        *posedM = SpaceOut<rigExecStd::Mat4d>(node, 1);
-        return true;
-    }
-    *kind = "ComposeSlot";
-    ComposeSlotPayload payload;
-    payload.active = active;
-    payload.noScale = noScale;
-    const uint8_t parentAuthored = b.parentSpaceAuthored[slot] != 0;
-    const rigExecStd::Mat4d parentM = OpMatrix(b.parentSpaceM[slot]);
-    std::vector<const RigExecPortHandle *> ins = {
-        &ComposeSlotAvars(),
-        &ComposeSlotRotOrder(),
-        &ComposeSlotRotationSign(),
-        &ComposeSlotPosedAuthored(),
-        &ComposeSlotPosedAuthoredMatrix(),
-        &ComposeSlotPosedDefault(),
-        &ComposeSlotParentDefaultInverse(),
-        &ComposeSlotParentSpace(),
-        &ComposeSlotParentSpaceAuthored()};
-    std::vector<const void *> values = {
-        &avars,  &rotOrder,   &sign,    &posedAuthored, &posedAuthoredM,
-        &posedD, &parentDinv, &parentM, &parentAuthored};
-    const int parent = in.parent(slot);
-    rigExecStd::Mat4d parentPosed;
-    if (parent >= 0) {
-        parentPosed = OpMatrix(b.posedM[size_t(parent)]);
-        ins.push_back(&ComposeSlotParentPosed());
-        values.push_back(&parentPosed);
-    }
-    const std::string key = "ComposeSlot/" + std::to_string(payload.active) +
-                            "/" + std::to_string(payload.noScale) + "/" +
-                            std::to_string(parent >= 0);
-    SpaceNode &node =
-        SpaceNodeFor(key, ComposeSlot(), &payload, ins,
-                     {&ComposeSlotBase(), &ComposeSlotPosedMatrix()});
-    if (!RunSpaceNode(node, values, error))
-        return false;
-    *base = SpaceOut<rigExecRig::PointFrame>(node, 0);
-    *posedM = SpaceOut<rigExecStd::Mat4d>(node, 1);
-    return true;
-}
-
-/// An auto clavicle's shift of a composed slot: AutoClavicle on the frames
-/// and scalars its baked run read (the target being the op's composed
-/// PosedMatrix), then ShiftedComposeSlot. False where the baked run passed
-/// its target through for an unusable frame.
-bool
-ShiftSlotThroughOps(const B &b, size_t slot, const rigExecRig::PointFrame &base,
-                    const rigExecStd::Mat4d &posedM,
-                    rigExecRig::PointFrame *shifted,
-                    rigExecStd::Mat4d *shiftedM, bool *moved,
-                    std::string *error)
-{
-    using namespace rigExecOps;
-    const auto &ac = b.autoClavicles[size_t(b.autoClavicleBySlot[slot])];
-    const RigExecBoundAutoClavicle &op = ac.operation;
-    std::array<GfMatrix4d, 13> matrices;
-    for (size_t i = 0; i < op.frames.size(); ++i) {
-        if (op.frames[i] == UINT64_MAX)
-            continue;
-        const auto *frame = ac.values.Read<RigExecPointFrame>(op.frames[i]);
-        if (!frame || !frame->IsValid() || frame->IsDegenerate() ||
-            !RigExecPointsToMatrix(RigExecIdentityLandmarks(), frame->points,
-                                   &matrices[i]))
-            return false;
-    }
-    for (int r = 0; r < 4; ++r)
-        for (int c = 0; c < 4; ++c)
-            matrices[0][r][c] = posedM._mtx[r][c];
-    const auto scalar = [&](size_t index, double fallback) {
-        VtValue value;
-        if (!RigExecReadGraphTypedRead(op.scalars[index], ac.values, &value,
-                                       nullptr))
-            return fallback;
-        if (value.IsHolding<double>())
-            return value.UncheckedGet<double>();
-        if (value.IsHolding<float>())
-            return double(value.UncheckedGet<float>());
-        return fallback;
-    };
-    RigExecAutoClavicleOpInputs in;
-    for (size_t i = 0; i < op.frames.size(); ++i)
-        if (op.frames[i] != UINT64_MAX)
-            in.frames[i] = &matrices[i];
-    in.ikBlend = scalar(0, 1 - op.constants.ikValue);
-    in.amount = scalar(1, 1);
-    in.hasLimb = op.hasLimb;
-    if (op.hasLimb) {
-        in.stretch = scalar(2, 1);
-        in.pin = scalar(3, 0);
-        in.upperScale = scalar(4, 1);
-        in.lowerScale = scalar(5, 1);
-        in.softDistance = scalar(6, 0);
-        in.scaleCalibration = scalar(7, 0);
-        in.twistDegrees = scalar(8, 0);
-        in.upperOffset = scalar(9, 0);
-        in.lowerOffset = scalar(10, 0);
-    }
-    RigExecPoseOpRunner runner;
-    double delta[3] = {0, 0, 0};
-    GfMatrix4d target = matrices[0];
-    if (!RigExecRunAutoClavicleOp(op.constants, in, runner, delta, &target,
-                                  error))
-        return true;
-    const rigExecStd::Vec3d shift(delta[0], delta[1], delta[2]);
-    *moved = delta[0] != 0 || delta[1] != 0 || delta[2] != 0;
-    const rigExecStd::Mat4d targetM = OpMatrix(target);
-    SpaceNode &node = SpaceNodeFor(
-        "ShiftedComposeSlot", ShiftedComposeSlot(), nullptr,
-        {&ShiftedComposeSlotBase(), &ShiftedComposeSlotDelta(),
-         &ShiftedComposeSlotShifted()},
-        {&ShiftedComposeSlotOut(), &ShiftedComposeSlotPosedMatrix()});
-    if (!RunSpaceNode(node, {&base, &shift, &targetM}, error))
-        return true;
-    *shifted = SpaceOut<rigExecRig::PointFrame>(node, 0);
-    *shiftedM = SpaceOut<rigExecStd::Mat4d>(node, 1);
-    return true;
-}
-
-void
-ProbeComposeSlot(const B &b, const RigExecBakedStep &step)
-{
-    const RigExecBakedComposeGroup &group =
-        b.composeGroups[size_t(step.object)];
-    const BakedPoseInputs in(&b);
-    for (int i = group.begin; i < group.end; ++i) {
-        const size_t slot = size_t(i);
-        if (!in.isPoseSlot(slot))
-            continue;
-        const std::string object = b.paths[slot].GetString();
-        std::string kind, error;
-        rigExecRig::PointFrame base;
-        rigExecStd::Mat4d posedM;
-        if (!ComposeSlotThroughOp(b, in, slot, &kind, &base, &posedM, &error)) {
-            OpFailed("Pose", kind, object, false, error);
-            continue;
-        }
-        const bool shifted = slot < b.autoClavicleBySlot.size() &&
-                             b.autoClavicleBySlot[slot] >= 0;
-        std::vector<double> baked, op;
-        if (shifted) {
-            const auto &ac =
-                b.autoClavicles[size_t(b.autoClavicleBySlot[slot])];
-            const auto *composed =
-                ac.values.Read<RigExecPointFrame>(ac.operation.frames[0]);
-            if (!composed) {
-                Unprobed("Pose", "ShiftedComposeSlot", "no composed target");
-                continue;
-            }
-            PutBits(&baked, OpFrame(*composed));
-            PutBits(&op, base);
-            CompareBits("Pose", kind, object, baked, op, false);
-            rigExecRig::PointFrame out;
-            rigExecStd::Mat4d outM;
-            bool moved = false;
-            error.clear();
-            if (!ShiftSlotThroughOps(b, slot, base, posedM, &out, &outM, &moved,
-                                     &error)) {
-                Unprobed("Pose", "ShiftedComposeSlot",
-                         "a clavicle frame is unusable");
-                continue;
-            }
-            if (!error.empty()) {
-                OpFailed("Pose", "ShiftedComposeSlot", object, false, error);
-                continue;
-            }
-            baked.clear();
-            op.clear();
-            PutBits(&baked, OpFrame(b.base[slot]));
-            PutBits(&baked, b.posedM[slot]);
-            PutBits(&op, out);
-            PutBits(&op, outM);
-            CompareBits("Pose",
-                        moved ? "ShiftedComposeSlot moved"
-                              : "ShiftedComposeSlot still",
-                        object, baked, op, false);
-            continue;
-        }
-        PutBits(&baked, OpFrame(b.base[slot]));
-        PutBits(&baked, b.posedM[slot]);
-        PutBits(&op, base);
-        PutBits(&op, posedM);
-        CompareBits("Pose", kind, object, baked, op, false);
-    }
-}
-
 void
 ProbePose(const B &b)
 {
@@ -3637,10 +3372,6 @@ ProbePose(const B &b)
         else if (id.kind == RigExecBakedStepKind::LadderCompose &&
                  id.object >= 0 && size_t(id.object) < b.composeGroups.size())
             ProbeLadderCompose(b, size_t(id.object));
-        else if (step.kind == RigExecBakedStepKind::ComposeSubtree &&
-                 step.object >= 0 &&
-                 size_t(step.object) < b.composeGroups.size())
-            ProbeComposeSlot(b, step);
     }
 }
 
@@ -5001,11 +4732,7 @@ main(int argc, char **argv)
           "Pose/PoseInterpolator Network",
           "Pose/PoseInterpolator Maps",
           "Pose/RestCompose",
-          "Pose/LadderCompose",
-          "Pose/ComposeSlot",
-          "Pose/SwitchedComposeSlot",
-          "Pose/ShiftedComposeSlot moved",
-          "Pose/ShiftedComposeSlot still"}) {
+          "Pose/LadderCompose"}) {
         size_t compared = 0;
         for (const auto &[key, tally] : g_tally)
             if (key.compare(0, std::strlen(family), family) == 0)

@@ -2329,8 +2329,7 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
     }
     for (const size_t g : emission) {
         const RigExecBakedComposeGroup &group = B.composeGroups[g];
-        RigExecBakedStep &step =
-            AddStep(&B, RigExecBakedStepKind::ComposeSubtree, int(g));
+        RigExecBakedStep step;
         step.reads.push_back(RigExecBakedRange(RigExecBakedSlotDomain::Avars,
                                                group.begin, group.end));
         for (const int parent : group.parentSlots) {
@@ -2405,12 +2404,25 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
                 }
             }
         }
-        step.writes.push_back(RigExecBakedRange(
-            RigExecBakedSlotDomain::PoseBase, group.begin, group.end));
-        step.writes.push_back(RigExecBakedRange(RigExecBakedSlotDomain::PoseFin,
-                                                group.begin, group.end));
-        step.writes.push_back(RigExecBakedRange(RigExecBakedSlotDomain::PosedM,
-                                                group.begin, group.end));
+        // Every node of the group declares the group's reads; the one that
+        // stores the first pose writes it.
+        const size_t nodes = RigExecBakedComposeNodeCount(B, g);
+        for (size_t n = 0; n < nodes; ++n) {
+            const int part = RigExecBakedComposeNodePart(B, g, n);
+            RigExecBakedStep &node =
+                AddOriginStep(&B, RigExecBakedOpFamily::Compose,
+                              part < 0 ? RigExecBakedStepKind::ComposeSubtree
+                                       : RigExecBakedStepKind::OpNode,
+                              int(g), part);
+            node.reads = step.reads;
+            if (part >= 0)
+                continue;
+            for (const auto domain : {RigExecBakedSlotDomain::PoseBase,
+                                      RigExecBakedSlotDomain::PoseFin,
+                                      RigExecBakedSlotDomain::PosedM})
+                node.writes.push_back(
+                    RigExecBakedRange(domain, group.begin, group.end));
+        }
     }
 
     B.commits.resize(B.walkSteps.size());
@@ -2767,9 +2779,10 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
     // that says which entry that is comes out of this sweep.
     BindPoseVersions(&B);
     for (auto &step : B.steps) {
-        if (step.kind != RigExecBakedStepKind::ComposeSubtree)
+        const int composeGroup = RigExecBakedComposeGroupOf(B, step);
+        if (composeGroup < 0)
             continue;
-        const auto &group = B.composeGroups[size_t(step.object)];
+        const auto &group = B.composeGroups[size_t(composeGroup)];
         for (const auto &ac : B.autoClavicles) {
             if (ac.slot < group.begin || ac.slot >= group.end)
                 continue;
@@ -3313,13 +3326,14 @@ NoteStepInputs(const RigExecBakedProgramImpl &B,
             break;
         NoteSolverInputs(B.solvers[size_t(solverIndex)], sink);
         break;
-    case RigExecBakedStepKind::ComposeSubtree: {
-        if (step.object < 0 || size_t(step.object) >= B.composeGroups.size())
+    case RigExecBakedStepKind::OpNode: {
+        const int composeGroup = RigExecBakedComposeGroupOf(B, step);
+        if (composeGroup < 0)
             break;
         // A switched slot's active index, so that keying a space dirties
         // the compose group that reads it and only that one.
         const RigExecBakedComposeGroup &group =
-            B.composeGroups[size_t(step.object)];
+            B.composeGroups[size_t(composeGroup)];
         for (int slot = group.begin; slot < group.end; ++slot) {
             const int ac = (size_t(slot) < B.autoClavicleBySlot.size()
                                 ? B.autoClavicleBySlot[size_t(slot)]
@@ -3664,8 +3678,9 @@ RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
                         }
                     }
                 }
-        } else if (step.kind == RigExecBakedStepKind::ComposeSubtree) {
-            const auto &group = B.composeGroups[size_t(step.object)];
+        } else if (const int composeGroup = RigExecBakedComposeGroupOf(B, step);
+                   composeGroup >= 0) {
+            const auto &group = B.composeGroups[size_t(composeGroup)];
             for (int slot = group.begin; slot < group.end; ++slot) {
                 const int sw = B.spaceSwitchBySlot[size_t(slot)];
                 if (sw >= 0)
@@ -4396,6 +4411,12 @@ RigExecBakedRequiredRestReads(const RigExecBakedProgramImpl &B,
     step.kind = identity.kind;
     step.object = identity.object;
     step.part = identity.part;
+    // Every node of a compose group reads the group's tables: a clavicle or
+    // recompose node reads the ladders of frames outside its own slot.
+    if (const int group = RigExecBakedComposeGroupOf(B, source); group >= 0) {
+        step.kind = RigExecBakedStepKind::ComposeSubtree;
+        step.object = group;
+    }
     const int N = int(B.paths.size());
     {
         std::set<uint32_t> rests, ladders;
@@ -4688,82 +4709,6 @@ RigExecBakedRunSolverSources(RigExecBakedProgramImpl *program, UsdTimeCode time)
     }
 }
 
-namespace {
-
-/// Slot \p i's avars as one matrix, the way computations.cpp composes them.
-GfMatrix4d
-_ComposeAvarsOf(const RigExecBakedProgramImpl &B, int i)
-{
-    const double *a = &B.avars[size_t(i) * 11];
-    const double units = a[10];
-    // A volume weight's placement is RIGID: its shape is
-    // inputs:scaleX/Y/Z's alone, so the transform-scale avars are read and
-    // discarded here rather than zeroed at bake -- exec never binds them at
-    // all, and a captured zero would be walked straight past by an override
-    // or an animated channel. The authored-posed:space branch reads no avar
-    // at all, so a volume that takes it discards the scale for free, which
-    // is what exec does with the same rig.
-    const bool noScale = B.noScaleAvars[size_t(i)] != 0;
-    // avars:rotationSign, applied to the avar exactly where computations.cpp
-    // applies it, so a mirrored limb composes the same numbers on both paths.
-    const unsigned sign =
-        size_t(i) < B.rotationSign.size() ? B.rotationSign[size_t(i)] : 0u;
-    const double sx = RigExecRotationSignFromMask(sign, 0);
-    return RigExecBakedComposeAvars(a[0] * units, a[1] * units, a[2] * units,
-                                    noScale ? 1.0 : a[3], noScale ? 1.0 : a[4],
-                                    noScale ? 1.0 : a[5], a[6] * sx,
-                                    a[7] * RigExecRotationSignFromMask(sign, 1),
-                                    a[8] * RigExecRotationSignFromMask(sign, 2),
-                                    a[9] * sx, B.rotOrder[size_t(i)]);
-}
-
-/// The ordinary compose of slot \p i against \p parentPosed, which is what
-/// exec answers for a provider no switch has replaced.
-RigExecPointFrame
-_ComposeUnswitched(const RigExecBakedProgramImpl &B, int i,
-                   const GfMatrix4d &parentPosed)
-{
-    if (B.posedAuthored[size_t(i)]) {
-        // A non-identity authored posed:space is the pose: exec returns its
-        // frame and reads neither the avars nor the parent.
-        return RigExecFrameFromMatrix(B.posedAuthoredM[size_t(i)]);
-    }
-    return RigExecFrameFromMatrix(RigExecComposeUnswitchedPoseMatrix(
-        _ComposeAvarsOf(B, i), B.posedD[size_t(i)], B.parentDinv[size_t(i)],
-        B.parentSpaceAuthored[size_t(i)] ? B.parentSpaceM[size_t(i)]
-                                         : parentPosed));
-}
-
-/// _SpaceFromFrame: an unusable frame selects the NaN sentinel, so the
-/// failure survives into every descendant instead of being scrubbed into a
-/// plausible identity.
-GfMatrix4d
-_SpaceOfFrame(const RigExecPointFrame &frame)
-{
-    GfMatrix4d space(1.0);
-    if (!frame.IsValid() || frame.IsDegenerate() ||
-        !RigExecPointsToMatrix(RigExecIdentityLandmarks(), frame.points,
-                               &space)) {
-        space = GfMatrix4d(1.0);
-        space[3][0] = std::numeric_limits<double>::quiet_NaN();
-    }
-    return space;
-}
-
-/// Reads an explicit composed provider or a separately produced checkpoint.
-/// The consumer performs no recomposition or source walk.
-GfMatrix4d
-_ReadFrameVersion(
-    const RigExecBakedProgramImpl &B,
-    const RigExecBakedProgramImpl::SpaceSwitch::FrameVersion &read)
-{
-    if (read.context >= 0)
-        return B.switchFrames[size_t(read.context)];
-    return read.anchor >= 0 ? B.posedM[size_t(read.anchor)] : GfMatrix4d(1.0);
-}
-
-} // namespace
-
 bool
 RigExecBakedEvalFrameRecord(const RigExecBakedProgramImpl &B,
                             const RigExecBakedFrameRecord &record,
@@ -4781,162 +4726,6 @@ RigExecBakedEvalFrameRecord(const RigExecBakedProgramImpl &B,
     const RigExecPointFrame &rest = B.restFrames[size_t(record.slot)];
     return eval::FrameRecordMatrix<BakedPoseMath>(
         rest.points, rest.flags, frame.points, frame.flags, matrix);
-}
-
-void
-RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
-                        RigExecBakedStep *step, UsdTimeCode time)
-{
-    RigExecBakedProgramImpl &B = *program;
-    // Every per-frame read goes through `rd`: one input's leaf, sampled in
-    // the prologue the way this generation must read it (through the
-    // resolved inputs while an override stands on it, through the pinned
-    // query otherwise).
-    const auto rd = [&B](const auto &input) {
-        return RigExecBakedLeafRead(B, input);
-    };
-
-    switch (step->kind) {
-    case RigExecBakedStepKind::ComposeSubtree: {
-        const RigExecBakedComposeGroup &group =
-            B.composeGroups[size_t(step->object)];
-        BakedPoseHost host(program, step);
-        for (int i = group.begin; i < group.end; ++i) {
-            if (!host.inputs().isPoseSlot(size_t(i))) {
-                // An xform-derived slot is not composed from avars.
-                continue;
-            }
-            host.state().beforeSlot(eval::StepKind::ComposeSubtree, group.begin,
-                                    i);
-            if (!host.inputs().providerActive(size_t(i))) {
-                eval::PublishComposedSlotUnavailable(host, size_t(i));
-                continue;
-            }
-            const int switchIndex = B.spaceSwitchBySlot.empty()
-                                        ? -1
-                                        : B.spaceSwitchBySlot[size_t(i)];
-            if (switchIndex < 0) {
-                const int parent = host.inputs().parent(size_t(i));
-                GfMatrix4d parentPosed(1.0);
-                if (parent >= 0 &&
-                    !host.inputs().posedMatrix(size_t(parent), &parentPosed)) {
-                    step->diagnostics.push_back(
-                        "compose slot " + std::to_string(i) + " names no slot");
-                    continue;
-                }
-                std::array<GfVec3d, 4> points;
-                unsigned flags = 0;
-                if (!eval::ComposeSlotFrame(host, size_t(i), parentPosed,
-                                            &points, &flags)) {
-                    step->diagnostics.push_back(
-                        "compose slot " + std::to_string(i) + " names no slot");
-                    continue;
-                }
-                host.state().writeBase(size_t(i), points, flags);
-            } else if (B.posedAuthored[size_t(i)]) {
-                // A non-identity authored posed:space is the pose: exec
-                // returns its frame and reads neither the avars nor the
-                // parent, so neither does this.
-                B.base[size_t(i)] =
-                    RigExecFrameFromMatrix(B.posedAuthoredM[size_t(i)]);
-            } else {
-                auto &sw = B.spaceSwitches[size_t(switchIndex)];
-                auto &input = sw.kernelInputs;
-                input.avars = _ComposeAvarsOf(B, i);
-                input.posedDefault = B.posedD[size_t(i)];
-                input.parentDefaultInverse = B.parentDinv[size_t(i)];
-                input.parentPosed = _ReadFrameVersion(B, sw.parentRead);
-                input.parentDefault =
-                    B.parent[size_t(i)] >= 0
-                        ? B.defaultRoundTrip[size_t(B.parent[size_t(i)])]
-                        : GfMatrix4d(1.0);
-                input.active = 0.0;
-                if (sw.tokenIndex) {
-                    const TfToken selected = rd(sw.activeTokenInput);
-                    const auto label =
-                        std::find(sw.labels.begin(), sw.labels.end(), selected);
-                    if (label != sw.labels.end())
-                        input.active = double(label - sw.labels.begin());
-                } else
-                    input.active = rd(sw.activeInput);
-                input.hasCarry = sw.spaceSlot >= 0;
-                if (input.hasCarry) {
-                    input.spaceDefault =
-                        B.defaultRoundTrip[size_t(sw.spaceSlot)];
-                    input.spacePosed = _ReadFrameVersion(B, sw.spaceRead);
-                }
-                for (size_t source = 0; source < sw.sourceSlots.size();
-                     ++source) {
-                    const int slot = sw.sourceSlots[source];
-                    auto &value = input.sources[source];
-                    value.world = slot < 0;
-                    if (slot >= 0) {
-                        value.defaultSpace = B.defaultRoundTrip[size_t(slot)];
-                        value.posedSpace =
-                            _ReadFrameVersion(B, sw.sourceReads[source]);
-                    }
-                }
-                if (!RigExecRunSpaceSwitch(sw.kernelRecord, input,
-                                           &B.base[size_t(i)])) {
-                    B.base[size_t(i)].flags = 0;
-                    sw.matchValid = false;
-                    step->diagnostics.push_back(
-                        "space switch has no source for " +
-                        (*B.pathTexts)[size_t(i)]);
-                } else {
-                    RigExecBakedRunSpaceMatch(
-                        B, sw, i, input, B.base[size_t(i)], &step->diagnostics);
-                }
-            }
-            const int autoIndex = (size_t(i) < B.autoClavicleBySlot.size()
-                                       ? B.autoClavicleBySlot[size_t(i)]
-                                       : -1);
-            if (autoIndex >= 0) {
-                auto &ac = B.autoClavicles[size_t(autoIndex)];
-                ac.values.Publish(0, B.base[size_t(i)]);
-                for (const auto &read : ac.frames) {
-                    RigExecPointFrame frame;
-                    if (read.computation ==
-                        SchemaComputationText::computeRestFrame)
-                        frame = B.restFrames[size_t(read.slot)];
-                    else if (read.computation ==
-                             SchemaComputationText::computeDefaultFrame)
-                        frame = RigExecFrameFromMatrix(
-                            B.defaultRoundTrip[size_t(read.slot)]);
-                    else if (B.paths[size_t(read.slot)].HasPrefix(
-                                 B.paths[size_t(i)])) {
-                        frame = B.base[size_t(i)];
-                        for (int child : read.recompose)
-                            frame = _ComposeUnswitched(B, child,
-                                                       _SpaceOfFrame(frame));
-                    } else
-                        frame = B.fin[size_t(read.slot)];
-                    ac.values.Publish(read.value, frame);
-                }
-                for (const auto &read : ac.scalars) {
-                    if (read.isFloat)
-                        ac.values.Publish(read.value, rd(read.narrow), false,
-                                          true);
-                    else
-                        ac.values.Publish(read.value, rd(read.wide), false,
-                                          true);
-                }
-                std::string invalid;
-                if (!RigExecDispatchRunAutoClavicle(ac.operation, &ac.values,
-                                                    &invalid))
-                    step->diagnostics.push_back(invalid);
-                if (const auto *frame =
-                        ac.values.Read<RigExecPointFrame>(ac.operation.output))
-                    B.base[size_t(i)] = *frame;
-            }
-            eval::PublishFinPosedM(host, size_t(i));
-        }
-        return;
-    }
-
-    default:
-        return;
-    }
 }
 
 bool

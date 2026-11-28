@@ -1505,6 +1505,8 @@ TestSpaceMatch()
             builder.BindInput(id, SpaceMatchSourcePosed());
         const RigExecOutputId values =
             builder.BindOutput(id, SpaceMatchValues());
+        const RigExecOutputId status =
+            builder.BindOutput(id, SpaceMatchStatus());
         std::string error;
         const auto desc = builder.Build(&error);
         const auto program = desc ? RigExecCompile(*desc, {}, &error) : nullptr;
@@ -1549,14 +1551,15 @@ TestSpaceMatch()
         const bool ran = evaluator->Evaluate(&error);
         const auto *got = static_cast<const rigExecStd::RigExecArray<double> *>(
             evaluator->GetOutput(values));
-        const bool same = native
-                              ? ran && got && got->Size() == want.size() &&
-                                    Bits(got->Data(), want.data(),
-                                         want.size() * sizeof(double))
-                              : !ran && !got &&
-                                    error.find(std::string("SpaceMatch:") +
-                                               kRigExecSpaceMatchNotFinite) !=
-                                        std::string::npos;
+        const auto *reported =
+            static_cast<const uint32_t *>(evaluator->GetOutput(status));
+        const bool same =
+            native
+                ? ran && got && got->Size() == want.size() &&
+                      Bits(got->Data(), want.data(),
+                           want.size() * sizeof(double))
+                : ran && reported &&
+                      *reported == uint32_t(RigExecSpaceMatchStatus::NotFinite);
         if (!same)
             std::printf("space match variant %d differs\n", variant);
         CHECK(same);

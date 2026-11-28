@@ -1712,7 +1712,7 @@ InputKey(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
                         B.propertyRecords[size_t(hop.record)].id);
             }
     };
-    if (effective && step.kind == RigExecBakedStepKind::ComposeSubtree) {
+    if (effective && RigExecBakedComposeGroupOf(B, step) >= 0) {
         // Composition consumes pose/default tables, not the rest round trip
         // retained in the broader Ladder value for its other consumers.
         for (const auto &range : step.reads) {

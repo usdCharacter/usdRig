@@ -986,9 +986,12 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
             continue;
         }
         const size_t object = size_t(step.object);
-        if (step.kind == RigExecBakedStepKind::ComposeSubtree &&
-            object < B.composeGroups.size()) {
-            const RigExecBakedComposeGroup &group = B.composeGroups[object];
+        if (const RigExecBakedStepIdentity compose =
+                RigExecBakedIdentityOf(B, step);
+            compose.kind == RigExecBakedStepKind::ComposeSubtree &&
+            size_t(compose.object) < B.composeGroups.size()) {
+            const RigExecBakedComposeGroup &group =
+                B.composeGroups[size_t(compose.object)];
             for (int slot = group.begin; slot < group.end; ++slot) {
                 record(kFin, uint32_t(slot), index, slot);
                 record(kBase, uint32_t(slot), index, slot);
@@ -1030,7 +1033,8 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
 
     for (int index = 0; index < int(B.steps.size()); ++index) {
         const auto &step = B.steps[size_t(index)];
-        if (step.kind == RigExecBakedStepKind::ComposeSubtree ||
+        if (RigExecBakedIdentityOf(B, step).kind ==
+                RigExecBakedStepKind::ComposeSubtree ||
             CommitStepObject(B, step) >= 0)
             continue;
         for (const auto &write : step.writes) {
@@ -2070,9 +2074,10 @@ RigExecBakedBuildCones(RigExecBakedProgramImpl *program)
             cones.avarCluster[size_t(avar.object)] = step.cluster;
             cones.avarStep[size_t(avar.object)] = index;
         }
-        if (step.kind == RigExecBakedStepKind::ComposeSubtree) {
+        if (const int composeGroup = RigExecBakedComposeGroupOf(B, step);
+            composeGroup >= 0) {
             const RigExecBakedComposeGroup &group =
-                B.composeGroups[size_t(step.object)];
+                B.composeGroups[size_t(composeGroup)];
             // Avars this step declares OUTSIDE its group: the slots a switch
             // recomposes an earlier version of.
             for (const RigExecBakedSlotRange &range : step.reads) {
@@ -2337,7 +2342,7 @@ RouteBakedStepBody(RigExecBakedProgramImpl *B, RigExecBakedStep *step,
     } else if (RigExecBakedIsGeometryStep(step->kind)) {
         RigExecBakedRunGeometryStep(B, step, time);
     } else {
-        RigExecBakedRunPoseStep(B, step, time);
+        TF_VERIFY(false, "a step no body runs");
     }
 }
 

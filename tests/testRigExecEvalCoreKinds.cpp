@@ -29,6 +29,14 @@ CheckOrdinals()
         eval::StepKind kind = static_cast<eval::StepKind>(i);
         RigExecBakedStepKind baked = static_cast<RigExecBakedStepKind>(i);
         CHECK(static_cast<uint8_t>(kind) == static_cast<uint8_t>(baked));
+        // Ordinal 0 is a gap on the wire; compose op nodes keep the baked
+        // name as their identity.
+        if (i == 0) {
+            CHECK(eval::StepKindName(kind)[0] == '\0');
+            CHECK(std::strcmp(RigExecBakedStepKindName(baked),
+                              "ComposeSubtree") == 0);
+            continue;
+        }
         // Ordinal 10 is retired on the wire; VolumePlacement op nodes keep
         // the baked name as their identity.
         if (kind == eval::StepKind::ReservedVolumePlacements) {
@@ -96,7 +104,6 @@ CheckOrdinals()
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedPoseInterpolator));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedRestCompose));
     CHECK(eval::IsReservedStepKind(eval::StepKind::ReservedLadderCompose));
-    CHECK(!eval::IsReservedStepKind(eval::StepKind::ComposeSubtree));
     CHECK(eval::StepKindName(
               static_cast<eval::StepKind>(eval::StepKindCount))[0] == '\0');
     CHECK(static_cast<uint8_t>(eval::StepKind::ReservedPoseInterpolator) == 9);

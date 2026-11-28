@@ -705,7 +705,9 @@ RrRunOpBody(RrProgram *p, size_t i, std::string *error)
                 return RrRunOpStep(p, i, error);
             if (_RrIsGeometryKind(step.kind))
                 return RrRunGeometryStep(p, i, error);
-            return RrRunPoseStep(p, i, error);
+            if (error)
+                *error = "step " + std::to_string(i) + " has no body";
+            return false;
         },
         [] {});
     return ran != eval::StepRun::Failed;
@@ -1671,9 +1673,9 @@ RrExecuteOpGraph(RrProgram *p, bool force, std::string *error)
         size_t propertyChain = 0, propertyPart = 0;
         const bool propertyStep =
             RrPropertyPartOf(p, step, &propertyChain, &propertyPart);
-        const bool scalarConsumer =
-            propertyStep || RrAvarSlotOf(p->inputState, step) >= 0 ||
-            step.kind == RigExecWireStepKind::ComposeSubtree;
+        const bool scalarConsumer = propertyStep ||
+                                    RrAvarSlotOf(p->inputState, step) >= 0 ||
+                                    RrComposeStep(p->inputState, step);
         const bool exact = RrEffectiveInputMemo(
             p, i, &scratch, &covered, scalarConsumer ? &coveredTyped : nullptr);
         std::sort(covered.begin(), covered.end());

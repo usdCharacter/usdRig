@@ -491,22 +491,15 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
         const auto &step = file.steps[i];
         if (step.isHead)
             continue;
-        if (step.kind == RigExecWireStepKind::ComposeSubtree) {
-            const auto &group = poses.composeGroups[size_t(step.object)];
-            for (int slot = group.begin; slot < group.end; ++slot)
-                program.avarReaderSteps[size_t(slot)].push_back(int32_t(i));
-        }
+        const bool compose = step.kind == RigExecWireStepKind::OpNode &&
+                             step.object >= 0 &&
+                             RrReadsComposeLookup(file, size_t(step.object));
         for (const auto &read : step.reads) {
-            if (step.kind == RigExecWireStepKind::ComposeSubtree &&
-                read.domain() == RigExecWireSlotDomain::Avars) {
+            if (compose && read.domain() == RigExecWireSlotDomain::Avars) {
                 for (uint32_t slot = read.begin() / 11;
                      slot < (uint64_t(read.end()) + 10) / 11 && slot < slots;
                      ++slot)
-                    if (int(slot) <
-                            poses.composeGroups[size_t(step.object)].begin ||
-                        int(slot) >=
-                            poses.composeGroups[size_t(step.object)].end)
-                        program.avarReaderSteps[slot].push_back(int32_t(i));
+                    program.avarReaderSteps[slot].push_back(int32_t(i));
             }
             if (read.domain() == RigExecWireSlotDomain::ChainBase) {
                 for (uint32_t c = read.begin(); c < read.end(); ++c)

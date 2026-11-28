@@ -1184,7 +1184,6 @@ bool RrPrologueGeometry(RrProgram *program,
 void RrShareLatticeBinds(RrProgram *program);
 
 // Step bodies by family.
-bool RrRunPoseStep(RrProgram *program, size_t step, std::string *error);
 bool RrRunGeometryStep(RrProgram *program, size_t step, std::string *error);
 // Whether the chain of revision \p revision sampled a base this run.
 bool RrGeoRevisionChainHasBase(const RrProgram *program, size_t revision);

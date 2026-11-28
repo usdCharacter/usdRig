@@ -29,7 +29,7 @@ const rigExec::RigExecOpHandle &AutoClavicle();
 // frames), Stretch, Pin, UpperScale, LowerScale, SoftDistance,
 // ScaleCalibration, Twist (degrees), UpperOffset and LowerOffset (Double).
 // Delta (Vec3d, the shift of Target's origin) and Out (Mat4d, Target
-// shifted by Delta).
+// shifted by Delta). A frame that is not finite fails the node.
 const rigExec::RigExecPortHandle &AutoClavicleTarget();
 const rigExec::RigExecPortHandle &AutoClaviclePivot();
 const rigExec::RigExecPortHandle &AutoClavicleAnchor();

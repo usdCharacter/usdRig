@@ -1338,11 +1338,13 @@ EmitOpSteps(RigExecBakedProgramImpl *B, const RigExecBakedOpProgram &op)
         if (!origin ||
             (origin->family != RigExecBakedOpFamily::WeightField &&
              origin->family != RigExecBakedOpFamily::WeightPacket &&
-             origin->family != RigExecBakedOpFamily::Solver && !constraint))
+             origin->family != RigExecBakedOpFamily::Solver &&
+             origin->family != RigExecBakedOpFamily::Compose && !constraint))
             continue;
         const uint32_t n = uint32_t(step.object);
         if (origin->family == RigExecBakedOpFamily::WeightField ||
-            origin->family == RigExecBakedOpFamily::Solver || constraint)
+            origin->family == RigExecBakedOpFamily::Solver ||
+            origin->family == RigExecBakedOpFamily::Compose || constraint)
             DeclareNodeReads(*B, op, inputs, n, OpReader(), &step.reads);
         outputs(n, [&](uint32_t v) {
             step.writes.push_back(RigExecBakedOne(D::OpValue, int(v)));
@@ -1479,7 +1481,8 @@ AddPoseWalkOps(const RigExecBakedProgramImpl &B, RigExecRigDescBuilder *builder,
             !RigExecBakedAddConstraintOp(B, builder, layout, o, error))
             return false;
         if ((family == F::SpaceCheckpoint || family == F::PoseInterpolator ||
-             family == F::RestCompose || family == F::LadderCompose) &&
+             family == F::RestCompose || family == F::LadderCompose ||
+             family == F::Compose) &&
             !RigExecBakedAddComposeOp(B, builder, layout, o, error))
             return false;
         if (family == F::Solver &&
@@ -1499,6 +1502,16 @@ RigExecBakedOriginOf(const RigExecBakedProgramImpl &B,
         size_t(step.object) >= B.opNodeOrigins.size())
         return nullptr;
     return &B.opNodeOrigins[size_t(step.object)];
+}
+
+int
+RigExecBakedComposeGroupOf(const RigExecBakedProgramImpl &B,
+                           const RigExecBakedStep &step)
+{
+    const RigExecBakedOpOrigin *origin = RigExecBakedOriginOf(B, step);
+    return origin && origin->family == RigExecBakedOpFamily::Compose
+               ? int(origin->object)
+               : -1;
 }
 
 RigExecBakedStepIdentity

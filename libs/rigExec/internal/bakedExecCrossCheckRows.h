@@ -65,8 +65,6 @@ public:
     // lives with the oracle objects, not in the shared library.
     virtual ~RigExecBakedExecCheckRows();
     virtual void BeforeStep(const RigExecBakedProgramImpl &, size_t step);
-    virtual void BeforeSlot(const RigExecBakedProgramImpl &,
-                            RigExecBakedStepKind, int groupBegin, int slot);
     virtual void AfterStep(const RigExecBakedProgramImpl &, size_t step);
     /// Checks-only actual candidate observation; never used as reference input.
     virtual void ObserveConstraintCandidate(int walk,
@@ -128,7 +126,6 @@ private:
     UsdStageRefPtr _stage;
     std::vector<std::vector<RigExecExecArrayWitness>> _stageArrays;
     std::vector<std::vector<size_t>> _byStep;
-    std::map<std::pair<uint32_t, int>, std::vector<size_t>> _bySlot;
 };
 } // namespace rigExec
 #endif

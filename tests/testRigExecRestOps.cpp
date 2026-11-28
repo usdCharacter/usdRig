@@ -484,7 +484,7 @@ TestEveryRestReaderDeclaresIt(const std::string &examples)
             }
             case RigExecBakedStepKind::ComposeSubtree: {
                 const RigExecBakedComposeGroup &group =
-                    B.composeGroups[size_t(step.object)];
+                    B.composeGroups[size_t(id.object)];
                 for (int slot = group.begin; slot < group.end; ++slot) {
                     ladder(step, slot, "ComposeSubtree");
                 }
@@ -657,8 +657,11 @@ TestComposeKeysTrackConsumedLadderFields()
     B.parentSpaceM.assign(2, identity);
     B.parentSpaceAuthored.assign(2, 0);
     B.rotationSign.assign(2, 0);
+    B.opNodeOrigins.push_back({RigExecBakedOpFamily::Compose,
+                               RigExecBakedStepKind::ComposeSubtree, 0, -1});
     RigExecBakedStep step;
-    step.kind = RigExecBakedStepKind::ComposeSubtree;
+    step.kind = RigExecBakedStepKind::OpNode;
+    step.object = 0;
     step.reads.push_back(
         RigExecBakedRange(RigExecBakedSlotDomain::Ladder, 0, 2));
     std::vector<uint32_t> properties;
@@ -763,9 +766,10 @@ TestARestOnlyMoveSkipsTheCompose()
     std::vector<size_t> composes, matrices;
     for (size_t s = 0; s < B.steps.size(); ++s) {
         const RigExecBakedStep &step = B.steps[s];
-        if (step.kind == RigExecBakedStepKind::ComposeSubtree) {
+        if (const RigExecBakedStepIdentity id = RigExecBakedIdentityOf(B, step);
+            id.kind == RigExecBakedStepKind::ComposeSubtree) {
             const RigExecBakedComposeGroup &group =
-                B.composeGroups[size_t(step.object)];
+                B.composeGroups[size_t(id.object)];
             if (group.begin <= leaf && leaf < group.end) {
                 composes.push_back(s);
             }

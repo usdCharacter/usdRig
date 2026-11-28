@@ -89,8 +89,9 @@ _HeadPropertyFile()
     part.headInputSlots = {0, 2};
     part.succs = {1};
     auto &region = f.steps[1];
-    region.kind = fb::StepKind::ComposeSubtree;
-    region.object = 0;
+    f.opGraph->nodes.push_back(std::make_unique<fb::RigExecWireOpNode>());
+    region.kind = fb::StepKind::OpNode;
+    region.object = int32_t(f.opGraph->nodes.size() - 1);
     region.preds = {0};
     for (auto &step : f.steps)
         step.cluster = 0;
@@ -232,8 +233,7 @@ _HeadComposeFile()
     f.steps[3].preds = {0, 1, 2};
     f.steps[3].succs = {4};
     auto &compose = f.steps[4];
-    compose.kind = fb::StepKind::ComposeSubtree;
-    compose.object = 1;
+    compose = _ComposeStep(f, 1);
     compose.preds = {1, 3};
     compose.succs = {5};
     compose.reads = {fb::SlotRange(fb::SlotDomain::Ladder, 0, 2)};
@@ -781,14 +781,13 @@ TestHeadComposeFormatCases()
            [](auto &f) { f.steps[3].headVaryingLeaves = true; });
     expect("provider Rest omitted", "missing Rest[1]", 5,
            [](auto &f) { f.steps[5].reads.erase(f.steps[5].reads.begin()); });
-    expect("ComposeSubtree parent Ladder omitted", "missing Ladder[0]", 4,
+    expect("compose parent Ladder omitted", "missing Ladder[0]", 4,
            [](auto &f) {
                f.steps[4].reads = {fb::SlotRange(fb::SlotDomain::Ladder, 1, 2)};
            });
-    expect("ComposeSubtree own Ladder omitted", "missing Ladder[1]", 4,
-           [](auto &f) {
-               f.steps[4].reads = {fb::SlotRange(fb::SlotDomain::Ladder, 0, 1)};
-           });
+    expect("compose own Ladder omitted", "missing Ladder[1]", 4, [](auto &f) {
+        f.steps[4].reads = {fb::SlotRange(fb::SlotDomain::Ladder, 0, 1)};
+    });
     expect("RestCompose parent Rest omitted", "missing Rest[0]", 2,
            [](auto &f) { f.steps[2].reads.clear(); });
     expect("LadderCompose own Rest omitted", "missing Rest[1]", 3, [](auto &f) {
@@ -1081,7 +1080,7 @@ TestHeadFormatCases()
         [](auto &f) { f.steps[0].isHead = false; }, 0);
     expect(
         "head kind on region", "head category differs from its body kind",
-        [](auto &f) { f.steps[1].kind = fb::StepKind::OpNode; }, 1);
+        [](auto &f) { f.steps[1].object = 0; }, 1);
     expect(
         "head source", "never a source",
         [](auto &f) { f.steps[0].isSource = true; }, 0);

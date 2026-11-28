@@ -60,6 +60,7 @@ RIGEXEC_DEFINE_PORT_HANDLE(SpaceMatchSpacePosed)
 RIGEXEC_DEFINE_PORT_HANDLE(SpaceMatchSourceDefaults)
 RIGEXEC_DEFINE_PORT_HANDLE(SpaceMatchSourcePosed)
 RIGEXEC_DEFINE_PORT_HANDLE(SpaceMatchValues)
+RIGEXEC_DEFINE_PORT_HANDLE(SpaceMatchStatus)
 
 namespace {
 
@@ -403,6 +404,7 @@ SpaceMatchOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         SwitchSettings space;
     } p = {SwitchAt(batch, k)};
     auto &values = Out<RigExecArray<double>>(io, SpaceMatchValues());
+    auto &status = Out<uint32_t>(io, SpaceMatchStatus());
     SwitchInputs trial;
     if (!SwitchInputsOf(io, p.space, SpaceSwitchPorts(), &trial))
         return Fail(error, "SpaceMatch", "its sources do not match it");
@@ -424,14 +426,16 @@ SpaceMatchOne(const RigExecOpBatch &batch, size_t k, std::string *error)
         *In<Mat4d>(io, SpaceMatchTarget()), ChannelsAt(channelValues, 0),
         spaces, compose, values.Data())) {
     case rigExec::RigExecSpaceMatchOutcome::Matched:
+        status = uint32_t(rigExec::RigExecSpaceMatchStatus::Matched);
         return true;
     case rigExec::RigExecSpaceMatchOutcome::NotFinite:
-        return Fail(error, "SpaceMatch",
-                    rigExec::kRigExecSpaceMatchNotFinite + 1);
+        status = uint32_t(rigExec::RigExecSpaceMatchStatus::NotFinite);
+        return true;
     case rigExec::RigExecSpaceMatchOutcome::Unsolved:
         break;
     }
-    return Fail(error, "SpaceMatch", "could not match its spaces");
+    status = uint32_t(rigExec::RigExecSpaceMatchStatus::Unsolved);
+    return true;
 }
 
 bool
@@ -576,6 +580,7 @@ const rigExec::RigExecPortDesc kSpacePorts[] = {
     {&SpaceMatchValues(), &rigExecStd::DoubleArray(), kOut, "values",
      rigExec::RigExecOutputBound::Input, &SpaceMatchSourceDefaults(), nullptr,
      rigExec::kRigExecInvalidIndex, rigExec::RigExecSpaceMatchStride},
+    {&SpaceMatchStatus(), &rigExecStd::UIntType(), kOut, "status"},
 };
 
 const rigExec::RigExecOpDesc kSpace = [] {

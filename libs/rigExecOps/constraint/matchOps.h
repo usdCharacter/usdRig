@@ -130,7 +130,10 @@ const rigExec::RigExecOpHandle &SpaceMatch();
 // control at kMatchChannelStride), and the switch's PosedDefault,
 // ParentDefaultInverse, ParentPosed, ParentDefault, optional SpaceDefault
 // and SpacePosed (Mat4d), SourceDefaults and SourcePosed (Mat4dArray, one
-// per source). Values (DoubleArray, RigExecSpaceMatchStride per source).
+// per source). Values (DoubleArray, RigExecSpaceMatchStride per source) and
+// Status (UInt, a RigExecSpaceMatchStatus: Unsolved where no channels keep
+// the control on Target, NotFinite where a landmark is not finite; the
+// values then mean nothing).
 const rigExec::RigExecPortHandle &SpaceMatchTarget();
 const rigExec::RigExecPortHandle &SpaceMatchChannels();
 const rigExec::RigExecPortHandle &SpaceMatchPosedDefault();
@@ -142,6 +145,7 @@ const rigExec::RigExecPortHandle &SpaceMatchSpacePosed();
 const rigExec::RigExecPortHandle &SpaceMatchSourceDefaults();
 const rigExec::RigExecPortHandle &SpaceMatchSourcePosed();
 const rigExec::RigExecPortHandle &SpaceMatchValues();
+const rigExec::RigExecPortHandle &SpaceMatchStatus();
 
 } // namespace rigExecOps
 

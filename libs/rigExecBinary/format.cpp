@@ -603,6 +603,7 @@ public:
         _solverOf.assign(nodes, -1);
         _restNode.assign(nodes, -1);
         _ladderNode.assign(nodes, -1);
+        _composeNode.assign(nodes, -1);
         _refreshOf.assign(nodes, -1);
         _providerOpOf.assign(nodes, -1);
         _constraintNode.assign(nodes, -1);
@@ -676,6 +677,18 @@ public:
             if (output && output->node < nodes && output->target == 44 &&
                 _ladderNode[output->node] < 0)
                 _ladderNode[output->node] = int64_t(output->object);
+        if (file.pose && file.slotMeta) {
+            std::vector<int64_t> groupOf(file.slotMeta->parent.size(), -1);
+            for (size_t g = 0; g < file.pose->composeGroups.size(); ++g) {
+                const int32_t begin = file.pose->composeGroups[g].begin;
+                if (begin >= 0 && size_t(begin) < groupOf.size())
+                    groupOf[size_t(begin)] = int64_t(g);
+            }
+            for (const auto &output : file.opGraph->hostOutputs)
+                if (output && output->node < nodes && output->target == 46 &&
+                    output->object < groupOf.size())
+                    _composeNode[output->node] = groupOf[output->object];
+        }
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node < nodes && output->target == 5 &&
                 _fieldStored[output->node] < 0)
@@ -777,6 +790,7 @@ private:
             solversStored, planarStored;
         std::set<std::pair<uint64_t, uint32_t>> restsStored;
         std::set<uint64_t> statusStored;
+        std::set<std::pair<uint8_t, uint64_t>> composeStored;
         std::set<std::pair<uint64_t, uint32_t>> laddersStored;
         std::vector<uint8_t> spaceStored(
             4 * std::max<size_t>(_slots, _f.pose->frameRecords.size()), 0);
@@ -790,6 +804,7 @@ private:
                  output->target != 41 && output->target != 42 &&
                  output->target != 43 && output->target != 44 &&
                  output->target != 45 && output->target != 50 &&
+                 (output->target < 46 || output->target > 49) &&
                  output->target != 51 && output->target != 60 &&
                  output->target != 61 &&
                  (output->target < 52 || output->target > 54)))
@@ -892,6 +907,21 @@ private:
                 if (!laddersStored.emplace(output->object, output->port).second)
                     return _Bad("op_graph.host_outputs: ladder port " +
                                 _N(output->port) + " of compose group " +
+                                _N(output->object) + " is stored twice");
+                continue;
+            }
+            if (output->target >= 46 && output->target <= 49) {
+                const bool match = output->target >= 48;
+                if (!_f.pose ||
+                    output->object >= (match ? _f.pose->spaceSwitches.size()
+                                             : _f.slotMeta->parent.size()))
+                    return _Bad("op_graph.host_outputs: node " + _N(node) +
+                                " stores a first pose of no slot or switch " +
+                                _N(output->object));
+                if (!composeStored.emplace(output->target, output->object)
+                         .second)
+                    return _Bad("op_graph.host_outputs: target " +
+                                _N(output->target) + " of " +
                                 _N(output->object) + " is stored twice");
                 continue;
             }
@@ -1226,6 +1256,22 @@ private:
                     lookup->part < 0 || lookup->part > 6 || lookup->read)
                     return _Bad("op_graph.lookups: a commit lookup reads "
                                 "nothing commit " +
+                                _N(lookup->object) + " holds");
+                continue;
+            }
+            if (lookup && lookup->source >= 45 && lookup->source <= 47) {
+                const size_t count =
+                    !_f.pose               ? 0
+                    : lookup->source == 45 ? _f.slotMeta->parent.size()
+                    : lookup->source == 46 ? _f.pose->spaceSwitches.size()
+                                           : _f.pose->autoClavicles.size();
+                const uint8_t last = lookup->source == 45   ? 10
+                                     : lookup->source == 46 ? 8
+                                                            : 23;
+                if (lookup->object >= count || lookup->part != -1 ||
+                    lookup->read > last)
+                    return _Bad("op_graph.lookups: a compose lookup reads "
+                                "nothing slot, switch or clavicle " +
                                 _N(lookup->object) + " holds");
                 continue;
             }
@@ -3104,6 +3150,16 @@ private:
         return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
                        size_t(step.object) < _restNode.size()
                    ? _restNode[size_t(step.object)]
+                   : -1;
+    }
+
+    /// The compose group whose first pose the op step \p step stores, or -1
+    /// for any other step.
+    int64_t _ComposeGroupOf(const fb::RigExecWireStep &step) const
+    {
+        return step.kind == fb::StepKind::OpNode && step.object >= 0 &&
+                       size_t(step.object) < _composeNode.size()
+                   ? _composeNode[size_t(step.object)]
                    : -1;
     }
 
@@ -5457,11 +5513,11 @@ private:
                 if (declared != writes)
                     return _Bad(_StepName(owner) +
                                 ": provider refresh write ownership differs");
-            } else if (step.kind == K::ComposeSubtree) {
-                if (step.object < 0 ||
-                    size_t(step.object) >= pose.composeGroups.size())
+            } else if (const int64_t composeGroup = _ComposeGroupOf(step);
+                       composeGroup >= 0) {
+                if (!_Has(pose.composeGroups, composeGroup))
                     return _Bad(_StepName(owner) + ": invalid compose group");
-                const auto &group = pose.composeGroups[size_t(step.object)];
+                const auto &group = pose.composeGroups[size_t(composeGroup)];
                 for (const auto &sw : pose.spaceSwitches)
                     if (sw.slot >= int32_t(group.begin) &&
                         sw.slot < int32_t(group.end)) {
@@ -6693,9 +6749,11 @@ private:
                 for (const auto slot : _f.pose->solvers[size_t(si)].restSlots)
                     if (!require(fb::SlotDomain::Rest, slot))
                         return false;
-            if (step.kind == fb::StepKind::ComposeSubtree &&
-                _Has(_f.pose->composeGroups, step.object)) {
-                const auto &group = _f.pose->composeGroups[size_t(step.object)];
+            if (const int64_t composeGroup = _ComposeGroupOf(step);
+                composeGroup >= 0 &&
+                _Has(_f.pose->composeGroups, composeGroup)) {
+                const auto &group =
+                    _f.pose->composeGroups[size_t(composeGroup)];
                 for (int slot = group.begin; slot < group.end; ++slot)
                     if (!require(fb::SlotDomain::Ladder, slot))
                         return false;
@@ -9788,12 +9846,12 @@ private:
         };
         for (const size_t i : _played) {
             const fb::RigExecWireStep &step = _f.steps[i];
-            if (step.kind != fb::StepKind::ComposeSubtree ||
-                !_Has(p.composeGroups, step.object)) {
+            const int64_t composeGroup = _ComposeGroupOf(step);
+            if (composeGroup < 0 || !_Has(p.composeGroups, composeGroup)) {
                 continue;
             }
             const fb::RigExecWireComposeGroup &group =
-                p.composeGroups[size_t(step.object)];
+                p.composeGroups[size_t(composeGroup)];
             for (int32_t slot = group.begin; slot < group.end; ++slot) {
                 if (!write(uint64_t(slot), i, slot)) {
                     return false;
@@ -10558,6 +10616,8 @@ private:
     std::vector<int64_t> _restNode;
     /// Per op node: the compose group whose ladder it stores, or -1.
     std::vector<int64_t> _ladderNode;
+    /// Per op node: the compose group whose first pose it stores, or -1.
+    std::vector<int64_t> _composeNode;
 
     /// Per op node: the solver whose frames it stores, or -1; and the
     /// solver it runs for: that one, or the one of the node it feeds.
@@ -11022,8 +11082,6 @@ const char *
 _StepKindName(fb::StepKind kind)
 {
     switch (kind) {
-    case fb::StepKind::ComposeSubtree:
-        return "ComposeSubtree";
     case fb::StepKind::ReservedSolve:
         return "Solve";
     case fb::StepKind::ReservedSolverCommit:
@@ -11106,17 +11164,6 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
     const fb::RigExecWireDomainGeometry *geometry = file.geometry.get();
     const int32_t object = step.object;
     switch (step.kind) {
-    case fb::StepKind::ComposeSubtree: {
-        if (!pose || !meta || !_Has(pose->composeGroups, object)) {
-            return false;
-        }
-        const int32_t begin = pose->composeGroups[size_t(object)].begin;
-        if (!_Has(meta->paths, begin)) {
-            return false;
-        }
-        *out = text(meta->paths[size_t(begin)]);
-        return true;
-    }
     case fb::StepKind::ReservedSolve:
         if (!pose || !_Has(pose->solvers, object)) {
             return false;
@@ -11211,6 +11258,12 @@ _StepObject(const RigExecWireFile &file, const fb::RigExecWireStep &step,
                 return true;
             }
         }
+        for (const auto &output : file.opGraph->hostOutputs)
+            if (output && output->node == uint64_t(object) && meta &&
+                output->target == 46 && _Has(meta->paths, output->object)) {
+                *out = text(meta->paths[output->object]);
+                return true;
+            }
         for (const auto &output : file.opGraph->hostOutputs)
             if (output && output->node == uint64_t(object) &&
                 output->target == 44 && pose && meta &&

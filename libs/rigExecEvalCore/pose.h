@@ -1961,11 +1961,9 @@ LadderComposeSlot(const PoseLadderInputT<Math> &in)
     return out;
 }
 
-// ---- ComposeSubtree ----
-//
-// One unswitched slot (_ComposeUnswitched): the authored posed matrix
-// when posed is authored, else the avars against the namespace
-// parent's posed space. The caller publishes base/fin/posedM.
+// One unswitched slot's first pose (ComposeSlot): the authored posed
+// matrix when posed is authored, else the avars against the namespace
+// parent's posed space.
 template <class Math>
 typename Math::Mat4
 ComposeUnswitchedMatrix(const PoseSlotComposeT<Math> &slot,
@@ -1977,52 +1975,6 @@ ComposeUnswitchedMatrix(const PoseSlotComposeT<Math> &slot,
     return ComposeUnswitched<Math>(
         ComposeSlotAvars<Math>(slot), *slot.posedD, *slot.parentDinv,
         slot.parentSpaceAuthored ? *slot.parentSpaceM : parentPosed);
-}
-
-// One unswitched slot as a frame: the view, the matrix, the
-// conversion. False when the slot has no bound compose inputs.
-template <class Host>
-bool
-ComposeSlotFrame(Host &host, size_t slot,
-                 const typename Host::Math::Mat4 &parentPosed,
-                 std::array<typename Host::Math::Vec3, 4> *points,
-                 unsigned *flags)
-{
-    using Math = typename Host::Math;
-    PoseSlotComposeT<Math> view;
-    if (!host.inputs().slotCompose(slot, &view)) {
-        return false;
-    }
-    pose_ops::FrameFromMatrix<Math>(
-        ComposeUnswitchedMatrix<Math>(view, parentPosed), points, flags);
-    return true;
-}
-
-// Publish one unavailable slot: the default frame with cleared
-// flags, and the sentinel space.
-template <class Host>
-void
-PublishComposedSlotUnavailable(Host &host, size_t slot)
-{
-    using Math = typename Host::Math;
-    host.state().writeBase(slot, pose_ops::IdentityLandmarks<Math>(), 0);
-    host.state().writeFin(slot, pose_ops::IdentityLandmarks<Math>(), 0);
-    host.state().writePosedM(slot, UnavailableSpace<Math>());
-}
-
-// The compose tail: fin from this run's base, posedM from its space.
-template <class Host>
-void
-PublishFinPosedM(Host &host, size_t slot)
-{
-    using Math = typename Host::Math;
-    std::array<typename Math::Vec3, 4> points = {
-        Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0), Math::Vec3Of(0, 0, 0),
-        Math::Vec3Of(0, 0, 0)};
-    unsigned flags = 0;
-    host.inputs().baseFrame(slot, &points, &flags);
-    host.state().writeFin(slot, points, flags);
-    host.state().writePosedM(slot, pose_ops::SpaceOfFrame<Math>(points, flags));
 }
 
 // ---- Commit fold (CommitDelta / PropagateChunk / CommitApply) ----

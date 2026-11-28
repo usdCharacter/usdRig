@@ -5868,7 +5868,7 @@ TestRepeatedSetRunsNothing()
          fb::StepKind::OpNode, "/LimbsAsset/Rig/Solvers/LimbBIK", false},
         {"oneloop_two_limbs.usda", "/LimbsAsset/Rig",
          "/LimbsAsset/Rig/Controls/A0.avars:rz", 15.0, true,
-         fb::StepKind::ComposeSubtree, "/LimbsAsset/Rig/Controls/A0", false},
+         fb::StepKind::OpNode, "/LimbsAsset/Rig/Controls/A0", false},
         {"computed_ik_space.usda", "/IkSpaceAsset/Rig",
          "/IkSpaceAsset/Rig/Solvers/ArmIK.inputs:softness", 0.35, false,
          fb::StepKind::OpNode, "/IkSpaceAsset/Rig/Solvers/ArmIK", false},

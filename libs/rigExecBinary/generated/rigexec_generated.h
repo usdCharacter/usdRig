@@ -1173,7 +1173,6 @@ inline const char *EnumNameSlotDomain(SlotDomain e) {
 /// RigExecBakedStepKind, in the same order. SnapshotFinals (8) is reserved:
 /// never written, and Open refuses a file that holds one.
 enum class StepKind : uint8_t {
-  ComposeSubtree = 0,
   /// Reserved. Open refuses it.
   ReservedSolve = 1,
   /// Reserved. Open refuses it.
@@ -1227,13 +1226,12 @@ enum class StepKind : uint8_t {
   OpNode = 30,
   OpChainHead = 31,
   OpChainRange = 32,
-  MIN = ComposeSubtree,
+  MIN = ReservedSolve,
   MAX = OpChainRange
 };
 
-inline const StepKind (&EnumValuesStepKind())[33] {
+inline const StepKind (&EnumValuesStepKind())[32] {
   static const StepKind values[] = {
-    StepKind::ComposeSubtree,
     StepKind::ReservedSolve,
     StepKind::ReservedSolverCommit,
     StepKind::ReservedConstraint,
@@ -1271,8 +1269,7 @@ inline const StepKind (&EnumValuesStepKind())[33] {
 }
 
 inline const char * const *EnumNamesStepKind() {
-  static const char * const names[34] = {
-    "ComposeSubtree",
+  static const char * const names[33] = {
     "ReservedSolve",
     "ReservedSolverCommit",
     "ReservedConstraint",
@@ -1311,8 +1308,8 @@ inline const char * const *EnumNamesStepKind() {
 }
 
 inline const char *EnumNameStepKind(StepKind e) {
-  if (::flatbuffers::IsOutRange(e, StepKind::ComposeSubtree, StepKind::OpChainRange)) return "";
-  const size_t index = static_cast<size_t>(e);
+  if (::flatbuffers::IsOutRange(e, StepKind::ReservedSolve, StepKind::OpChainRange)) return "";
+  const size_t index = static_cast<size_t>(e) - static_cast<size_t>(StepKind::ReservedSolve);
   return EnumNamesStepKind()[index];
 }
 
@@ -5534,7 +5531,7 @@ inline ::flatbuffers::Offset<Constants> CreateConstantsDirect(
 
 struct RigExecWireStep : public ::flatbuffers::NativeTable {
   typedef Step TableType;
-  rigExec::fb::StepKind kind = rigExec::fb::StepKind::ComposeSubtree;
+  rigExec::fb::StepKind kind = rigExec::fb::StepKind::OpNode;
   int32_t object = -1;
   int32_t part = -1;
   std::vector<rigExec::fb::SlotRange> reads{};
@@ -5596,7 +5593,7 @@ struct Step FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_SEMANTICPREDECESSORKEYS = 52
   };
   rigExec::fb::StepKind kind() const {
-    return static_cast<rigExec::fb::StepKind>(GetField<uint8_t>(VT_KIND, 0));
+    return static_cast<rigExec::fb::StepKind>(GetField<uint8_t>(VT_KIND, 30));
   }
   /// What the step works on, by kind: a compose group, a solver, a commit,
   /// a pose interpolator, a revision id, a chain, or a
@@ -5727,7 +5724,7 @@ struct StepBuilder {
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
   void add_kind(rigExec::fb::StepKind kind) {
-    fbb_.AddElement<uint8_t>(Step::VT_KIND, static_cast<uint8_t>(kind), 0);
+    fbb_.AddElement<uint8_t>(Step::VT_KIND, static_cast<uint8_t>(kind), 30);
   }
   void add_object(int32_t object) {
     fbb_.AddElement<int32_t>(Step::VT_OBJECT, object, -1);
@@ -5812,7 +5809,7 @@ struct StepBuilder {
 
 inline ::flatbuffers::Offset<Step> CreateStep(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    rigExec::fb::StepKind kind = rigExec::fb::StepKind::ComposeSubtree,
+    rigExec::fb::StepKind kind = rigExec::fb::StepKind::OpNode,
     int32_t object = -1,
     int32_t part = -1,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::SlotRange *>> reads = 0,
@@ -5871,7 +5868,7 @@ struct Step::Traits {
 
 inline ::flatbuffers::Offset<Step> CreateStepDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    rigExec::fb::StepKind kind = rigExec::fb::StepKind::ComposeSubtree,
+    rigExec::fb::StepKind kind = rigExec::fb::StepKind::OpNode,
     int32_t object = -1,
     int32_t part = -1,
     const std::vector<rigExec::fb::SlotRange> *reads = nullptr,
@@ -29893,14 +29890,14 @@ inline const ::flatbuffers::TypeTable *StepKindTypeTable() {
     { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 },
-    { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::StepKindTypeTable
   };
+  static const int64_t values[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32 };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_ENUM, 33, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_ENUM, 32, type_codes, type_refs, nullptr, values, nullptr
   };
   return &tt;
 }

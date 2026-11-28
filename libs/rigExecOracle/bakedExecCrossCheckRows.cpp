@@ -856,11 +856,6 @@ RigExecBakedExecCheckRows::Add(RigExecExecCheckDescriptor d, Binding binding,
         return false;
     const size_t row = _bindings.size();
     _byStep[binding.step].push_back(row);
-    if (binding.perSlot)
-        _bySlot[{uint32_t(
-                     RigExecBakedIdentityOf(b, b.steps[binding.step]).kind),
-                 binding.slot}]
-            .push_back(row);
     _descriptors.push_back(std::move(d));
     _bindings.push_back(std::move(binding));
     // A constraint result callback reads its row-local candidate storage.
@@ -939,7 +934,7 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error,
                 if (step.kind == Kind::ComposeSubtree) {
                     if (!add(
                             b.paths[size_t(s)],
-                            SchemaComputationText::computePointFrame, s, true,
+                            SchemaComputationText::computePointFrame, s, false,
                             [s](const B &p) { return ComposeInputs(p, s); },
                             [s](const B &p) {
                                 return VtValue(p.base[size_t(s)]);
@@ -1145,8 +1140,8 @@ RigExecBakedExecCheckRows::Build(const B &b, std::string *error,
             size_t composeRow = rows->_bindings.size();
             for (size_t r = 0; r < rows->_bindings.size(); ++r)
                 if (rows->_bindings[r].slot == s &&
-                    b.steps[rows->_bindings[r].step].kind ==
-                        Kind::ComposeSubtree)
+                    RigExecBakedIdentityOf(b, b.steps[rows->_bindings[r].step])
+                            .kind == Kind::ComposeSubtree)
                     composeRow = r;
             const auto *owner = rows.get();
             if (!add(
@@ -1281,18 +1276,6 @@ RigExecBakedExecCheckRows::BeforeStep(const B &b, size_t step)
                 _stageArrays[row] = _bindings[row].arrays(b);
         }
     }
-}
-void
-RigExecBakedExecCheckRows::BeforeSlot(const B &b, Kind kind, int groupBegin,
-                                      int slot)
-{
-    (void)groupBegin;
-    const auto found = _bySlot.find({uint32_t(kind), slot});
-    if (found != _bySlot.end())
-        for (const size_t row : found->second) {
-            _inputs[row] = _bindings[row].capture(b);
-            _captured[row] = 1;
-        }
 }
 void
 RigExecBakedExecCheckRows::AfterStep(const B &b, size_t step)

@@ -1,13 +1,18 @@
 #include "rigExec/internal/bakedProgramImpl.h"
 #include "rigExec/internal/poseEvalHost.h"
+#include "rigExecEvalCore/constraintLookups.h"
 #include "rigExecEvalCore/opSteps.h"
 #include "rigExecMath/avarScale.h"
+#include "rigExecOps/constraint/autoClavicleOps.h"
 #include "rigExecOps/pose/poseOps.h"
+#include "rigExecSchema/schemaNames.h"
 #include "rigExecRigTypes/rigTypes.h"
 #include "rigExecStdTypes/array.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -734,6 +739,488 @@ StoreLadder(RigExecBakedProgramImpl &B, uint32_t object, uint32_t port,
     return true;
 }
 
+/// Frame \p k of auto clavicle \p ac's 13, or null where the op reads none.
+const RigExecBakedProgramImpl::AutoClavicle::FrameRead *
+ClavicleFrame(const RigExecBakedProgramImpl::AutoClavicle &ac, size_t k)
+{
+    if (k >= ac.operation.frames.size() || ac.operation.frames[k] == UINT64_MAX)
+        return nullptr;
+    for (const auto &read : ac.frames)
+        if (read.value == ac.operation.frames[k])
+            return &read;
+    return nullptr;
+}
+
+/// Whether \p read is a frame of the clavicle's own subtree, which the op
+/// reads from the slot's unshifted compose.
+bool
+InClavicleSubtree(const RigExecBakedProgramImpl::AutoClavicle::FrameRead &read,
+                  int slot)
+{
+    return read.computation.empty() &&
+           (!read.recompose.empty() || read.slot == slot);
+}
+
+/// The clavicle frames a single Mat4d port reads, by frame number.
+constexpr size_t kClavicleFrames[] = {1, 2, 3, 4, 8, 9};
+
+/// The op nodes compose group \p g runs as, in origin order: its compose,
+/// its space match, the recomposes of its clavicle's subtree frames, its
+/// auto clavicle and its shift.
+struct ComposeNodes {
+    int slot = -1;
+    int switchIndex = -1;
+    int clavicle = -1;
+    bool match = false;
+    /// Per recompose node: the clavicle frame it ends or continues and the
+    /// slot it composes.
+    std::vector<std::pair<size_t, int>> recompose;
+
+    size_t Count() const
+    {
+        return 1 + size_t(match) + recompose.size() + (clavicle >= 0 ? 2 : 0);
+    }
+    size_t Offset(int part) const
+    {
+        if (part == 0)
+            return 0;
+        if (part == 1)
+            return 1;
+        if (part == 2)
+            return 1 + size_t(match) + recompose.size();
+        if (part >= 3)
+            return 1 + size_t(match) + size_t(part - 3);
+        return clavicle >= 0 ? Count() - 1 : 0;
+    }
+    int Part(size_t n) const
+    {
+        if (clavicle < 0)
+            return n == 0 ? -1 : 1;
+        if (n + 1 == Count())
+            return -1;
+        if (n + 2 == Count())
+            return 2;
+        if (n == 0)
+            return 0;
+        if (match && n == 1)
+            return 1;
+        return int(n - 1 - size_t(match)) + 3;
+    }
+};
+
+ComposeNodes
+ComposeNodesOf(const RigExecBakedProgramImpl &B, size_t g)
+{
+    ComposeNodes nodes;
+    nodes.slot = B.composeGroups[g].begin;
+    const size_t slot = size_t(nodes.slot);
+    const bool active = BakedPoseInputs(&B).providerActive(slot);
+    nodes.switchIndex =
+        slot < B.spaceSwitchBySlot.size() ? B.spaceSwitchBySlot[slot] : -1;
+    nodes.match = active && nodes.switchIndex >= 0;
+    nodes.clavicle = active && slot < B.autoClavicleBySlot.size()
+                         ? B.autoClavicleBySlot[slot]
+                         : -1;
+    if (nodes.clavicle < 0)
+        return nodes;
+    const auto &ac = B.autoClavicles[size_t(nodes.clavicle)];
+    for (const size_t k : kClavicleFrames)
+        if (const auto *read = ClavicleFrame(ac, k);
+            read && InClavicleSubtree(*read, ac.slot))
+            for (const int child : read->recompose)
+                nodes.recompose.emplace_back(k, child);
+    return nodes;
+}
+
+/// The SpaceSwitchSetup of space switch \p sw.
+rigExecOps::SpaceSwitchSetup
+SwitchSetupOf(const RigExecBakedProgramImpl::SpaceSwitch &sw)
+{
+    rigExecOps::SpaceSwitchSetup setup;
+    for (const auto filter : sw.kernelRecord.filters)
+        setup.filters.push_back(int(filter));
+    setup.twistAxis = rigExecStd::Vec3d(sw.kernelRecord.twistAxis[0],
+                                        sw.kernelRecord.twistAxis[1],
+                                        sw.kernelRecord.twistAxis[2]);
+    setup.affectTranslation = sw.kernelRecord.affectTranslation;
+    setup.affectRotation = sw.kernelRecord.affectRotation;
+    setup.affectScale = sw.kernelRecord.affectScale;
+    setup.hasCarry = sw.spaceSlot >= 0;
+    for (const int source : sw.sourceSlots)
+        setup.world.push_back(source < 0 ? 1 : 0);
+    return setup;
+}
+
+/// The index into \p ac.scalars of the clavicle op's scalar \p k, or -1
+/// where it reads none.
+int
+ClavicleScalar(const RigExecBakedProgramImpl::AutoClavicle &ac, size_t k)
+{
+    const auto &read = ac.operation.scalars[k];
+    if (read.hops.empty())
+        return -1;
+    for (size_t j = 0; j < ac.scalars.size(); ++j)
+        if (ac.scalars[j].value == read.hops.front().raw)
+            return int(j);
+    return -1;
+}
+
+/// Answers input \p read of auto clavicle \p object's node: a frame outside
+/// its subtree, or a scalar.
+bool
+LookUpClavicle(const RigExecBakedProgramImpl &B, uint32_t object, uint8_t read,
+               const RigExecTypeDesc &type, void *value)
+{
+    using R = eval::OpClavicleRead;
+    const auto &ac = B.autoClavicles[object];
+    if (read >= uint8_t(R::ScalarBegin)) {
+        const size_t k = size_t(read - uint8_t(R::ScalarBegin));
+        if (k >= ac.operation.scalars.size() || type.size != sizeof(double))
+            return false;
+        const int j = ClavicleScalar(ac, k);
+        double scalar = k == 0 ? 1.0 - ac.operation.constants.ikValue : 1.0;
+        if (j >= 0)
+            scalar = ac.scalars[size_t(j)].isFloat
+                         ? double(RigExecBakedLeafRead(
+                               B, ac.scalars[size_t(j)].narrow))
+                         : RigExecBakedLeafRead(B, ac.scalars[size_t(j)].wide);
+        else if (k > 1)
+            return false;
+        *static_cast<double *>(value) = scalar;
+        return true;
+    }
+    const auto matrix = [&](size_t k, double *out) {
+        const auto *frame = ClavicleFrame(ac, k);
+        if (!frame || frame->slot < 0)
+            return false;
+        const size_t slot = size_t(frame->slot);
+        GfMatrix4d m;
+        if (frame->computation == SchemaComputationText::computeDefaultFrame)
+            m = B.defaultRoundTrip[slot];
+        else {
+            const RigExecPointFrame &f =
+                frame->computation == SchemaComputationText::computeRestFrame
+                    ? B.restFrames[slot]
+                    : B.fin[slot];
+            m = eval::pose_ops::SpaceOfFrame<BakedPoseMath>(f.points, f.flags);
+        }
+        std::memcpy(out, m.data(), 16 * sizeof(double));
+        return true;
+    };
+    if (read == uint8_t(R::FkDefaults) || read == uint8_t(R::LimbRests)) {
+        if (!type.resize || !type.data)
+            return false;
+        type.resize(value, 3);
+        auto *out = static_cast<double *>(type.data(value));
+        for (size_t e = 0; e < 3; ++e)
+            if (!matrix(size_t(read) + e, out + 16 * e))
+                return false;
+        return true;
+    }
+    return type.size == 16 * sizeof(double) &&
+           matrix(size_t(read), static_cast<double *>(value));
+}
+
+/// Op node \p o of compose group \p g (origin part \p part): its compose,
+/// space match, a recompose, its auto clavicle or its shift.
+bool
+AddComposeGroupOp(const RigExecBakedProgramImpl &B,
+                  RigExecRigDescBuilder *builder, eval::OpStepLayout *layout,
+                  size_t o, size_t g, int part, std::string *error)
+{
+    using namespace rigExecOps;
+    using L = eval::OpLookupSource;
+    using C = eval::OpComposeRead;
+    using S = eval::OpSwitchRead;
+    using T = eval::OpOutputTarget;
+    const ComposeNodes nodes = ComposeNodesOf(B, g);
+    const size_t offset = nodes.Offset(part);
+    if (offset > o || offset >= nodes.Count())
+        return Fail(error, "compose group " + std::to_string(g) +
+                               " has no node part " + std::to_string(part));
+    const RigExecNodeId first = RigExecNodeId(o - offset);
+    const uint32_t slot = uint32_t(nodes.slot);
+    const BakedPoseInputs inputs(&B);
+    RigExecNodeId node = RigExecNodeId(kRigExecInvalidIndex);
+    const auto look = [&](const RigExecPortHandle &port, L source,
+                          uint32_t object, uint8_t read) {
+        builder->BindInput(node, port);
+        layout->hostInputs.push_back({node, port.Index(),
+                                      eval::OpHostSource::Lookup,
+                                      uint32_t(layout->lookups.size())});
+        layout->lookups.push_back({uint8_t(source), object, -1, read});
+    };
+    const auto compose = [&](const RigExecPortHandle &port, uint32_t of,
+                             C read) {
+        look(port, L::ComposeInputs, of, uint8_t(read));
+    };
+    const auto added = [&](RigExecNodeId id) {
+        node = id;
+        return id == o ||
+               Fail(error, "compose group " + std::to_string(g) + " node " +
+                               std::to_string(o) + " was added as node " +
+                               std::to_string(id));
+    };
+    const auto store = [&](const RigExecPortHandle &base,
+                           const RigExecPortHandle &posed) {
+        builder->BindOutput(node, base);
+        layout->hostOutputs.push_back(
+            {node, base.Index(), uint8_t(T::ComposeBase), slot});
+        builder->BindOutput(node, posed);
+        layout->hostOutputs.push_back(
+            {node, posed.Index(), uint8_t(T::ComposePosed), slot});
+    };
+    const bool switched = nodes.switchIndex >= 0;
+    const RigExecPortHandle &composeBase =
+        switched ? SwitchedComposeSlotBase() : ComposeSlotBase();
+    const RigExecPortHandle &composePosed =
+        switched ? SwitchedComposeSlotPosedMatrix() : ComposeSlotPosedMatrix();
+    const auto switchInputs = [&](const RigExecPortHandle *const ports[9],
+                                  bool carry) {
+        const S reads[] = {S::PosedDefault, S::ParentDefaultInverse,
+                           S::ParentPosed,  S::ParentDefault,
+                           S::Active,       S::SpaceDefault,
+                           S::SpacePosed,   S::SourceDefaults,
+                           S::SourcePosed};
+        for (size_t k = 0; k < 9; ++k)
+            if (ports[k] && (carry || (reads[k] != S::SpaceDefault &&
+                                       reads[k] != S::SpacePosed)))
+                look(*ports[k], L::SwitchInputs, uint32_t(nodes.switchIndex),
+                     uint8_t(reads[k]));
+    };
+    if (offset == 0) {
+        const bool active = inputs.providerActive(slot);
+        const bool noScale = B.noScaleAvars[slot] != 0;
+        if (!switched) {
+            ComposeSlotPayload payload;
+            payload.active = active;
+            payload.noScale = noScale;
+            if (!added(builder->AddOp(ComposeSlot(), &payload)))
+                return false;
+            compose(ComposeSlotAvars(), slot, C::Avars);
+            compose(ComposeSlotRotOrder(), slot, C::RotOrder);
+            compose(ComposeSlotRotationSign(), slot, C::RotationSign);
+            compose(ComposeSlotPosedAuthored(), slot, C::PosedAuthored);
+            compose(ComposeSlotPosedAuthoredMatrix(), slot,
+                    C::PosedAuthoredMatrix);
+            compose(ComposeSlotPosedDefault(), slot, C::PosedDefault);
+            compose(ComposeSlotParentDefaultInverse(), slot,
+                    C::ParentDefaultInverse);
+            compose(ComposeSlotParentSpace(), slot, C::ParentSpace);
+            compose(ComposeSlotParentSpaceAuthored(), slot,
+                    C::ParentSpaceAuthored);
+            if (inputs.parent(slot) >= 0)
+                compose(ComposeSlotParentPosed(), slot, C::ParentPosed);
+        } else {
+            const auto &sw = B.spaceSwitches[size_t(nodes.switchIndex)];
+            SwitchedComposeSlotPayload payload;
+            payload.active = active;
+            payload.noScale = noScale;
+            payload.space = SwitchSetupOf(sw);
+            if (!added(builder->AddOp(SwitchedComposeSlot(), &payload)))
+                return false;
+            compose(SwitchedComposeSlotAvars(), slot, C::Avars);
+            compose(SwitchedComposeSlotRotOrder(), slot, C::RotOrder);
+            compose(SwitchedComposeSlotRotationSign(), slot, C::RotationSign);
+            compose(SwitchedComposeSlotPosedAuthored(), slot, C::PosedAuthored);
+            compose(SwitchedComposeSlotPosedAuthoredMatrix(), slot,
+                    C::PosedAuthoredMatrix);
+            const RigExecPortHandle *const ports[9] = {
+                &SwitchedComposeSlotPosedDefault(),
+                &SwitchedComposeSlotParentDefaultInverse(),
+                &SwitchedComposeSlotParentPosed(),
+                &SwitchedComposeSlotParentDefault(),
+                &SwitchedComposeSlotActive(),
+                &SwitchedComposeSlotSpaceDefault(),
+                &SwitchedComposeSlotSpacePosed(),
+                &SwitchedComposeSlotSourceDefaults(),
+                &SwitchedComposeSlotSourcePosed()};
+            switchInputs(ports, payload.space.hasCarry);
+        }
+        if (nodes.clavicle < 0)
+            store(composeBase, composePosed);
+        return true;
+    }
+    if (part == 1) {
+        const auto &sw = B.spaceSwitches[size_t(nodes.switchIndex)];
+        SpaceMatchPayload payload;
+        payload.space = SwitchSetupOf(sw);
+        if (!added(builder->AddOp(SpaceMatch(), &payload)))
+            return false;
+        builder->Connect(first, composePosed, node, SpaceMatchTarget());
+        compose(SpaceMatchChannels(), slot, C::MatchChannels);
+        const RigExecPortHandle *const ports[9] = {
+            &SpaceMatchPosedDefault(),
+            &SpaceMatchParentDefaultInverse(),
+            &SpaceMatchParentPosed(),
+            &SpaceMatchParentDefault(),
+            nullptr,
+            &SpaceMatchSpaceDefault(),
+            &SpaceMatchSpacePosed(),
+            &SpaceMatchSourceDefaults(),
+            &SpaceMatchSourcePosed()};
+        switchInputs(ports, payload.space.hasCarry);
+        for (const auto &[port, target] :
+             {std::make_pair(&SpaceMatchValues(), T::SpaceMatchValues),
+              std::make_pair(&SpaceMatchStatus(), T::SpaceMatchStatus)}) {
+            builder->BindOutput(node, *port);
+            layout->hostOutputs.push_back({node, port->Index(), uint8_t(target),
+                                           uint32_t(nodes.switchIndex)});
+        }
+        return true;
+    }
+    if (part >= 3) {
+        const size_t r = size_t(part - 3);
+        const auto [frame, child] = nodes.recompose[r];
+        ComposeSlotPayload payload;
+        payload.noScale = B.noScaleAvars[size_t(child)] != 0;
+        if (!added(builder->AddOp(ComposeSlot(), &payload)))
+            return false;
+        const uint32_t of = uint32_t(child);
+        compose(ComposeSlotAvars(), of, C::Avars);
+        compose(ComposeSlotRotOrder(), of, C::RotOrder);
+        compose(ComposeSlotRotationSign(), of, C::RotationSign);
+        compose(ComposeSlotPosedAuthored(), of, C::PosedAuthored);
+        compose(ComposeSlotPosedAuthoredMatrix(), of, C::PosedAuthoredMatrix);
+        compose(ComposeSlotPosedDefault(), of, C::PosedDefault);
+        compose(ComposeSlotParentDefaultInverse(), of, C::ParentDefaultInverse);
+        compose(ComposeSlotParentSpace(), of, C::ParentSpace);
+        compose(ComposeSlotParentSpaceAuthored(), of, C::ParentSpaceAuthored);
+        if (r > 0 && nodes.recompose[r - 1].first == frame)
+            builder->Connect(node - 1, ComposeSlotPosedMatrix(), node,
+                             ComposeSlotParentPosed());
+        else
+            builder->Connect(first, composePosed, node,
+                             ComposeSlotParentPosed());
+        return true;
+    }
+    const auto &ac = B.autoClavicles[size_t(nodes.clavicle)];
+    const std::string path = (*B.pathTexts)[slot];
+    if (part == 2) {
+        AutoClavicleOpPayload payload;
+        payload.constants = ac.operation.constants;
+        payload.hasLimb = ac.operation.hasLimb;
+        if (!added(builder->AddOp(AutoClavicle(), &payload)))
+            return false;
+        builder->Connect(first, composePosed, node, AutoClavicleTarget());
+        const RigExecPortHandle *const ports[] = {
+            &AutoClaviclePivot(),         &AutoClavicleAnchor(),
+            &AutoClavicleAnchorDefault(), &AutoClavicleFkPosed(),
+            &AutoClavicleIkTarget(),      &AutoClaviclePole()};
+        using R = eval::OpClavicleRead;
+        for (size_t f = 0; f < std::size(kClavicleFrames); ++f) {
+            const size_t k = kClavicleFrames[f];
+            const auto *read = ClavicleFrame(ac, k);
+            if (!read) {
+                if (k < 8)
+                    return Fail(error, path +
+                                           ": its auto clavicle reads no "
+                                           "frame " +
+                                           std::to_string(k));
+                continue;
+            }
+            if (!InClavicleSubtree(*read, ac.slot)) {
+                look(*ports[f], L::ClavicleInputs, uint32_t(nodes.clavicle),
+                     uint8_t(k));
+                continue;
+            }
+            RigExecNodeId from = first;
+            const RigExecPortHandle *out = &composePosed;
+            for (size_t r = 0; r < nodes.recompose.size(); ++r)
+                if (nodes.recompose[r].first == k) {
+                    from = first + RigExecNodeId(1 + size_t(nodes.match) + r);
+                    out = &ComposeSlotPosedMatrix();
+                }
+            builder->Connect(from, *out, node, *ports[f]);
+        }
+        for (const R list : {R::FkDefaults, R::LimbRests}) {
+            if (list == R::LimbRests && !ac.operation.hasLimb)
+                continue;
+            for (size_t e = 0; e < 3; ++e) {
+                const auto *read = ClavicleFrame(ac, size_t(list) + e);
+                if (!read || InClavicleSubtree(*read, ac.slot))
+                    return Fail(error, path +
+                                           ": its auto clavicle reads "
+                                           "frame " +
+                                           std::to_string(size_t(list) + e) +
+                                           " from its own subtree");
+            }
+            look(list == R::FkDefaults ? AutoClavicleFkDefault()
+                                       : AutoClavicleLimbRests(),
+                 L::ClavicleInputs, uint32_t(nodes.clavicle), uint8_t(list));
+        }
+        const RigExecPortHandle *const scalars[] = {
+            &AutoClavicleIkBlend(),      &AutoClavicleAmount(),
+            &AutoClavicleStretch(),      &AutoClaviclePin(),
+            &AutoClavicleUpperScale(),   &AutoClavicleLowerScale(),
+            &AutoClavicleSoftDistance(), &AutoClavicleScaleCalibration(),
+            &AutoClavicleTwist(),        &AutoClavicleUpperOffset(),
+            &AutoClavicleLowerOffset()};
+        for (size_t k = 0; k < std::size(scalars); ++k)
+            if (k < 2 || (ac.operation.hasLimb && ClavicleScalar(ac, k) >= 0))
+                look(*scalars[k], L::ClavicleInputs, uint32_t(nodes.clavicle),
+                     uint8_t(size_t(R::ScalarBegin) + k));
+        return true;
+    }
+    if (!added(builder->AddOp(ShiftedComposeSlot(), nullptr)))
+        return false;
+    builder->Connect(first, composeBase, node, ShiftedComposeSlotBase());
+    builder->Connect(node - 1, AutoClavicleDelta(), node,
+                     ShiftedComposeSlotDelta());
+    builder->Connect(node - 1, AutoClavicleOut(), node,
+                     ShiftedComposeSlotShifted());
+    store(ShiftedComposeSlotOut(), ShiftedComposeSlotPosedMatrix());
+    return true;
+}
+
+/// Stores output \p output of a compose group's node: the slot's first
+/// pose and posed matrix, or its switch's match values and status.
+bool
+StoreComposeGroup(RigExecBakedProgramImpl &B, RigExecBakedStep *step,
+                  const eval::OpHostOutput &output, const void *value,
+                  std::string *error)
+{
+    using T = eval::OpOutputTarget;
+    const T target = T(output.target);
+    if (target == T::SpaceMatchValues || target == T::SpaceMatchStatus) {
+        if (output.object >= B.spaceSwitches.size())
+            return Fail(error,
+                        "no space switch " + std::to_string(output.object));
+        auto &sw = B.spaceSwitches[output.object];
+        if (target == T::SpaceMatchValues) {
+            const auto &values = *static_cast<const Doubles *>(value);
+            sw.matchValues.assign(values.Data(), values.Data() + values.Size());
+            return true;
+        }
+        const uint32_t status = *static_cast<const uint32_t *>(value);
+        sw.matchValid = status == uint32_t(RigExecSpaceMatchStatus::Matched) &&
+                        !B.posedAuthored[size_t(sw.slot)];
+        if (status == uint32_t(RigExecSpaceMatchStatus::NotFinite)) {
+            if (!step)
+                return Fail(error, "stores a space match status outside a "
+                                   "step");
+            step->diagnostics.push_back((*B.pathTexts)[size_t(sw.slot)] +
+                                        kRigExecSpaceMatchNotFinite);
+        }
+        return true;
+    }
+    const size_t slot = output.object;
+    if (slot >= B.base.size() || slot >= B.posedM.size())
+        return Fail(error, "no slot " + std::to_string(slot) + " to compose");
+    if (target == T::ComposePosed) {
+        std::memcpy(B.posedM[slot].data(), value, 16 * sizeof(double));
+        return true;
+    }
+    const auto &frame = *static_cast<const rigExecRig::PointFrame *>(value);
+    std::array<GfVec3d, 4> points;
+    for (size_t i = 0; i < 4; ++i)
+        points[i] =
+            GfVec3d(frame.points[i][0], frame.points[i][1], frame.points[i][2]);
+    B.base[slot] = BakedPoseMath::MakeFrame(points, frame.flags);
+    B.fin[slot] = B.base[slot];
+    return true;
+}
+
 } // namespace
 
 bool
@@ -760,6 +1247,10 @@ RigExecBakedAddComposeOp(const RigExecBakedProgramImpl &B,
         origin.object >= 0 && size_t(origin.object) < B.composeGroups.size())
         return AddLadderOp(B, builder, layout, o, uint32_t(origin.object),
                            error);
+    if (origin.family == RigExecBakedOpFamily::Compose && origin.object >= 0 &&
+        size_t(origin.object) < B.composeGroups.size())
+        return AddComposeGroupOp(B, builder, layout, o, size_t(origin.object),
+                                 origin.part, error);
     return Fail(error, "node " + std::to_string(o) + " has no compose origin");
 }
 
@@ -774,6 +1265,19 @@ RigExecBakedPlanComposeOps(RigExecBakedProgramImpl *program)
         origin.object = int32_t(slot);
         B.opNodeOrigins.push_back(origin);
     }
+}
+
+size_t
+RigExecBakedComposeNodeCount(const RigExecBakedProgramImpl &B, size_t g)
+{
+    return ComposeNodesOf(B, g).Count();
+}
+
+int
+RigExecBakedComposeNodePart(const RigExecBakedProgramImpl &B, size_t g,
+                            size_t n)
+{
+    return ComposeNodesOf(B, g).Part(n);
 }
 
 bool
@@ -820,6 +1324,31 @@ RigExecBakedLookUpCompose(const RigExecBakedProgramImpl &B,
                           const RigExecTypeDesc &type, void *value,
                           std::string *error)
 {
+    using L = eval::OpLookupSource;
+    if (lookup.source == uint8_t(L::ComposeInputs)) {
+        if (lookup.object < B.paths.size() &&
+            eval::compose_lookups::LookUpComposeInput<BakedPoseMath>(
+                BakedPoseInputs(&B), lookup.object, lookup.read, type, value))
+            return true;
+        return Fail(error, "slot " + std::to_string(lookup.object) +
+                               " has no compose input " +
+                               std::to_string(lookup.read));
+    }
+    if (lookup.source == uint8_t(L::SwitchInputs)) {
+        if (lookup.object < B.spaceSwitches.size() &&
+            eval::compose_lookups::LookUpSwitchInput<BakedPoseMath>(
+                BakedPoseInputs(&B), lookup.object, lookup.read, type, value))
+            return true;
+        return Fail(error, "space switch " + std::to_string(lookup.object) +
+                               " has no input " + std::to_string(lookup.read));
+    }
+    if (lookup.source == uint8_t(L::ClavicleInputs)) {
+        if (lookup.object < B.autoClavicles.size() &&
+            LookUpClavicle(B, lookup.object, lookup.read, type, value))
+            return true;
+        return Fail(error, "auto clavicle " + std::to_string(lookup.object) +
+                               " has no input " + std::to_string(lookup.read));
+    }
     if (lookup.source == uint8_t(eval::OpLookupSource::InterpolatorInputs)) {
         if (lookup.object < B.poseInterpolators.size() &&
             LookUpInterpolator(B, lookup.object,
@@ -873,6 +1402,9 @@ RigExecBakedStoreCompose(RigExecBakedProgramImpl &B, RigExecBakedStep *step,
                          const eval::OpHostOutput &output, const void *value,
                          std::string *error)
 {
+    if (output.target >= uint8_t(eval::OpOutputTarget::ComposeBase) &&
+        output.target <= uint8_t(eval::OpOutputTarget::SpaceMatchStatus))
+        return StoreComposeGroup(B, step, output, value, error);
     if (output.target == uint8_t(eval::OpOutputTarget::InterpolatorStatus)) {
         if (output.object >= B.poseInterpolators.size())
             return Fail(error, "no pose interpolator " +

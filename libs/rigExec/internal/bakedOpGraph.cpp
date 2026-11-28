@@ -65,11 +65,10 @@ RigExecBakedEffectiveMemo(const RigExecBakedProgramImpl &B, uint32_t c,
     size_t propertyChain = 0, propertyPart = 0;
     const bool propertyStep =
         RigExecBakedPropertyPartOf(B, step, &propertyChain, &propertyPart);
-    const bool projectedConsumer =
-        propertyStep ||
-        RigExecBakedIdentityOf(B, step).kind ==
-            RigExecBakedStepKind::AvarInputs ||
-        step.kind == RigExecBakedStepKind::ComposeSubtree;
+    const bool projectedConsumer = propertyStep ||
+                                   RigExecBakedIdentityOf(B, step).kind ==
+                                       RigExecBakedStepKind::AvarInputs ||
+                                   RigExecBakedComposeGroupOf(B, step) >= 0;
     const bool exact = RigExecBakedOpEffectiveInputKey(
         B, step, &scratch, &covered,
         projectedConsumer ? &coveredTyped : nullptr, remap, contentLeaves);

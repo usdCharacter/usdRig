@@ -6,6 +6,7 @@
 #include "bakedExecCrossCheckRows.h"
 #include "bakedProgramImpl.h"
 #include "rigExec/api/rigEvaluator.h"
+#include "rigExecEvalCore/opSteps.h"
 #include "rigExecEvalCore/pose.h"
 #include "rigExecMath/rangeRunner.h"
 #include "rigExecScene/poseProgram.h"
@@ -141,29 +142,10 @@ public:
         return true;
     }
 
-    size_t composeGroupCount() const
-    {
-        return _program->composeGroups.size();
-    }
-
-    void composeGroupRange(size_t object, int *begin, int *end) const
-    {
-        const auto &group = _program->composeGroups[object];
-        *begin = group.begin;
-        *end = group.end;
-    }
-
     bool isPoseSlot(size_t slot) const
     {
         return slot < _program->slotKind.size() &&
                _program->slotKind[slot] == RigExecBakedSlotKind::FirstFramePose;
-    }
-
-    bool composeSlotBounds(size_t slot) const
-    {
-        return slot < _program->slotKind.size() &&
-               slot < _program->base.size() && slot < _program->fin.size() &&
-               slot < _program->posedM.size() && slot < _program->restM.size();
     }
 
     bool providerActive(size_t slot) const
@@ -301,14 +283,6 @@ public:
         }
         *out = _program->defaultRoundTrip[slot];
         return true;
-    }
-
-    void baseFrame(size_t slot, std::array<GfVec3d, 4> *points,
-                   unsigned *flags) const
-    {
-        const RigExecPointFrame &frame = _program->base[slot];
-        *points = frame.points;
-        *flags = frame.flags;
     }
 
     size_t commitObjectCount() const
@@ -458,8 +432,90 @@ public:
         return true;
     }
 
-    const RigExecSpaceSwitchInputs *matchPoleSwitch(size_t object,
-                                                    uint32_t *mode) const
+    /// Space switch \p sw's input \p read (eval::OpSwitchRead, a matrix) as
+    /// its compose reads it, for the source reads source \p k's; a world
+    /// source reads the identity.
+    bool switchMatrix(size_t sw, eval::OpSwitchRead read, size_t k,
+                      GfMatrix4d *out) const
+    {
+        using R = eval::OpSwitchRead;
+        const RigExecBakedProgramImpl &B = *_program;
+        if (sw >= B.spaceSwitches.size())
+            return false;
+        const RigExecBakedProgramImpl::SpaceSwitch &s = B.spaceSwitches[sw];
+        const size_t slot = size_t(s.slot);
+        const auto frame =
+            [&](const RigExecBakedProgramImpl::SpaceSwitch::FrameVersion &v) {
+                *out = v.context >= 0  ? B.switchFrames[size_t(v.context)]
+                       : v.anchor >= 0 ? B.posedM[size_t(v.anchor)]
+                                       : GfMatrix4d(1.0);
+                return true;
+            };
+        switch (read) {
+        case R::PosedDefault:
+            *out = B.posedD[slot];
+            return true;
+        case R::ParentDefaultInverse:
+            *out = B.parentDinv[slot];
+            return true;
+        case R::ParentPosed:
+            return frame(s.parentRead);
+        case R::ParentDefault:
+            *out = B.parent[slot] >= 0
+                       ? B.defaultRoundTrip[size_t(B.parent[slot])]
+                       : GfMatrix4d(1.0);
+            return true;
+        case R::SpaceDefault:
+            if (s.spaceSlot < 0)
+                return false;
+            *out = B.defaultRoundTrip[size_t(s.spaceSlot)];
+            return true;
+        case R::SpacePosed:
+            return s.spaceSlot >= 0 && frame(s.spaceRead);
+        case R::SourceDefaults:
+        case R::SourcePosed: {
+            if (k >= s.sourceSlots.size() || k >= s.sourceReads.size())
+                return false;
+            const int source = s.sourceSlots[k];
+            if (source < 0) {
+                *out = GfMatrix4d(1.0);
+                return true;
+            }
+            if (read == R::SourcePosed)
+                return frame(s.sourceReads[k]);
+            *out = B.defaultRoundTrip[size_t(source)];
+            return true;
+        }
+        case R::Active:
+            break;
+        }
+        return false;
+    }
+
+    /// Space switch \p sw's selected space, a label as its index.
+    double switchActive(size_t sw) const
+    {
+        const RigExecBakedProgramImpl::SpaceSwitch &s =
+            _program->spaceSwitches[sw];
+        if (!s.tokenIndex)
+            return RigExecBakedLeafRead(*_program, s.activeInput);
+        const TfToken selected =
+            RigExecBakedLeafRead(*_program, s.activeTokenInput);
+        const auto label =
+            std::find(s.labels.begin(), s.labels.end(), selected);
+        return label != s.labels.end() ? double(label - s.labels.begin()) : 0.0;
+    }
+
+    size_t switchSourceCount(size_t sw) const
+    {
+        return sw < _program->spaceSwitches.size()
+                   ? _program->spaceSwitches[sw].sourceSlots.size()
+                   : 0;
+    }
+
+    /// The space switch of the pole IK/FK match constraint commit
+    /// \p object moves, or -1; \p mode its eval::OpIkFkMatchRead PoleMode.
+    int matchPoleSwitch(size_t object, uint32_t *mode) const
     {
         const RigExecBakedProgramImpl &B = *_program;
         const RigExecBakedProgramImpl::Constraint &c =
@@ -472,11 +528,8 @@ public:
         if (switched && pole >= 0 && size_t(pole) < B.posedAuthored.size() &&
             !B.posedAuthored[size_t(pole)])
             *mode = 1u;
-        return switched
-                   ? &B.spaceSwitches[size_t(c.matchPoleSwitch)].kernelInputs
-                   : nullptr;
+        return switched ? c.matchPoleSwitch : -1;
     }
-
     eval::PoseIkChainView ikChainView(size_t object) const
     {
         const RigExecBakedProgramImpl::Constraint &c =
@@ -1108,31 +1161,6 @@ public:
     void diagnose(const std::string &message)
     {
         _step->diagnostics.push_back(message);
-    }
-
-    void beforeSlot(eval::StepKind kind, int begin, int i)
-    {
-        if (_program->execCheckRows) {
-            _program->execCheckRows->BeforeSlot(
-                *_program, static_cast<RigExecBakedStepKind>(kind), begin, i);
-        }
-    }
-
-    void writeBase(size_t slot, const std::array<GfVec3d, 4> &points,
-                   unsigned flags)
-    {
-        _program->base[slot] = BakedPoseMath::MakeFrame(points, flags);
-    }
-
-    void writeFin(size_t slot, const std::array<GfVec3d, 4> &points,
-                  unsigned flags)
-    {
-        _program->fin[slot] = BakedPoseMath::MakeFrame(points, flags);
-    }
-
-    void writePosedM(size_t slot, const GfMatrix4d &matrix)
-    {
-        _program->posedM[slot] = matrix;
     }
 
     eval::PoseCommitState commitState(size_t object)

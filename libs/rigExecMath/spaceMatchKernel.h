@@ -88,6 +88,11 @@ RigExecSpaceMatchSolveAll(const double target[16],
 /// frame or solve.
 enum class RigExecSpaceMatchOutcome { Matched, Unsolved, NotFinite };
 
+/// What a space match op reports: the values it published are the match,
+/// or no match exists this frame (a defined result, not an error); for
+/// NotFinite every evaluator gives one kRigExecSpaceMatchNotFinite line.
+enum class RigExecSpaceMatchStatus : uint32_t { Matched, Unsolved, NotFinite };
+
 /// Every evaluator's diagnostic for NotFinite, after the control's path.
 inline constexpr char kRigExecSpaceMatchNotFinite[] =
     " could not match its spaces: a landmark is not finite";

@@ -45,8 +45,6 @@ bool _RrLiveSolver(const RrProgram *program, size_t solver, int field);
 
 RrPoseScratch *_RrScratch(RrProgram *program);
 
-std::string _RrStepHead(const RrProgram *program, size_t step);
-
 // RigExecTransformParams (pointFrame.h), field for field.
 struct _RrTransformParams {
     RrVec3d translation{0, 0, 0};
@@ -106,8 +104,6 @@ struct RrPoseScratch {
     // posedAuthored(M)/restRoundTrip/defaultRoundTrip tables.
     std::vector<RrMat4d> restM, selfD, parentDinv, posedAuthoredM;
     std::vector<RrMat4d> posedD, parentSpaceM;
-    /// Per space switch, the inputs its compose ran on this frame.
-    std::vector<RigExecSpaceSwitchInputsT<RrMat4d>> switchInputs;
     std::vector<char> parentSpaceAuthored;
     std::vector<RrMat4d> restRoundTrip, defaultRoundTrip;
     std::vector<std::array<RrVec3d, 4>> restPts;

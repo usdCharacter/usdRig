@@ -142,6 +142,16 @@ enum class OpLookupSource : uint8_t {
     /// (OpLadderRead): its ladder channels as sampled or answered, or the
     /// rest and default round trips composed before it.
     LadderInputs = 44,
+    /// Slot `object`'s compose input `read` (OpComposeRead): its avars and
+    /// ladder tables as composed this run, or its parent's posed matrix or
+    /// default round trip.
+    ComposeInputs = 45,
+    /// Space switch `object`'s input `read` (OpSwitchRead): its selected
+    /// space and the frames of its parent, carry and sources.
+    SwitchInputs = 46,
+    /// Auto clavicle `object`'s input `read` (OpClavicleRead): a frame it
+    /// reads outside its own subtree, or one of its scalars.
+    ClavicleInputs = 47,
     /// Solver `object`'s input `part` (OpSolverRead), from the pose
     /// versions it reads and the rests composed this run.
     SolverInput = 60,
@@ -173,6 +183,56 @@ enum class OpLadderRead : uint8_t {
     OwnRest,
     ParentRest,
     ParentDefault,
+};
+
+/// OpLookup::read of a ComposeInputs lookup: a ComposeSlot,
+/// SwitchedComposeSlot or SpaceMatch input of the slot.
+enum class OpComposeRead : uint8_t {
+    Avars,
+    RotOrder,
+    RotationSign,
+    PosedAuthored,
+    PosedAuthoredMatrix,
+    PosedDefault,
+    ParentDefaultInverse,
+    ParentSpace,
+    ParentSpaceAuthored,
+    /// Mat4d: the parent's posed matrix.
+    ParentPosed,
+    /// DoubleArray: the channels a space match starts from.
+    MatchChannels,
+};
+
+/// OpLookup::read of a SwitchInputs lookup: the switched slot's ladder
+/// tables, its parent's default round trip, or the switch's own inputs.
+enum class OpSwitchRead : uint8_t {
+    PosedDefault,
+    ParentDefaultInverse,
+    ParentPosed,
+    ParentDefault,
+    /// Double: the selected space, a label as its index.
+    Active,
+    SpaceDefault,
+    SpacePosed,
+    /// Mat4dArray, one per space; a world space's entry is the identity.
+    SourceDefaults,
+    SourcePosed,
+};
+
+/// OpLookup::read of a ClavicleInputs lookup: frame k (Mat4d) of the auto
+/// clavicle's 13, the FK defaults and limb rests as lists of three, or
+/// scalar k (Double) at ScalarBegin + k. A frame that is not usable fails
+/// the lookup.
+enum class OpClavicleRead : uint8_t {
+    Pivot = 1,
+    Anchor = 2,
+    AnchorDefault = 3,
+    FkPosed = 4,
+    FkDefaults = 5,
+    IkTarget = 8,
+    Pole = 9,
+    LimbRests = 10,
+    ScalarBegin = 13,
 };
 
 /// OpLookup::read of a CheckpointInputs lookup: the SpaceCheckpoint input
@@ -551,7 +611,10 @@ OpComposeLookupSource(uint8_t source)
            source == uint8_t(OpLookupSource::CheckpointInputs) ||
            source == uint8_t(OpLookupSource::InterpolatorInputs) ||
            source == uint8_t(OpLookupSource::RestInputs) ||
-           source == uint8_t(OpLookupSource::LadderInputs);
+           source == uint8_t(OpLookupSource::LadderInputs) ||
+           source == uint8_t(OpLookupSource::ComposeInputs) ||
+           source == uint8_t(OpLookupSource::SwitchInputs) ||
+           source == uint8_t(OpLookupSource::ClavicleInputs);
 }
 
 /// Whether a lookup of \p source answers a Mat4d that may be absent or,
@@ -716,6 +779,14 @@ enum class OpOutputTarget : uint8_t {
     /// UInt: pose interpolator `object`'s RigExecPoseInterpolatorStatus;
     /// an unusable driver gives its node's step one line.
     InterpolatorStatus = 45,
+    /// PointFrame: slot `object`'s first pose, into its base and first fin
+    /// version; Mat4d: its posed matrix.
+    ComposeBase = 46,
+    ComposePosed = 47,
+    /// DoubleArray: the values space switch `object`'s match found; UInt:
+    /// its RigExecSpaceMatchStatus, stored after them.
+    SpaceMatchValues = 48,
+    SpaceMatchStatus = 49,
     /// Provider operation `object`'s authority and unavailable input,
     /// stored before its ProviderValueMatrix or ProviderValueFrame.
     ProviderValueAuthority = 50,
@@ -764,7 +835,9 @@ OpComposeOutputTarget(uint8_t target)
            target == uint8_t(OpOutputTarget::PoseWeights) ||
            target == uint8_t(OpOutputTarget::Rest) ||
            target == uint8_t(OpOutputTarget::Ladder) ||
-           target == uint8_t(OpOutputTarget::InterpolatorStatus);
+           target == uint8_t(OpOutputTarget::InterpolatorStatus) ||
+           (target >= uint8_t(OpOutputTarget::ComposeBase) &&
+            target <= uint8_t(OpOutputTarget::SpaceMatchStatus));
 }
 
 /// The RestCompose output port a Rest host output stores. The numbers are
@@ -1757,6 +1830,9 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
     case OpLookupSource::InterpolatorInputs:
     case OpLookupSource::RestInputs:
     case OpLookupSource::LadderInputs:
+    case OpLookupSource::ComposeInputs:
+    case OpLookupSource::SwitchInputs:
+    case OpLookupSource::ClavicleInputs:
         return host.LookUpCompose(index, lookup, type, value, error);
     }
     return OpLayoutFail(error, "no host resolves lookup source " +
@@ -1826,6 +1902,10 @@ OpStoreOutput(Host &host, const OpHostOutput &output, const void *value,
     case OpOutputTarget::Rest:
     case OpOutputTarget::Ladder:
     case OpOutputTarget::InterpolatorStatus:
+    case OpOutputTarget::ComposeBase:
+    case OpOutputTarget::ComposePosed:
+    case OpOutputTarget::SpaceMatchValues:
+    case OpOutputTarget::SpaceMatchStatus:
         return host.StoreCompose(output, value, error);
     }
     return OpLayoutFail(error, "no host stores output target " +

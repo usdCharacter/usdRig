@@ -1483,42 +1483,6 @@ RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program)
     }
 }
 void
-RigExecBakedRunSpaceMatch(const RigExecBakedProgramImpl &B,
-                          RigExecBakedProgramImpl::SpaceSwitch &sw, int slot,
-                          const RigExecSpaceSwitchInputs &input,
-                          const RigExecPointFrame &posed,
-                          std::vector<std::string> *diagnostics)
-{
-    sw.matchValid = false;
-    const size_t spaces = input.sources.size();
-    if (!spaces)
-        return;
-    RigExecIkFkMatchChannels current;
-    RigExecBakedMatchChannelsOf(B, slot, &current);
-    RigExecSpaceSwitchInputs trial = input;
-    const auto compose = [&](const double *avars, double active,
-                             GfMatrix4d *composed) {
-        std::copy(avars, avars + 16, trial.avars.data());
-        trial.active = active;
-        return RigExecRunSpaceSwitchMatrix(sw.kernelRecord, trial, composed);
-    };
-    // The target is read off the composed frame, as the runs are.
-    GfMatrix4d target;
-    if (!RigExecPointsToMatrix(RigExecIdentityLandmarks(), posed.points,
-                               &target)) {
-        return;
-    }
-    sw.matchValues.resize(spaces * RigExecSpaceMatchStride);
-    const RigExecSpaceMatchOutcome outcome =
-        RigExecSpaceMatchT<GfMatrix3d, GfVec3d>(target, current, spaces,
-                                                compose, sw.matchValues.data());
-    sw.matchValid = outcome == RigExecSpaceMatchOutcome::Matched;
-    if (outcome == RigExecSpaceMatchOutcome::NotFinite && diagnostics)
-        diagnostics->push_back((*B.pathTexts)[size_t(slot)] +
-                               kRigExecSpaceMatchNotFinite);
-}
-
-void
 RigExecBakedPresentSpaceMatches(const RigExecBakedProgramImpl &B,
                                 RigExecRigPose *pose)
 {

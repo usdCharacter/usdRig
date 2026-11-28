@@ -311,6 +311,9 @@ struct RrInputState {
     /// Per op node: the pose interpolator whose weights it stores
     /// (eval::OpOutputTarget::PoseWeights), or -1.
     std::vector<int64_t> interpolatorNode;
+    /// Per op node: 1 where it runs a compose group's first pose, reading
+    /// a ComposeInputs, SwitchInputs or ClavicleInputs lookup.
+    std::vector<uint8_t> composeNode;
     /// The override numbers of the provider ladders' inputs, sorted
     /// (RigExecBakedProgramImpl::ladderOverrides).
     std::vector<int32_t> ladderOverrides;
@@ -376,6 +379,32 @@ RrAvarReadRange(const RrInputState &state, int64_t provider)
     }
     return {state.avarReadBegin[size_t(provider)],
             state.avarReadBegin[size_t(provider) + 1]};
+}
+
+/// Whether op node \p node of \p file reads a ComposeInputs, SwitchInputs
+/// or ClavicleInputs lookup.
+inline bool
+RrReadsComposeLookup(const RigExecWireFile &file, size_t node)
+{
+    if (!file.opGraph || node >= file.opGraph->nodes.size() ||
+        !file.opGraph->nodes[node])
+        return false;
+    const auto &lookups = file.opGraph->lookups;
+    for (const auto &input : file.opGraph->nodes[node]->inputs)
+        if (input && input->host == 4 && input->object < lookups.size() &&
+            lookups[input->object] && lookups[input->object]->source >= 45 &&
+            lookups[input->object]->source <= 47)
+            return true;
+    return false;
+}
+
+/// Whether \p step runs a compose group's op node (composeNode).
+inline bool
+RrComposeStep(const RrInputState &state, const RigExecWireStep &step)
+{
+    return step.kind == RigExecWireStepKind::OpNode && step.object >= 0 &&
+           size_t(step.object) < state.composeNode.size() &&
+           state.composeNode[size_t(step.object)];
 }
 
 /// The slot whose avars op step \p step stores, or -1 for any other step.
