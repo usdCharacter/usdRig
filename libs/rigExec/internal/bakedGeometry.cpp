@@ -1840,11 +1840,12 @@ GateRevision(const RoleReads &reads,
 
 /// Whether a Range \p revision runs as op nodes: every Range matrix does.
 /// A usable rigExec:weightBlend is pinned, so a change rebuilds, and in
-/// Export adds its read to \p pinned; any other is read each frame.
+/// Export adds its read to \p pinned, unless \p perFrame; any other is read
+/// each frame.
 bool
 OpMatrixHolds(const RoleReads &reads,
               RigExecBakedProgramImpl::GeomRevision *revision,
-              std::vector<SdfPath> *pinned)
+              std::vector<SdfPath> *pinned, bool perFrame)
 {
     using Role = RigExecRevisionLeafRole;
     revision->opMatrixRadialLeaf = false;
@@ -1853,7 +1854,7 @@ OpMatrixHolds(const RoleReads &reads,
     }
     const RigExecBakedPathLeaves &leaves = revision->leaves;
     const int blend = leaves.decl.Role(Role::WeightBlend);
-    if (blend >= 0 && !reads.Usable(leaves, blend)) {
+    if (blend >= 0 && (perFrame || !reads.Usable(leaves, blend))) {
         revision->opMatrixRadial = false;
         revision->opMatrixRadialLeaf = true;
         return true;
@@ -2027,8 +2028,9 @@ RevisionRunsAsOps(const RigExecBakedProgramImpl::GeomRevision &revision)
 /// role, or when one of its revisions runs as op nodes, over one group when
 /// chunking would not split it; every other chain keeps its Legacy chunks.
 /// The skinning methods and
-/// delta spaces of an eligible chain are compiled rig keys: an authored edit to one
+/// delta spaces of a split chain are compiled rig keys: an authored edit to one
 /// rebuilds, so only an override or upstream value flips a role within the compiled rig.
+/// A one-group chain pins nothing.
 void
 AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
                  RigExecBakedProgramImpl::GeomChain *chain, size_t points)
@@ -2076,6 +2078,17 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
         revision.surfaceCache.PinTopology(false);
         PartitionAtBuild(B, &revision);
         if (!eligible) {
+            continue;
+        }
+        if (!split) {
+            // One vertex group: no halo, partition or gate to pin. Op-capable
+            // revisions run as whole members reading every input each frame,
+            // the rest as Whole revisions.
+            candidate[r] =
+                RevisionRunsAsOps(revision) ? GeomRole::Range : GeomRole::Whole;
+            revision.opWhole = RevisionRunsAsOps(revision) &&
+                               revision.op != RigExecRevisionOp::Matrix;
+            anyRange = anyRange || candidate[r] == GeomRole::Range;
             continue;
         }
         // What cuts a halo (a smooth's topology; a delta mush's topology,
@@ -2180,11 +2193,12 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
             revision.opExternal =
                 revision.op == RigExecRevisionOp::External && revision.opWhole;
             std::vector<char> written;
-            if (!revision.opExternal &&
+            if (split && !revision.opExternal &&
                 GateRevision(reads, *chain, &revision, &written, &pinned[r])) {
                 revision.groupWritten = std::move(written);
             }
-            revision.opMatrix = OpMatrixHolds(reads, &revision, &pinned[r]);
+            revision.opMatrix =
+                OpMatrixHolds(reads, &revision, &pinned[r], !split);
             revision.opSmooth = revision.op == RigExecRevisionOp::Smooth;
             if (revision.opSmooth && !revision.opWhole) {
                 using Role = RigExecRevisionLeafRole;
@@ -6324,27 +6338,45 @@ RigExecBakedPublishGeometry(RigExecBakedProgramImpl *program,
         const RigExecBakedStepIdentity identity =
             RigExecBakedIdentityOf(B, step);
         if (identity.kind == RigExecBakedStepKind::RevisionStatic) {
-            const auto &[chainIndex, revisionIndex] =
-                B.revisionIndex[size_t(identity.object)];
-            const RigExecBakedProgramImpl::GeomChain &chain =
-                B.chains[size_t(chainIndex)];
-            const RigExecBakedProgramImpl::GeomRevision &revision =
-                chain.revisions[size_t(revisionIndex)];
-            // `haveBase` for the same reason the two arms below test it: a
-            // chain whose points stopped reading at this time drives nothing,
-            // and the assemble that would have refreshed the field returned
-            // before it ever looked at the packet. Its last answer is then last
-            // FRAME's, and publishing that is the one shape of staleness a
-            // value comparison cannot catch.
-            if (B.publishWeightFields && chain.haveBase &&
-                revision.weightFieldPublished) {
-                RigExecResolvedWeightField &field =
-                    pose->weightFields
-                        [B.weightObjects[size_t(revision.weightObject)].path];
-                field.target = revision.weightFieldTarget;
-                // Shared, never copied: RevisionStatic replaces the array
-                // rather than writing into it.
-                field.weights = revision.publishedWeightValues;
+            // An op chain's head stands in for every member's static step.
+            const RigExecBakedOpProgram *op = B.opProgram.get();
+            const bool head =
+                step.kind == RigExecBakedStepKind::OpChainHead && op &&
+                size_t(step.object) < op->layout.chainDescs.size();
+            const size_t count =
+                head ? op->layout.chainDescs[size_t(step.object)].members.size()
+                     : 1;
+            for (size_t m = 0; m < count; ++m) {
+                const int id =
+                    head ? op->nodeRevision[op->layout
+                                                .chainDescs[size_t(step.object)]
+                                                .members[m]]
+                         : identity.object;
+                if (id < 0)
+                    continue;
+                const auto &[chainIndex, revisionIndex] =
+                    B.revisionIndex[size_t(id)];
+                const RigExecBakedProgramImpl::GeomChain &chain =
+                    B.chains[size_t(chainIndex)];
+                const RigExecBakedProgramImpl::GeomRevision &revision =
+                    chain.revisions[size_t(revisionIndex)];
+                // `haveBase` for the same reason the two arms below test it: a
+                // chain whose points stopped reading at this time drives nothing,
+                // and the assemble that would have refreshed the field returned
+                // before it ever looked at the packet. Its last answer is then last
+                // FRAME's, and publishing that is the one shape of staleness a
+                // value comparison cannot catch.
+                if (B.publishWeightFields && chain.haveBase &&
+                    revision.weightFieldPublished) {
+                    RigExecResolvedWeightField &field =
+                        pose->weightFields
+                            [B.weightObjects[size_t(revision.weightObject)]
+                                 .path];
+                    field.target = revision.weightFieldTarget;
+                    // Shared, never copied: RevisionStatic replaces the array
+                    // rather than writing into it.
+                    field.weights = revision.publishedWeightValues;
+                }
             }
         } else if (step.kind == RigExecBakedStepKind::ChainStatus) {
             RigExecBakedProgramImpl::GeomChain &chain =

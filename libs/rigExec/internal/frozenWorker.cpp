@@ -670,21 +670,40 @@ _FrozenPublishGeometry(RigExecBakedProgramImpl &B, RigExecRigPose *pose)
         const RigExecBakedStepIdentity identity =
             RigExecBakedIdentityOf(B, step);
         if (identity.kind == RigExecBakedStepKind::RevisionStatic) {
-            const auto &[chainIndex, revisionIndex] =
-                B.revisionIndex[size_t(identity.object)];
-            const RigExecBakedProgramImpl::GeomChain &chain =
-                B.chains[size_t(chainIndex)];
-            const RigExecBakedProgramImpl::GeomRevision &revision =
-                chain.revisions[size_t(revisionIndex)];
-            if (B.publishWeightFields && chain.haveBase &&
-                revision.weightFieldPublished && revision.weightObject >= 0 &&
-                size_t(revision.weightObject) < B.weightObjects.size()) {
-                RigExecResolvedWeightField &field =
-                    pose->weightFields
-                        [B.weightObjects[size_t(revision.weightObject)].path];
-                field.target = revision.weightFieldTarget;
-                // Shared, never copied, as live publishes it.
-                field.weights = revision.publishedWeightValues;
+            // An op chain's head stands in for every member's static step.
+            const RigExecBakedOpProgram *op = B.opProgram.get();
+            const bool head =
+                step.kind == RigExecBakedStepKind::OpChainHead && op &&
+                size_t(step.object) < op->layout.chainDescs.size();
+            const size_t count =
+                head ? op->layout.chainDescs[size_t(step.object)].members.size()
+                     : 1;
+            for (size_t m = 0; m < count; ++m) {
+                const int id =
+                    head ? op->nodeRevision[op->layout
+                                                .chainDescs[size_t(step.object)]
+                                                .members[m]]
+                         : identity.object;
+                if (id < 0)
+                    continue;
+                const auto &[chainIndex, revisionIndex] =
+                    B.revisionIndex[size_t(id)];
+                const RigExecBakedProgramImpl::GeomChain &chain =
+                    B.chains[size_t(chainIndex)];
+                const RigExecBakedProgramImpl::GeomRevision &revision =
+                    chain.revisions[size_t(revisionIndex)];
+                if (B.publishWeightFields && chain.haveBase &&
+                    revision.weightFieldPublished &&
+                    revision.weightObject >= 0 &&
+                    size_t(revision.weightObject) < B.weightObjects.size()) {
+                    RigExecResolvedWeightField &field =
+                        pose->weightFields
+                            [B.weightObjects[size_t(revision.weightObject)]
+                                 .path];
+                    field.target = revision.weightFieldTarget;
+                    // Shared, never copied, as live publishes it.
+                    field.weights = revision.publishedWeightValues;
+                }
             }
         } else if (step.kind == RigExecBakedStepKind::ChainStatus) {
             RigExecBakedProgramImpl::GeomChain &chain =

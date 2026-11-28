@@ -433,10 +433,9 @@ TestPrecedingWeight(const std::string &fixturesDir)
                                  uint32_t(bound.consumer - 1) >= range.first &&
                                  uint32_t(bound.consumer - 1) <= range.last;
                       }));
-    const auto &preceding =
-        B.chains[size_t(chain)].revisions[size_t(revision - 1)];
-    CHECK(!preceding.output.empty());
-    CHECK(bound.count == preceding.output.size());
+    // The chain runs as an op chain: its points live in vertex groups.
+    CHECK(B.chains[size_t(chain)].groupPointCount > 0);
+    CHECK(bound.count == B.chains[size_t(chain)].groupPointCount);
     std::set<size_t> completed;
     for (const auto &entry : trace)
         CHECK(completed.insert(entry.step).second);
@@ -642,11 +641,12 @@ TestBackendKernelsAndBinaryCycle(const std::string &fixturesDir)
             size_t kernels = 0;
             for (size_t i = 0; i < B.steps.size(); ++i) {
                 CHECK(counts[i] <= 1);
-                if (B.steps[i].kind == RigExecBakedStepKind::RevisionChunk) {
+                const RigExecBakedStepIdentity id =
+                    RigExecBakedIdentityOf(B, B.steps[i]);
+                if (id.kind == RigExecBakedStepKind::RevisionChunk) {
                     ++kernels;
                     CHECK(counts[i] == 1);
-                    const auto identity =
-                        B.revisionIndex[size_t(B.steps[i].object)];
+                    const auto identity = B.revisionIndex[size_t(id.object)];
                     const auto &revision =
                         B.chains[size_t(identity.first)]
                             .revisions[size_t(identity.second)];
@@ -726,7 +726,8 @@ TestBackendKernelsAndBinaryCycle(const std::string &fixturesDir)
     size_t runtimeKernels = 0;
     for (size_t i = 0; i < file->steps.size(); ++i) {
         CHECK(runtimeCounts[i] <= 1);
-        if (file->steps[i].kind == fb::StepKind::RevisionChunk) {
+        if (file->steps[i].kind == fb::StepKind::RevisionChunk ||
+            file->steps[i].kind == fb::StepKind::OpChainRange) {
             ++runtimeKernels;
             CHECK(runtimeCounts[i] == 1);
         }

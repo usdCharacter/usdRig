@@ -2826,19 +2826,9 @@ main(int argc, char **argv)
         GfMatrix4d offset(1.0);
         offset.SetScale(1.5);
         offset.SetTranslateOnly(GfVec3d(0.0, 0.25, -0.1));
-        cases += 4;
-        {
-            // A Range delta mush's iteration count cuts its vertex groups:
-            // the export pins it, and no input stands for it.
-            RigExecRigEvaluator evaluator(stage, SdfPath("/PathReadAsset/Rig"));
-            std::vector<uint8_t> bytes;
-            std::string error;
-            RigExecTestPlayer player;
-            CHECK(RigExecTestBakeAt(evaluator, 10.0, &bytes, &error) &&
-                  player.Open(bytes, stage, &error));
-            size_t index = 0;
-            CHECK(!player->FindInput(mush + "inputs:iterations", &index));
-        }
+        cases += 5;
+        _CheckSets("computed_path_reads Mush.inputs:iterations = 6", stage,
+                   10.0, {_Int(mush + "inputs:iterations", 6)}, 1);
         _CheckSets("computed_path_reads Mush.inputs:enabled = false", stage,
                    10.0, {_Boolean(mush + "inputs:enabled", false)}, 1);
         _CheckSets(

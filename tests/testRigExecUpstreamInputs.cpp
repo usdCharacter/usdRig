@@ -2565,8 +2565,9 @@ TestTheArrayPlaybackLegs()
     CheckPlaybackParity("array chunked indices", chunked, kLimbsRig, 5,
                         {Up(kJointIndices, VtValue(chunkIndices))});
 
-    // A genuinely Animated unweighted chain supports changing stage counts;
-    // animated skin layouts remain an explicit original-export refusal.
+    // A genuinely Animated unweighted chain: a stage count other than the
+    // compiled rig's is an invalid frame; animated skin layouts remain an
+    // explicit original-export refusal.
     const SdfPath sampledRig("/SampleAsset/Rig");
     const SdfPath sampledPath("/SampleAsset/Geom/P.points");
     const auto varyingStage = UsdStage::CreateInMemory();
@@ -2658,9 +2659,15 @@ TestTheArrayPlaybackLegs()
     compare("array moving-time lift", 8);
     set(bad);
     compare("array first admission refusal", 9);
-    // Live admits this frame's two points; authored runtime sets keep three.
+    // Live admits this frame's two points, which recompiles its vertex
+    // groups. Runtime sets keep three, and the stage's own sample at 10
+    // holds two, not the compiled three: an invalid frame there.
     set(bad);
-    compare("array runtime first-refusal restores short stage sample", 10);
+    const size_t shortBuilds = evaluator->GetBakedProgramBuildCount();
+    const RigExecRigPose shortPose = evaluator->Evaluate(UsdTimeCode(10));
+    CHECK(shortPose.valid &&
+          evaluator->GetBakedProgramBuildCount() > shortBuilds);
+    CHECK(!play.EvaluateAndPublishResult(UsdTimeCode(10)).ok);
     CHECK(evaluator->GetUpstreamInputPaths() == PathsOf(bad));
     CHECK(play.GetUpstreamInputPaths().empty());
     CHECK(play.GetUpstreamDropLines() ==
@@ -2668,6 +2675,7 @@ TestTheArrayPlaybackLegs()
                                    ": " + sampledPath.GetString() +
                                    " holds 3 elements; an array set keeps that "
                                    "count, not 2; ignored"});
+    compare("array short stage sample recovers", 9);
 
     const std::string lattice = Example("06_LatticeBulge.usda");
     const SdfPath cage("/LatticeAsset/Geom/Cage.points");

@@ -533,17 +533,27 @@ TestAnimatedPointCounts()
     const size_t compiledRig = evaluator.GetCompiledRigSignature();
     auto pose = evaluator.Evaluate(UsdTimeCode(1));
 
+    // Topology is fixed per compiled rig: at 2 the changing points hold 2
+    // points, not the compiled 1, an invalid frame that publishes nothing;
+    // 1 recovers. Nothing recompiles.
     for (double time : {2.0, 1.0, 2.0}) {
         pose = evaluator.Evaluate(UsdTimeCode(time));
-        CHECK(pose.valid);
-
         CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
-        const auto result =
-            pose.movedProperties.at(SdfPath("/Asset/Changing.points"))
-                .Get<VtVec3fArray>();
-        CHECK(result.size() == (time == 1.0 ? 1 : 2));
-        CHECK(!result.empty() &&
-              result.front()[0] == (time == 1.0 ? 2.0f : 12.0f));
+        const auto found =
+            pose.movedProperties.find(SdfPath("/Asset/Changing.points"));
+        if (time == 2.0) {
+            CHECK(!pose.valid && found == pose.movedProperties.end());
+            CHECK(std::find(pose.diagnostics.begin(), pose.diagnostics.end(),
+                            "/Asset/Changing.points: the base has 2 point(s), "
+                            "but the compiled rig cut its vertex groups from "
+                            "1") != pose.diagnostics.end());
+            continue;
+        }
+        CHECK(pose.valid && found != pose.movedProperties.end());
+        if (found == pose.movedProperties.end())
+            continue;
+        const auto result = found->second.Get<VtVec3fArray>();
+        CHECK(result.size() == 1 && result.front()[0] == 2.0f);
     }
 }
 

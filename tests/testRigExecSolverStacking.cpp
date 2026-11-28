@@ -2056,11 +2056,12 @@ TestSolverCheckpointsBake(const std::string &examplesDir)
         };
         const auto foldRan = [&B](const SdfPath &mover) {
             for (size_t id = 0; id < B.steps.size(); ++id) {
-                const auto &step = B.steps[id];
-                if (step.kind != RigExecBakedStepKind::InfluenceFold) {
+                const RigExecBakedStepIdentity identity =
+                    RigExecBakedIdentityOf(B, B.steps[id]);
+                if (identity.kind != RigExecBakedStepKind::InfluenceFold) {
                     continue;
                 }
-                const auto [c, r] = B.revisionIndex[size_t(step.object)];
+                const auto [c, r] = B.revisionIndex[size_t(identity.object)];
                 if (B.chains[size_t(c)].revisions[size_t(r)].moverPath ==
                     mover) {
                     return id < B.opExecution.ran.size() &&

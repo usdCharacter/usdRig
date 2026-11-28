@@ -2439,13 +2439,29 @@ static bool
 KeysWeightOverlay(const RigExecBakedProgramImpl &B,
                   const RigExecBakedStep &step)
 {
-    if (step.kind != RigExecBakedStepKind::RevisionStatic || step.object < 0 ||
-        size_t(step.object) >= B.revisionIndex.size())
+    const auto weighs = [&B](int revision) {
+        if (revision < 0 || size_t(revision) >= B.revisionIndex.size())
+            return false;
+        const auto &id = B.revisionIndex[size_t(revision)];
+        return B.chains[size_t(id.first)]
+                   .revisions[size_t(id.second)]
+                   .weightObject >= 0;
+    };
+    if (step.kind == RigExecBakedStepKind::OpChainHead) {
+        // An op chain's head stores its members' enabled flags, which
+        // publish their weight fields.
+        const RigExecBakedOpProgram *op = B.opProgram.get();
+        if (!op || step.object < 0 ||
+            size_t(step.object) >= op->layout.chainDescs.size())
+            return false;
+        for (const RigExecNodeId n :
+             op->layout.chainDescs[size_t(step.object)].members)
+            if (n < op->nodeRevision.size() && weighs(op->nodeRevision[n]))
+                return true;
         return false;
-    const auto &id = B.revisionIndex[size_t(step.object)];
-    return B.chains[size_t(id.first)]
-               .revisions[size_t(id.second)]
-               .weightObject >= 0;
+    }
+    return step.kind == RigExecBakedStepKind::RevisionStatic &&
+           weighs(step.object);
 }
 bool
 RigExecBakedOpInputKey(const RigExecBakedProgramImpl &B,

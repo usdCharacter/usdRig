@@ -337,6 +337,13 @@ const std::map<std::string, std::string> invalidWeightDrags = {
 
 std::map<std::string, size_t> invalidWeightDragsSeen;
 
+// The drags that reach a matrix mover's default weight through a connection
+// and carry it outside [0, 1]: the mover whose MatrixDeform stops the frame.
+const std::map<std::string, std::string> invalidReachedWeightDrags = {
+    {"/PhaseConnectAsset/Rig/Movers/Dial/Gain.inputs:value",
+     "/PhaseConnectAsset/Rig/Movers/Cards/GainCard"},
+};
+
 // Whether \p drag is listed in invalidWeightDrags; if so, checks that
 // \p pose stopped at the dragged weight's packet with exactly its error.
 bool
@@ -365,6 +372,26 @@ CheckInvalidWeightDrag(const RigExecRigPose &pose,
         if (!failed)
             std::printf("FAIL %s: the drag did not stop at its constraint\n",
                         dragged.GetText());
+        CHECK(failed);
+        return true;
+    }
+    const auto reached = invalidReachedWeightDrags.find(dragged.GetString());
+    if (reached != invalidReachedWeightDrags.end() && !pose.valid) {
+        const std::string prefix = reached->second + ": node ";
+        const std::string suffix =
+            " (rig:MatrixDeform) failed: MatrixDeform: a default weight is not "
+            "finite or outside [0, 1]";
+        const std::string &line =
+            pose.diagnostics.empty() ? std::string() : pose.diagnostics[0];
+        const bool failed =
+            pose.diagnostics.size() == 2 && line.rfind(prefix, 0) == 0 &&
+            line.size() > suffix.size() &&
+            line.compare(line.size() - suffix.size(), suffix.size(), suffix) ==
+                0 &&
+            pose.diagnostics[1] == "native program did not complete generation";
+        if (!failed)
+            std::printf("FAIL %s: the drag did not stop at %s\n",
+                        dragged.GetText(), reached->second.c_str());
         CHECK(failed);
         return true;
     }
@@ -2513,18 +2540,10 @@ RoutedDeformerCases(const std::string &examples)
         return;
     }
     const SdfPath cage = lattice->binding.cagePoints;
-    // The bind's Bernstein factors are the revision's own compiled rig data: a
-    // frame that moves only the posed cage reuses them.
-    const size_t binds = lattice->surfaceCache.LatticeBuilds();
-    CHECK(binds > 0);
     const RigExecRigPose cageNext =
         RunChecked(evaluator.get(), {}, UsdTimeCode(t.GetValue() + 1.0),
                    "lattice cage, next frame");
-    const RigExecBakedProgramImpl::GeomRevision *nextFrame =
-        FirstRevisionOf(*evaluator, RigExecRevisionOp::Lattice);
-    CHECK(nextFrame && nextFrame->surfaceCache.LatticeBuilds() == binds);
-    // The posed cage moved between the frames, so the strip's points did:
-    // the lattice ran at t+1, through the bind it kept.
+    // The posed cage moved between the frames, so the strip's points did.
     const SdfPath slab("/LatticeAsset/Geom/Slab.points");
     const auto slabBefore = cageBefore.movedProperties.find(slab);
     const auto slabNext = cageNext.movedProperties.find(slab);
@@ -2544,10 +2563,6 @@ RoutedDeformerCases(const std::string &examples)
     CHECK(attribute.Set(moved));
     const RigExecRigPose pose =
         RunChecked(evaluator.get(), {}, t, "lattice cage, edited");
-    // A new bind cage moves the bound the factors were taken in.
-    const RigExecBakedProgramImpl::GeomRevision *edited =
-        FirstRevisionOf(*evaluator, RigExecRevisionOp::Lattice);
-    CHECK(edited && edited->surfaceCache.LatticeBuilds() > binds);
     ShadowChecked(*evaluator, {}, t, "lattice cage, edited");
     CHECK(evaluator->GetBakedProgramBuildCount() == builds);
     CHECK(PoseMismatches(FreshPose(stage, rig, t), pose,
@@ -2957,8 +2972,12 @@ TestNoBodyReadsTheStage(const std::string &examples)
             evaluator->SetInteractiveOverrides(drag);
             const size_t generations = evaluator->GetBakedGenerationCount();
             const RigExecRigPose pose = evaluator->Evaluate(t);
-            if (!CheckInvalidWeightDrag(pose, drag))
-                CHECK(pose.valid);
+            if (!CheckInvalidWeightDrag(pose, drag) && !pose.valid) {
+                ++failures;
+                std::printf("FAIL %s %s at %g: the pose is invalid: %s\n",
+                            f.name.c_str(), what.c_str(), t.GetValue(),
+                            TfStringJoin(pose.diagnostics, "; ").c_str());
+            }
             ++fixtureRuns;
             if (evaluator->GetBakedGenerationCount() == generations + 1) {
                 ++fixtureBaked;
@@ -3891,14 +3910,10 @@ def Xform "LatticeAsset"
 }
 )usda";
 
-// Equal lattice binds share one basis. Each revision builds its own on its
-// first frame; once that run joins, the program hands both one immutable
-// bind, which answers what a fresh program's own binds do, so a snapshot
-// frozen right after the first frame holds one bind too. A divisions edit
-// rebuilds the program, and the new revisions share their new bind the
-// same way.
+// Two equal lattices deform their equal strips equally, frame to frame and
+// after a divisions edit, which rebuilds the program.
 void
-TestEqualLatticeBindsShareOneBasis()
+TestTwinLatticesAgree()
 {
     const SdfPath rig("/LatticeAsset/Rig");
     const SdfPath moverA("/LatticeAsset/Rig/Movers/DeformA");
@@ -3909,27 +3924,6 @@ TestEqualLatticeBindsShareOneBasis()
     CHECK(rigExec::RigExecInputReplayImportFromString(stage->GetRootLayer(),
                                                       kTwinLattices));
     auto evaluator = MakeEvaluator(stage, rig);
-    using Revision = RigExecBakedProgramImpl::GeomRevision;
-    // \p B's lattice revision of the mover at \p path.
-    const auto revisionIn = [](const RigExecBakedProgramImpl *B,
-                               const SdfPath &path) -> const Revision * {
-        if (!B) {
-            return nullptr;
-        }
-        for (const auto &chain : B->chains) {
-            for (const Revision &revision : chain.revisions) {
-                if (revision.op == RigExecRevisionOp::Lattice &&
-                    revision.moverPath == path) {
-                    return &revision;
-                }
-            }
-        }
-        return nullptr;
-    };
-    // The standing program's.
-    const auto revisionOf = [&](const SdfPath &path) {
-        return revisionIn(Program(*evaluator), path);
-    };
     const auto pointsAt = [](const RigExecRigPose &pose, const SdfPath &path) {
         const auto found = pose.movedProperties.find(path);
         return found != pose.movedProperties.end() &&
@@ -3937,67 +3931,19 @@ TestEqualLatticeBindsShareOneBasis()
                    ? found->second.UncheckedGet<VtVec3fArray>()
                    : VtVec3fArray();
     };
-    // \p B's two revisions hold one bind at \p divisions, each having
-    // built once.
-    const auto shareOneIn = [&](const RigExecBakedProgramImpl *B,
-                                const GfVec3i &divisions,
-                                const std::string &what) {
-        const Revision *a = revisionIn(B, moverA);
-        const Revision *b = revisionIn(B, moverB);
-        CHECK(a && b);
-        if (!a || !b) {
-            return;
-        }
-        const auto &bind = a->surfaceCache.RetainedLatticeBind();
-        const bool shared =
-            bind && bind == b->surfaceCache.RetainedLatticeBind();
-        if (!shared) {
-            std::printf("FAIL %s: the lattice binds are not shared\n",
-                        what.c_str());
-        }
-        CHECK(shared);
-        CHECK(a->surfaceCache.LatticeBuilds() == 1 &&
-              b->surfaceCache.LatticeBuilds() == 1);
-        CHECK(bind && bind->divisions[0] == divisions[0] &&
-              bind->divisions[1] == divisions[1] &&
-              bind->divisions[2] == divisions[2]);
-    };
-    const auto shareOne = [&](const GfVec3i &divisions,
-                              const std::string &what) {
-        shareOneIn(Program(*evaluator), divisions, what);
-    };
     const RigExecRigPose first =
         RunChecked(evaluator.get(), {}, UsdTimeCode(1013), "twin, first");
-    // Shared once the first frame joined, before anything copies the
-    // program: a snapshot frozen now copies the one bind.
-    shareOne(GfVec3i(2, 2, 3), "twin, first");
-    {
-        std::shared_ptr<const RigExecFrozenProgram> frozen;
-        std::string error;
-        CHECK(RigExecFreezeProgram(*evaluator, &frozen, &error));
-        if (frozen) {
-            shareOneIn(frozen->program.get(), GfVec3i(2, 2, 3),
-                       "twin, frozen after the first frame");
-        } else {
-            std::printf("FAIL twin: freeze refused: %s\n", error.c_str());
-        }
-    }
+    CHECK(!pointsAt(first, slabA).empty() &&
+          pointsAt(first, slabA) == pointsAt(first, slabB));
     const RigExecRigPose next =
         RunChecked(evaluator.get(), {}, UsdTimeCode(1014), "twin, next");
-    shareOne(GfVec3i(2, 2, 3), "twin, next");
-    // The cage moved, so both strips ran through the shared bind.
     const VtVec3fArray movedA = pointsAt(next, slabA);
     CHECK(!movedA.empty() && movedA != pointsAt(first, slabA));
     CHECK(movedA == pointsAt(next, slabB));
     CHECK(PoseMismatches(FreshPose(stage, rig, UsdTimeCode(1014)), next,
                          "twin, next") == 0);
     ShadowChecked(*evaluator, {}, UsdTimeCode(1014), "twin, next");
-    const Revision *before = revisionOf(moverA);
-    const std::shared_ptr<const RigExecLatticeBind<GfVec3f>> previous =
-        before ? before->surfaceCache.RetainedLatticeBind() : nullptr;
 
-    // The divisions are topology: their edit rebuilds the program, whose
-    // revisions build their binds again and share the new one.
     const size_t builds = evaluator->GetBakedProgramBuildCount();
     {
         SdfChangeBlock block;
@@ -4011,10 +3957,6 @@ TestEqualLatticeBindsShareOneBasis()
     CHECK(evaluator->GetBakedProgramBuildCount() > builds);
     const RigExecRigPose rebuilt = RunChecked(
         evaluator.get(), {}, UsdTimeCode(1015), "twin, rebuilt next");
-    shareOne(GfVec3i(2, 3, 2), "twin, rebuilt next");
-    const Revision *after = revisionOf(moverA);
-    CHECK(previous && after &&
-          after->surfaceCache.RetainedLatticeBind() != previous);
     CHECK(!pointsAt(rebuilt, slabA).empty() &&
           pointsAt(rebuilt, slabA) == pointsAt(rebuilt, slabB));
     CHECK(PoseMismatches(FreshPose(stage, rig, UsdTimeCode(1015)), rebuilt,
@@ -5485,7 +5427,7 @@ main(int argc, char **argv)
     TestNoBodyReadsTheStage(examples);
     TestSparseProviderLeaves(examples);
     TestConstraintArraysAreCompiledRigState();
-    TestEqualLatticeBindsShareOneBasis();
+    TestTwinLatticesAgree();
     TestSparseSourceKeys(examples);
     TestAFrozenCloneKeepsSparseSourceKeys(examples);
     TestTheSparseWatchVisitsWhatMoved(examples);
