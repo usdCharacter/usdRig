@@ -33,8 +33,9 @@ const rigExec::RigExecOpHandle &SurfaceBinding();
 // Strength and DeltaMultiplier (Float), SurfaceRest, TargetRest and
 // SurfaceToBinding (Mat4d); Frames (Mat4dArray of two, fed when framed);
 // the bound surface's Surface points (Vec3fArray), Counts and Indices
-// (IntArray, its faces); Envelope (optional FloatArray, one per point),
-// Out. Unusable arrays, stencils, mask, frames or results are an error.
+// (optional IntArray, its faces, read for smooth normals); Out at full
+// strength. A whole ranged op. Unusable arrays, stencils, mask, frames or
+// results are an error.
 const rigExec::RigExecPortHandle &SurfaceBindingPoints();
 const rigExec::RigExecPortHandle &SurfaceBindingVertices();
 const rigExec::RigExecPortHandle &SurfaceBindingVertexOffsets();
@@ -59,7 +60,6 @@ const rigExec::RigExecPortHandle &SurfaceBindingFrames();
 const rigExec::RigExecPortHandle &SurfaceBindingSurface();
 const rigExec::RigExecPortHandle &SurfaceBindingCounts();
 const rigExec::RigExecPortHandle &SurfaceBindingIndices();
-const rigExec::RigExecPortHandle &SurfaceBindingEnvelope();
 const rigExec::RigExecPortHandle &SurfaceBindingOut();
 
 } // namespace rigExecOps

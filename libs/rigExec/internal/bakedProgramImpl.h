@@ -916,6 +916,9 @@ struct RigExecBakedGeomRevision {
     /// computes its full-strength candidate as a whole member, a MoverBlend
     /// member blends it in.
     bool opExternal = false;
+    /// opExternal: per declared input, its Build-time value where nothing
+    /// can move it (RoleReads::Usable), else empty; its binder pins these.
+    std::vector<VtValue> opExternalPinnable;
     bool OpNodes() const
     {
         return opMatrix || opSmooth || opMush || opLattice || blendChunked ||

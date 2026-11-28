@@ -67,8 +67,9 @@ const rigExec::RigExecOpLibraryDesc kLibrary = [] {
 }();
 
 bool
-Build(const rigExec::RigExecRevisionBinding &, rigExec::RigExecRigDescBuilder &,
-      rigExec::RigExecExternalOpPlan &, std::string *error)
+Build(const rigExec::RigExecExternalOpContext &,
+      rigExec::RigExecRigDescBuilder &, rigExec::RigExecExternalOpPlan &,
+      std::string *error)
 {
     if (error)
         *error = "the offset binder binds no mover";

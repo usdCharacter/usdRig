@@ -6,7 +6,9 @@
 #include "rigExecOps/opIo.h"
 #include "rigExecSchema/schemaNames.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <string>
@@ -23,10 +25,11 @@ RIGEXEC_DEFINE_PORT_HANDLE(PatchUKnots)
 RIGEXEC_DEFINE_PORT_HANDLE(PatchVKnots)
 RIGEXEC_DEFINE_PORT_HANDLE(PatchUvPoints)
 RIGEXEC_DEFINE_PORT_HANDLE(PatchUvShapes)
+RIGEXEC_DEFINE_PORT_HANDLE(PatchUvShapeTargets)
 RIGEXEC_DEFINE_PORT_HANDLE(PatchUvWeights)
+RIGEXEC_DEFINE_PORT_HANDLE(PatchAuthoredUvWeights)
 RIGEXEC_DEFINE_PORT_HANDLE(PatchContactLower)
 RIGEXEC_DEFINE_PORT_HANDLE(PatchContactUpper)
-RIGEXEC_DEFINE_PORT_HANDLE(PatchEnvelope)
 RIGEXEC_DEFINE_PORT_HANDLE(PatchOut)
 
 namespace {
@@ -45,6 +48,7 @@ enum PatchField : uint32_t {
     kVOrder,
     kUPeriodic,
     kVPeriodic,
+    kShapes,
 };
 
 /// Instance \p k's patch structure.
@@ -58,12 +62,13 @@ PayloadAt(const rigExec::RigExecOpBatch &batch, size_t k)
     p.vOrder = ValueAt<int32_t>(batch, kVOrder, k);
     p.uPeriodic = FlagAt(batch, kUPeriodic, k);
     p.vPeriodic = FlagAt(batch, kVPeriodic, k);
+    p.shapes = ValueAt<int32_t>(batch, kShapes, k);
     return p;
 }
 
 bool
 PatchOne(const rigExec::RigExecOpIo &io, const PatchPayload &p,
-         std::string *error)
+         std::vector<Vec3f> *points, std::string *error)
 {
     const Points &controls = *In<Points>(io, PatchControlPoints());
     const Doubles &pointWeights = *In<Doubles>(io, PatchPointWeights());
@@ -88,19 +93,27 @@ PatchOne(const rigExec::RigExecOpIo &io, const PatchPayload &p,
         return Fail(error, "Patch", "unusable NURBS patch");
 
     std::vector<Vec3f> uv = ToVector(*In<Points>(io, PatchUvPoints()));
-    const InList<Points> shapes(io, PatchUvShapes());
-    const Doubles &weights = *In<Doubles>(io, PatchUvWeights());
-    if (weights.Size() != shapes.Size())
+    const size_t shapes = size_t(p.shapes);
+    std::vector<double> weights;
+    if (const Doubles *dials = In<Doubles>(io, PatchUvWeights()))
+        weights.assign(dials->Data(), dials->Data() + dials->Size());
+    else if (const Envelope *authored =
+                 In<Envelope>(io, PatchAuthoredUvWeights());
+             authored && authored->Size())
+        weights.assign(authored->Data(), authored->Data() + authored->Size());
+    else
+        weights.assign(shapes, 0.0);
+    if (weights.size() != shapes)
         return Fail(error, "Patch", "one UV weight per UV shape");
-    std::vector<const Vec3f *> shapePoints(shapes.Size());
-    for (size_t k = 0; k < shapes.Size(); ++k) {
-        if (shapes[k].Size() != uv.size())
-            return Fail(error, "Patch",
-                        "a UV shape's point count differs from the UV points");
-        shapePoints[k] = shapes[k].Data();
-    }
-    if (!rigExec::RigExecMixPatchShapes(shapePoints.data(), weights.Data(),
-                                        shapes.Size(), uv.data(), uv.size()))
+    const Points *stack = In<Points>(io, PatchUvShapes());
+    if ((stack ? stack->Size() : 0) != shapes * uv.size())
+        return Fail(error, "Patch",
+                    "a UV shape's point count differs from the UV points");
+    std::vector<const Vec3f *> shapePoints(shapes);
+    for (size_t k = 0; k < shapes; ++k)
+        shapePoints[k] = stack->Data() + k * uv.size();
+    if (!rigExec::RigExecMixPatchShapes(shapePoints.data(), weights.data(),
+                                        shapes, uv.data(), uv.size()))
         return Fail(error, "Patch", "UV weights must be finite");
     const Ints &lower = *In<Ints>(io, PatchContactLower());
     const Ints &upper = *In<Ints>(io, PatchContactUpper());
@@ -115,15 +128,12 @@ PatchOne(const rigExec::RigExecOpIo &io, const PatchPayload &p,
         if (!std::isfinite(x[0]) || !std::isfinite(x[1]))
             return Fail(error, "Patch", "UV points must be finite");
 
-    const Points &in = *In<Points>(io, PatchPoints());
-    std::vector<Vec3f> points = ToVector(in);
-    if (!rigExec::RigExecApplyPatchKernel(points.data(), points.size(), patch,
+    if (!rigExec::RigExecApplyPatchKernel(points->data(), points->size(), patch,
                                           uv.data(), uv.size()))
         return Fail(error, "Patch",
                     "UV point count differs from the points, or a point on "
                     "the patch is not finite");
-    return WritePoints(io, PatchOut(), in, points,
-                       In<Envelope>(io, PatchEnvelope()), "Patch", error);
+    return true;
 }
 
 bool
@@ -154,10 +164,8 @@ Check(const rigExec::RigExecOpCheck &check, std::string *error)
             return Fail(error, "Patch", "unusable NURBS patch");
     }
     const size_t uv = CheckElements(check, PatchUvPoints());
-    if (!SameCount(CheckElements(check, PatchUvWeights()),
-                   Fed(check, PatchUvShapes())
-                       ? CheckElements(check, PatchUvShapes())
-                       : 0))
+    if (Fed(check, PatchUvWeights()) &&
+        !SameCount(CheckElements(check, PatchUvWeights()), size_t(p.shapes)))
         return Fail(error, "Patch", "one UV weight per UV shape");
     if (uv != 1 && !SameCount(uv, CheckElements(check, PatchPoints())))
         return Fail(error, "Patch",
@@ -172,16 +180,28 @@ Check(const rigExec::RigExecOpCheck &check, std::string *error)
         if (!why.empty())
             return Fail(error, "Patch", why);
     }
-    return EnvelopeFits(check, PatchPoints(), PatchEnvelope(), "Patch", error);
+    return true;
+}
+
+rigExec::RigExecRangePlan
+Plan(const rigExec::RigExecOpBatch &, size_t)
+{
+    return rigExec::RigExecRangePlan::Whole;
 }
 
 bool
-Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
+RunRange(const rigExec::RigExecOpBatch &batch, size_t k,
+         const rigExec::RigExecOpRange &range, std::string *error)
 {
-    return EachInstance(batch, failed, [&](size_t k) {
-        return PatchOne(rigExec::RigExecBatchInstance(batch, k),
-                        PayloadAt(batch, k), error);
-    });
+    const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    std::vector<Vec3f> points;
+    GatherWhole(io, range, PatchPoints(), &points);
+    if (!PatchOne(io, PayloadAt(batch, k), &points, error))
+        return false;
+    std::copy(points.begin() + std::ptrdiff_t(range.begin),
+              points.begin() + std::ptrdiff_t(range.end),
+              RangeOut<Vec3f>(io, range, PatchOut()));
+    return true;
 }
 
 void
@@ -194,6 +214,7 @@ Values(const void *payload, rigExec::RigExecFieldValues &out)
     out.Set(kVOrder, p.vOrder);
     SetFlag(out, kUPeriodic, p.uPeriodic);
     SetFlag(out, kVPeriodic, p.vPeriodic);
+    out.Set(kShapes, p.shapes);
 }
 
 const rigExec::RigExecFieldDesc kFields[] = {
@@ -203,24 +224,23 @@ const rigExec::RigExecFieldDesc kFields[] = {
     Value("vOrder", rigExecStd::IntType()),
     Flag("uPeriodic"),
     Flag("vPeriodic"),
+    Value("shapes", rigExecStd::IntType()),
 };
 
 } // namespace
 
 namespace {
 
-using rigExec::kRigExecPortArray;
 using rigExec::kRigExecPortInput;
 using rigExec::kRigExecPortOptional;
 using rigExec::kRigExecPortOutput;
-constexpr uint32_t kChecked = kRigExecPortInput | rigExec::kRigExecPortChecked;
 
 namespace names = rigExec::SchemaAttrText;
 namespace values = rigExec::SchemaValueText;
 namespace types = rigExec::SchemaTypeName;
 using authoring::Authored;
 
-const rigExecStd::RigExecArray<double> kNoWeights;
+const rigExecStd::RigExecArray<float> kNoWeights;
 const rigExecStd::RigExecArray<int32_t> kNoPairs;
 
 const rigExec::RigExecPropertyInfo kPatchProperty = authoring::Relationship(
@@ -278,33 +298,39 @@ shapes.)",
     authoring::kTyped, rigExec::RigExecSchemaMode::Generated};
 
 const rigExec::RigExecPortDesc kPorts[] = {
-    {&PatchPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput, "points"},
+    {&PatchPoints(), &rigExecStd::Vec3fArray(),
+     kRigExecPortInput | rigExec::kRigExecPortNeighbourhood, "points"},
     Authored({&PatchControlPoints(), &rigExecStd::Vec3fArray(),
               kRigExecPortInput, "controlPoints"},
              kPatchProperty),
-    {&PatchPointWeights(), &rigExecStd::DoubleArray(), kChecked,
+    {&PatchPointWeights(), &rigExecStd::DoubleArray(), kRigExecPortInput,
      "pointWeights"},
-    {&PatchUKnots(), &rigExecStd::DoubleArray(), kChecked, "uKnots"},
-    {&PatchVKnots(), &rigExecStd::DoubleArray(), kChecked, "vKnots"},
+    {&PatchUKnots(), &rigExecStd::DoubleArray(), kRigExecPortInput, "uKnots"},
+    {&PatchVKnots(), &rigExecStd::DoubleArray(), kRigExecPortInput, "vKnots"},
     Authored({&PatchUvPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
               "uvPoints"},
              kUvPoints),
-    Authored({&PatchUvShapes(), &rigExecStd::Vec3fArray(),
-              kRigExecPortInput | kRigExecPortArray | kRigExecPortOptional,
-              "uvShapes"},
-             kUvShapes),
-    Authored({&PatchUvWeights(), &rigExecStd::DoubleArray(), kRigExecPortInput,
-              "uvWeights"},
+    // The authored shape targets; their points reach UvShapes joined.
+    Authored(
+        {&PatchUvShapeTargets(), &rigExecStd::Vec3fArray(),
+         kRigExecPortInput | kRigExecPortOptional | rigExec::kRigExecPortArray,
+         "uvShapes"},
+        kUvShapes),
+    {&PatchUvShapes(), &rigExecStd::Vec3fArray(),
+     kRigExecPortInput | kRigExecPortOptional, "uvShapePoints"},
+    {&PatchUvWeights(), &rigExecStd::DoubleArray(),
+     kRigExecPortInput | kRigExecPortOptional, "uvWeightSources"},
+    Authored({&PatchAuthoredUvWeights(), &rigExecStd::FloatArray(),
+              kRigExecPortInput | kRigExecPortOptional, "uvWeights"},
              kUvWeights),
-    Authored({&PatchContactLower(), &rigExecStd::IntArray(), kChecked,
+    Authored({&PatchContactLower(), &rigExecStd::IntArray(), kRigExecPortInput,
               "uvContactLower"},
              kContactLower),
-    Authored({&PatchContactUpper(), &rigExecStd::IntArray(), kChecked,
+    Authored({&PatchContactUpper(), &rigExecStd::IntArray(), kRigExecPortInput,
               "uvContactUpper"},
              kContactUpper),
-    {&PatchEnvelope(), &rigExecStd::FloatArray(),
-     kRigExecPortInput | kRigExecPortOptional, "envelope"},
-    {&PatchOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+    {&PatchOut(), &rigExecStd::Vec3fArray(),
+     kRigExecPortOutput | rigExec::kRigExecPortPointwise, "out",
      rigExec::RigExecOutputBound::Input, &PatchPoints()},
 };
 
@@ -315,11 +341,13 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.schema = &kPatchSchema;
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.runBatch = &Run;
+    d.range.plan = &Plan;
+    d.range.run = &RunRange;
     d.validate = &Check;
-    d.capabilities =
-        rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
-        rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;
+    d.capabilities = rigExec::kRigExecOpBakeable |
+                     rigExec::kRigExecOpFreezable |
+                     rigExec::kRigExecOpSeparateBlend |
+                     rigExec::kRigExecOpFromLeaves | rigExec::kRigExecOpRanged;
     d.payloadFields = kFields;
     d.payloadFieldCount = std::size(kFields);
     d.payloadVersion = 1;

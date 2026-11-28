@@ -1619,7 +1619,8 @@ ProbeRevisions(const B &b)
                 continue;
             }
             if (revision.opMatrix || revision.opSmooth || revision.opMush ||
-                revision.opLattice || revision.blendChunked) {
+                revision.opLattice || revision.blendChunked ||
+                revision.opExternal) {
                 Unprobed("RevisionChunk", kind, "runs as op nodes");
                 continue;
             }
@@ -4962,9 +4963,6 @@ main(int argc, char **argv)
           "RevisionChunk/Ribbon",
           "RevisionChunk/EmitGuidePoints",
           "RevisionChunk/Wrinkle",
-          "RevisionChunk/External RigExecPatchMover",
-          "RevisionChunk/External RigExecSurfaceBindingMover",
-          "RevisionChunk/External RigExecLayeredSkinMover",
           "RevisionChunk/External RigExecClothMover",
           "Derived/RecomputeNormals",
           "Derived/RecomputeExtent",

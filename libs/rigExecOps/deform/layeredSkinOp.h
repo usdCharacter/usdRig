@@ -28,12 +28,12 @@ struct LayeredSkinPayload {
 
 const rigExec::RigExecOpHandle &LayeredSkin();
 
-// Points (Vec3fArray), Transforms (Mat4dArray, one per influence), Indices
-// (IntArray) and Weights (FloatArray, elementSize per point), Mask
-// (FloatArray, empty or one weight in [0, 1] per point), Base (Vec3fArray,
-// empty to skin the entering points), InputTransform (Mat4d), Envelope
-// (optional FloatArray, one per point), Out. An unusable layout, mask,
-// base or result is an error.
+// A whole ranged op. Points (Vec3fArray), Transforms (Mat4dArray, one per
+// influence), Indices (IntArray) and Weights (FloatArray, elementSize per
+// point), Mask (FloatArray, empty or one weight in [0, 1] per point), Base
+// (optional Vec3fArray, empty or unfed to skin the entering points),
+// InputTransform (optional Mat4d, the identity unfed), Out at full strength.
+// An unusable layout, mask, base or result is an error.
 const rigExec::RigExecPortHandle &LayeredSkinPoints();
 const rigExec::RigExecPortHandle &LayeredSkinTransforms();
 const rigExec::RigExecPortHandle &LayeredSkinIndices();
@@ -41,7 +41,6 @@ const rigExec::RigExecPortHandle &LayeredSkinWeights();
 const rigExec::RigExecPortHandle &LayeredSkinMask();
 const rigExec::RigExecPortHandle &LayeredSkinBase();
 const rigExec::RigExecPortHandle &LayeredSkinInputTransform();
-const rigExec::RigExecPortHandle &LayeredSkinEnvelope();
 const rigExec::RigExecPortHandle &LayeredSkinOut();
 
 } // namespace rigExecOps

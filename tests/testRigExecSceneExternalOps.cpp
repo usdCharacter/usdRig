@@ -157,10 +157,14 @@ RunOp(const Revision &r, const RigExecWeightPacket &weights,
     values.transform = in.transform;
     values.influenceTransforms = in.influenceTransforms;
     values.basePoints = &in.basePoints;
+    // A binder reads the influences the binding names.
+    RigExecRevisionBinding binding = r.record.binding;
+    if (in.influenceTransforms)
+        binding.influences.assign(in.influenceTransforms->size(),
+                                  SdfPath("/Frame"));
     *out = r.points;
     return RigExecGeometryPacketMatches(r.record.op, p) &&
-           RigExecRunExternalOp(r.record.binding, p, values, runner, *out,
-                                error);
+           RigExecRunExternalOp(binding, p, values, runner, *out, error);
 }
 
 bool
@@ -1155,7 +1159,6 @@ TestCapabilities()
         CHECK(RigExecRevisionTakesSeparateBlend(Op::External,
                                                 RigExecWeightPacket()) ==
               has(kRigExecOpSeparateBlend));
-        CHECK(RigExecRevisionIsRangeOp(Op::External) == has(kRigExecOpRanged));
         CHECK(RigExecRevisionGateHolds(Op::External, gated) ==
               has(kRigExecOpGate));
         CHECK(RigExecRevisionOpAssemblesFromLeaves(Op::External) ==

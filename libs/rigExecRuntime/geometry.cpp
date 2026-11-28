@@ -8307,8 +8307,9 @@ RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
     const auto fail = [&]() {
         if (error)
             *error = "op nodes: revision " + std::to_string(lookup.object) +
-                     " has no input " + std::to_string(lookup.read) +
-                     " of the looked-up type";
+                     " has no input " + std::to_string(lookup.read) + "/" +
+                     std::to_string(lookup.part) + " of the looked-up type " +
+                     type.name;
         return false;
     };
     if (!scratch || !program->geometry ||
@@ -8366,6 +8367,29 @@ RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
                 return array(Tag::Vec2fArray,
                              static_cast<std::vector<RrVec2f> *>(nullptr));
             case K::Vec3fArray:
+                if (site.time == fb::ExternalInputTime::AtTime &&
+                    (site.flavour == fb::ExternalInputFlavour::Resolved ||
+                     site.flavour == fb::ExternalInputFlavour::ResolvedOnly ||
+                     site.flavour == fb::ExternalInputFlavour::OverlayThenRaw))
+                    // The phase overlay (RrGeoResolveRevisionPhases) first.
+                    for (const RigExecWirePointsBinding &binding :
+                         wire.pointBindings) {
+                        if (binding.inputPath != site.path)
+                            continue;
+                        if (const std::vector<RrVec3f> *answer =
+                                RrGeoResolvePoints(*scratch, binding))
+                            return lend(answer->data(), answer->size());
+                        if (binding.diagnoseMiss && lines)
+                            lines->push_back(
+                                "diag " + program->TextOrEmpty(wire.moverPath) +
+                                ": read phase '" +
+                                RrGeoPhaseName(program, binding.phase) +
+                                "' for " +
+                                program->TextOrEmpty(binding.inputPath) +
+                                " resolved to nothing; read the authored "
+                                "base");
+                        break;
+                    }
                 return array(Tag::Vec3fArray,
                              static_cast<std::vector<RrVec3f> *>(nullptr));
             default:
@@ -8392,6 +8416,13 @@ RrGeoLookUpRevision(RrProgram *program, const eval::OpLookup &lookup,
             return put(v);
         }
         case K::Double: {
+            // A dial reading a float widens it.
+            if (tag == Tag::Float) {
+                const uint32_t bits = uint32_t(scalar.bits);
+                float f = 0.0f;
+                std::memcpy(&f, &bits, sizeof(f));
+                return put(double(f));
+            }
             if (tag != Tag::Double)
                 return fail();
             double v = 0.0;

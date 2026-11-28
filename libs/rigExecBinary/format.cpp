@@ -1442,6 +1442,14 @@ private:
             }
             if (lookup && lookup->source == 11)
                 continue;
+            if (lookup && lookup->source == 81) {
+                if (lookup->part < 0 ||
+                    uint64_t(lookup->object) + uint64_t(lookup->part) >
+                        _f.opGraph->lookups.size())
+                    return _Bad("op_graph.lookups: a joined lookup reads "
+                                "nothing the file holds");
+                continue;
+            }
             if (lookup && lookup->source >= 5 && lookup->source <= 9) {
                 using D = fb::SlotDomain;
                 const auto &lookups = _f.opGraph->lookups;

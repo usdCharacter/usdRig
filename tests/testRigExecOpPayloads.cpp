@@ -909,14 +909,17 @@ TestDeformSavedBytes()
     {
         PatchPayload p;
         CheckSaved(Patch(), &p,
-                   "01000000 00000000 00000000 00000000 00000000 00 00");
+                   "01000000 00000000 00000000 00000000 00000000 00 00 "
+                   "00000000");
         p.uVertexCount = 7;
         p.vVertexCount = -2;
         p.uOrder = 4;
         p.vOrder = 16;
         p.uPeriodic = true;
+        p.shapes = 3;
         CheckSaved(Patch(), &p,
-                   "01000000 07000000 feffffff 04000000 10000000 01 00");
+                   "01000000 07000000 feffffff 04000000 10000000 01 00 "
+                   "03000000");
     }
     {
         SurfaceBindingPayload p;

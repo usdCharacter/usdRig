@@ -214,6 +214,35 @@ RangeGroups(const rigExec::RigExecOpRange &range,
     return out;
 }
 
+/// All points of neighbourhood input \p port, for a range of a Whole plan:
+/// gathered from the groups the range reads, else the whole value.
+inline void
+GatherWhole(const rigExec::RigExecOpIo &io,
+            const rigExec::RigExecOpRange &range,
+            const rigExec::RigExecPortHandle &port,
+            std::vector<rigExecStd::Vec3f> *out)
+{
+    const auto *groups = range.at
+                             ? static_cast<const rigExec::RigExecOpGroups *>(
+                                   range.at[port.Index()])
+                             : nullptr;
+    if (!groups) {
+        const Points *whole = In<Points>(io, port);
+        if (whole)
+            out->assign(whole->Data(), whole->Data() + whole->Size());
+        else
+            out->clear();
+        return;
+    }
+    out->resize(range.count);
+    for (size_t h = 0; h < groups->groups; ++h) {
+        const auto *from =
+            static_cast<const rigExecStd::Vec3f *>(groups->points[h]);
+        for (int i = groups->bounds[h]; i < groups->bounds[h + 1]; ++i)
+            (*out)[size_t(i)] = from[i - groups->bounds[h]];
+    }
+}
+
 /// Blends the \p count points at \p out back toward \p in by \p envelope;
 /// null is 1 everywhere.
 inline void

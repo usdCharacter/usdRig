@@ -146,11 +146,11 @@ RigExecDispatchBindsExternalOp(const RigExecRevisionBinding &binding)
 }
 
 bool
-RigExecDispatchBuildExternalOp(const RigExecRevisionBinding &binding,
+RigExecDispatchBuildExternalOp(const RigExecExternalOpContext &context,
                                RigExecRigDescBuilder &builder,
                                RigExecExternalOpPlan *plan, std::string *error)
 {
-    return Dispatch(&RigExecSceneHooks::buildExternalOp, error, binding,
+    return Dispatch(&RigExecSceneHooks::buildExternalOp, error, context,
                     builder, plan, error);
 }
 

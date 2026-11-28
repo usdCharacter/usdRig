@@ -1250,6 +1250,14 @@ struct RoleReads {
                                           : TfToken();
     }
 
+    /// Key \p k's value, sampled as Token samples.
+    VtValue Value(const RigExecBakedPathLeaves &leaves, int k) const
+    {
+        return RigExecSampleRevisionLeaf(leaves.decl.keys[size_t(k)],
+                                         leaves.attributes[size_t(k)], &overlay,
+                                         UsdTimeCode::Default(), &B.upstream);
+    }
+
     /// Key \p k's int array, sampled as Token samples; empty for k < 0.
     VtIntArray Ints(const RigExecBakedPathLeaves &leaves, int k) const
     {
@@ -2068,6 +2076,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
         revision.opLattice = false;
         revision.opWhole = false;
         revision.opExternal = false;
+        revision.opExternalPinnable.clear();
         revision.blendChunked = false;
         revision.groupWritten.clear();
         revision.enteringWriter.clear();
@@ -2192,6 +2201,19 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
             // A plugin mover's op writes every group.
             revision.opExternal =
                 revision.op == RigExecRevisionOp::External && revision.opWhole;
+            if (revision.opExternal) {
+                const RigExecBakedPathLeaves &leaves = revision.leaves;
+                const size_t declared = revision.binding.externalInputs.size();
+                revision.opExternalPinnable.assign(declared, VtValue());
+                for (size_t i = 0;
+                     i < declared && leaves.decl.externalBegin >= 0; ++i) {
+                    const int k = leaves.decl.externalBegin + int(i);
+                    if (reads.Usable(leaves, k) &&
+                        size_t(k) < leaves.hops.size() &&
+                        !reads.Reaches(leaves.hops[size_t(k)]))
+                        revision.opExternalPinnable[i] = reads.Value(leaves, k);
+                }
+            }
             std::vector<char> written;
             if (split && !revision.opExternal &&
                 GateRevision(reads, *chain, &revision, &written, &pinned[r])) {
@@ -6755,8 +6777,31 @@ RigExecBakedLookUpRevision(RigExecBakedProgramImpl &B, uint32_t index,
             return array(static_cast<VtDoubleArray *>(nullptr));
         case K::Vec2fArray:
             return array(static_cast<VtVec2fArray *>(nullptr));
-        case K::Vec3fArray:
+        case K::Vec3fArray: {
+            const RigExecRevisionLeafKey &key =
+                leaves.decl.keys[size_t(lookup.part)];
+            if (key.time == RigExecRevisionLeafTime::AtTime &&
+                (key.flavour == RigExecRevisionLeafFlavour::Resolved ||
+                 key.flavour == RigExecRevisionLeafFlavour::ResolvedOnly ||
+                 key.flavour == RigExecRevisionLeafFlavour::OverlayThenRaw))
+                // The phase overlay (RigExecBakedOverlayPointReads) first.
+                for (const RigExecBakedPointsBinding &binding :
+                     c.revisions[size_t(r)].pointBindings) {
+                    if (binding.input != key.path)
+                        continue;
+                    const GfVec3f *points = nullptr;
+                    size_t count = 0;
+                    const bool answered =
+                        RigExecBakedResolvePoints(B, binding, &points, &count);
+                    CapturePointRead(&B, binding, points, count, answered);
+                    if (answered)
+                        return lend(points, count);
+                    if (binding.diagnoseMiss && lines)
+                        lines->push_back(binding.missDiagnostic);
+                    break;
+                }
             return array(static_cast<VtVec3fArray *>(nullptr));
+        }
         case K::None:
             break;
         }

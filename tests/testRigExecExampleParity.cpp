@@ -111,6 +111,13 @@ const InvalidDrag kInvalidOperatorDrags[] = {
      "StaticWeights: a weight is not finite or outside [0, 1]"},
     {"13_ReadPhases.usda",
      "StaticWeights: a weight is not finite or outside [0, 1]"},
+    // The patches' default weights: 1.25 is out of range.
+    {"12_PatchCurve.usda",
+     "MoverBlend: a default weight is not finite or outside [0, 1]"},
+    {"17_PatchCurveShapes.usda",
+     "MoverBlend: a default weight is not finite or outside [0, 1]"},
+    {"18_PatchMouth.usda",
+     "MoverBlend: a default weight is not finite or outside [0, 1]"},
     // The full-strength matrix's own default weight: 1.25 is out of range.
     {"20_MatrixSphere.usda",
      "MatrixDeform: a default weight is not finite or outside [0, 1]"},

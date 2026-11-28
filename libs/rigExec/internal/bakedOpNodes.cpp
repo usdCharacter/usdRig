@@ -595,6 +595,7 @@ LeafFeeds(RigExecRevisionLeafType leaf, const RigExecTypeHandle *port)
     case T::Float:
         return port == &rigExecStd::FloatType();
     case T::Double:
+    case T::Dial:
         return port == &rigExecStd::DoubleType();
     case T::Vec3f:
         return port == &rigExecStd::Vec3fType();
@@ -651,7 +652,9 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                  const std::vector<RigExecBakedOpFeed> &fields,
                  const std::vector<int> &apart,
                  std::vector<std::pair<RigExecNodeId, int>> *nodeRevision,
-                 std::vector<PointJoin> *joins, std::string *error)
+                 std::vector<PointJoin> *joins,
+                 std::vector<std::pair<int, uint32_t>> *pins,
+                 std::string *error)
 {
     using L = eval::OpLookupSource;
     const auto bind = [&](RigExecNodeId node, const RigExecPortHandle &port,
@@ -667,6 +670,32 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
         layout->lookups.insert(layout->lookups.end(), candidates.begin(),
                                candidates.end());
     };
+    // One array input from many lookups: a list of elements, each one
+    // lookup or a selection among its candidates, or arrays joined.
+    const auto bindMany =
+        [&](RigExecNodeId node, const RigExecPortHandle &port, L source,
+            const std::vector<std::vector<eval::OpLookup>> &elements) {
+            builder->BindInput(node, port);
+            const uint32_t head = uint32_t(layout->lookups.size());
+            layout->hostInputs.push_back(
+                {node, port.Index(), eval::OpHostSource::Lookup, head});
+            layout->lookups.push_back(
+                {uint8_t(source), head + 1, int32_t(elements.size()), 0});
+            layout->lookups.resize(head + 1 + elements.size());
+            for (size_t e = 0; e < elements.size(); ++e) {
+                const std::vector<eval::OpLookup> &candidates = elements[e];
+                if (candidates.size() == 1) {
+                    layout->lookups[head + 1 + e] = candidates[0];
+                    continue;
+                }
+                const eval::OpLookup selected{uint8_t(L::Selected),
+                                              uint32_t(layout->lookups.size()),
+                                              int32_t(candidates.size()), 0};
+                layout->lookups[head + 1 + e] = selected;
+                layout->lookups.insert(layout->lookups.end(),
+                                       candidates.begin(), candidates.end());
+            }
+        };
     const auto feed = [](const std::vector<RigExecBakedOpFeed> &feeds, int at) {
         return at >= 0 && size_t(at) < feeds.size() && feeds[size_t(at)].port
                    ? &feeds[size_t(at)]
@@ -1062,8 +1091,9 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
             }
             if (revision.opExternal) {
                 RigExecExternalOpPlan plan;
-                if (!RigExecDispatchBuildExternalOp(revision.binding, *builder,
-                                                    &plan, error))
+                if (!RigExecDispatchBuildExternalOp(
+                        {revision.binding, revision.opExternalPinnable},
+                        *builder, &plan, error))
                     return false;
                 const RigExecOpDesc &desc =
                     *RigExecRegistry::Get().Op(*plan.op).desc;
@@ -1071,11 +1101,18 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                     return Fail(error, revision.moverPathText +
                                            ": its op does not run as a whole "
                                            "range member");
+                for (const uint32_t k : plan.pins)
+                    pins->push_back({id, k});
                 const RigExecBakedPathLeaves &leaves = revision.leaves;
                 for (const RigExecExternalOpFeed &feed : plan.feeds) {
                     using Source = RigExecExternalOpSource;
                     const RigExecPortDesc &port =
                         desc.ports[feed.port->Index()];
+                    const RigExecTypeHandle *element =
+                        feed.count ? RigExecRegistry::Get()
+                                         .TypeAt(port.type->Index())
+                                         .desc->element
+                                   : nullptr;
                     switch (feed.source) {
                     case Source::Points:
                         if (!(port.flags & kRigExecPortNeighbourhood))
@@ -1090,15 +1127,27 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                                  eval::OpRevisionRead::ChainBase);
                         break;
                     case Source::Input: {
-                        const int k =
-                            leaves.decl.externalBegin < 0
-                                ? -1
-                                : leaves.decl.externalBegin + int(feed.index);
-                        if (k < 0 ||
-                            feed.index >=
-                                revision.binding.externalInputs.size() ||
-                            !LeafFeeds(leaves.decl.keys[size_t(k)].type,
-                                       port.type))
+                        // Listed scalars of the port's element type, or
+                        // arrays of its type joined.
+                        const uint32_t count = feed.count ? feed.count : 1;
+                        bool fits = leaves.decl.externalBegin >= 0 &&
+                                    size_t(feed.index) + count <=
+                                        revision.binding.externalInputs.size();
+                        bool joined = !feed.count;
+                        std::vector<std::vector<eval::OpLookup>> elements;
+                        for (uint32_t e = 0; fits && e < count; ++e) {
+                            const int k =
+                                leaves.decl.externalBegin + int(feed.index + e);
+                            const RigExecRevisionLeafType type =
+                                leaves.decl.keys[size_t(k)].type;
+                            if (e == 0 && feed.count)
+                                joined = LeafFeeds(type, port.type);
+                            fits = joined ? LeafFeeds(type, port.type)
+                                          : LeafFeeds(type, element);
+                            elements.push_back({{uint8_t(L::ExternalInput),
+                                                 uint32_t(id), k, 0}});
+                        }
+                        if (!fits)
                             return Fail(error,
                                         revision.moverPathText +
                                             ": its declared input " +
@@ -1106,8 +1155,11 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                                             " does not hold op input " +
                                             (port.name ? port.name : "") +
                                             "'s type");
-                        bind(plan.node, *feed.port,
-                             {{uint8_t(L::ExternalInput), uint32_t(id), k, 0}});
+                        if (!feed.count)
+                            bind(plan.node, *feed.port, elements[0]);
+                        else
+                            bindMany(plan.node, *feed.port,
+                                     joined ? L::Joined : L::List, elements);
                         break;
                     }
                     case Source::Transform: {
@@ -1124,18 +1176,31 @@ AddPointChainOps(const RigExecBakedProgramImpl &B,
                         bind(plan.node, *feed.port, candidates);
                         break;
                     }
-                    case Source::Influence:
-                        if (feed.index >= revision.influenceSlots.size() ||
-                            revision.influenceSlots[feed.index] < 0)
+                    case Source::Influence: {
+                        const uint32_t count = feed.count ? feed.count : 1;
+                        std::vector<std::vector<eval::OpLookup>> elements;
+                        for (uint32_t e = 0; e < count; ++e) {
+                            const size_t k = size_t(feed.index) + e;
+                            if (k >= revision.influenceSlots.size() ||
+                                revision.influenceSlots[k] < 0)
+                                return Fail(error, revision.moverPathText +
+                                                       ": its op reads an "
+                                                       "influence it names "
+                                                       "none of");
+                            elements.push_back(phased(
+                                records(k), table(revision.influenceSlots[k])));
+                        }
+                        if (feed.count && element != &rigExecStd::Mat4dType())
                             return Fail(error, revision.moverPathText +
-                                                   ": its op reads an "
-                                                   "influence it names none "
-                                                   "of");
-                        bind(
-                            plan.node, *feed.port,
-                            phased(records(feed.index),
-                                   table(revision.influenceSlots[feed.index])));
+                                                   ": its op lists influences "
+                                                   "into an input that holds "
+                                                   "no matrices");
+                        if (!feed.count)
+                            bind(plan.node, *feed.port, elements[0]);
+                        else
+                            bindMany(plan.node, *feed.port, L::List, elements);
                         break;
+                    }
                     }
                 }
                 const RigExecNodeId blend =
@@ -1535,6 +1600,9 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
     std::vector<RigExecBakedOpFeed> packets, fields;
     std::vector<std::pair<RigExecNodeId, int>> nodeRevision;
     std::vector<PointJoin> joins;
+    // The declared inputs External binders pinned, by revision: an authored
+    // edit rebuilds, an override that reaches one stops the roles standing.
+    std::vector<std::pair<int, uint32_t>> pins;
     std::vector<int> apart;
     // A member reading its own chain through a declared phase heads an op
     // chain of its own, whose head runs once that version is stored.
@@ -1566,6 +1634,7 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
         fields.clear();
         nodeRevision.clear();
         joins.clear();
+        pins.clear();
         if (!RigExecBakedAddPropertyOps(B, builder.get(), &layout, error) ||
             !RigExecBakedAddWeightFieldOps(B, builder.get(), &layout, false,
                                            &fields, error) ||
@@ -1579,7 +1648,7 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
             !RigExecBakedAddProviderOps(B, builder.get(), &layout, error) ||
             !RigExecBakedAddComposeOps(B, builder.get(), &layout, error) ||
             !AddPointChainOps(B, builder.get(), &layout, packets, fields, apart,
-                              &nodeRevision, &joins, error))
+                              &nodeRevision, &joins, &pins, error))
             return false;
         injection = RigExecBakedOpInjection();
         injection.builder = builder.get();
@@ -1610,6 +1679,22 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
         if (apart.size() == before)
             break;
     }
+    for (const auto &[id, input] : pins) {
+        const auto &[c, r] = B.revisionIndex[size_t(id)];
+        RigExecBakedProgramImpl::GeomRevision &revision =
+            B.chains[size_t(c)].revisions[size_t(r)];
+        const int k = revision.leaves.decl.externalBegin + int(input);
+        const SdfPath &path = revision.leaves.decl.keys[size_t(k)].path;
+        if (path.IsPropertyPath()) {
+            B.rebuild.insert(path);
+            B.named.insert(path);
+            B.prims.insert(path.GetPrimPath());
+        }
+        RigExecBakedRolePin pin;
+        pin.kind = RigExecBakedRolePin::Kind::NoLayoutOverride;
+        pin.leaf = k;
+        revision.pins.push_back(pin);
+    }
     const uint32_t lookupBase = uint32_t(layout.lookups.size());
     for (eval::OpHostInput input : injection.hostInputs) {
         if (input.source == eval::OpHostSource::Lookup)
@@ -1618,6 +1703,7 @@ RigExecBakedBuildOpSteps(RigExecBakedProgramImpl *program, std::string *error)
     }
     for (eval::OpLookup lookup : injection.lookups) {
         if (lookup.source == uint8_t(eval::OpLookupSource::List) ||
+            lookup.source == uint8_t(eval::OpLookupSource::Joined) ||
             lookup.source == uint8_t(eval::OpLookupSource::Selected))
             lookup.object += lookupBase;
         layout.lookups.push_back(lookup);

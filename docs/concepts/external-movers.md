@@ -494,11 +494,19 @@ and with `BINDERS` a binder table with
 `RIGEXEC_EXTERNAL_OP_BINDERS_ENTRY(quadraticOps)`
 (`rigExecScene/externalOps.h`, binder ABI 2): one `RigExecExternalOpBinder`
 per schema type, whose `build` adds the op's node at Build from compile facts
-alone (the revision binding and its declared inputs' keys, never a frame's
-values) and lists, per op input, what feeds it (`RigExecExternalOpFeed`): the
-points entering the revision, the target's base points, declared input `k`
-(read each frame as the port's standard type reads it; a type that does not
-match fails the compile), the transform provider, or influence `k`. The
+(`RigExecExternalOpContext`: the revision binding, its declared inputs' keys
+and, per declared input, its Build-time value where nothing can move it) and
+lists, per op input, what feeds it (`RigExecExternalOpFeed`): the points
+entering the revision, the target's base points, declared input `k` (read each
+frame as the port's standard type reads it; a type that does not match fails
+the compile; a points array the mover reads through a phase is the phase's
+points), the transform provider, or influence `k`. A feed with a `count`
+makes one array of several: scalars listed, arrays joined end to end, or
+influences listed as matrices. A setting that shapes the op's payload (a
+form, an order, a method token, an element size) is pinned with
+`RigExecExternalOpPin`: an authored edit to it rebuilds, and an animated,
+connected or overridden one fails the compile. Patch, SurfaceBinding and
+LayeredSkin bind this way as built-ins. The
 mapping is static graph data: the `.rigexec` holds it as lookups, and the
 runtime resolves it with no plugin code, so a posed playback moves a declared
 input through `SetInput`. The op computes the full-strength points as one

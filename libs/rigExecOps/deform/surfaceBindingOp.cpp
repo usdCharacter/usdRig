@@ -6,6 +6,8 @@
 #include "rigExecOps/opIo.h"
 #include "rigExecSchema/schemaNames.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <string>
@@ -39,7 +41,6 @@ RIGEXEC_DEFINE_PORT_HANDLE(SurfaceBindingFrames)
 RIGEXEC_DEFINE_PORT_HANDLE(SurfaceBindingSurface)
 RIGEXEC_DEFINE_PORT_HANDLE(SurfaceBindingCounts)
 RIGEXEC_DEFINE_PORT_HANDLE(SurfaceBindingIndices)
-RIGEXEC_DEFINE_PORT_HANDLE(SurfaceBindingEnvelope)
 RIGEXEC_DEFINE_PORT_HANDLE(SurfaceBindingOut)
 
 namespace {
@@ -55,15 +56,17 @@ template <class T>
 rigExec::RigExecSurfaceBindingList<T>
 List(const rigExec::RigExecOpIo &io, const rigExec::RigExecPortHandle &port)
 {
-    const RigExecArray<T> &a = *In<RigExecArray<T>>(io, port);
-    return {a.Data(), a.Size()};
+    const RigExecArray<T> *a = In<RigExecArray<T>>(io, port);
+    if (!a)
+        return {nullptr, 0};
+    return {a->Data(), a->Size()};
 }
 
 enum SurfaceBindingField : uint32_t { kLimit, kSmooth, kFramed };
 
 bool
 BindOne(const rigExec::RigExecOpIo &io, const SurfaceBindingPayload &p,
-        std::string *error)
+        std::vector<Vec3f> *points, std::string *error)
 {
     rigExec::RigExecSurfaceBinding<Vec3f> b;
     b.vertices = List<int>(io, SurfaceBindingVertices());
@@ -94,27 +97,23 @@ BindOne(const rigExec::RigExecOpIo &io, const SurfaceBindingPayload &p,
     }
     const auto counts = List<int>(io, SurfaceBindingCounts());
     const auto indices = List<int>(io, SurfaceBindingIndices());
-    const Points &in = *In<Points>(io, SurfaceBindingPoints());
     std::vector<Vec3f> surface =
         ToVector(*In<Points>(io, SurfaceBindingSurface()));
     Mat4d toTarget = *In<Mat4d>(io, SurfaceBindingTargetRest());
     if (!rigExec::RigExecPrepareSurfaceBinding<Vec3f, Vec3d, Mat4d>(
-            b, in.Size(), *In<Mat4d>(io, SurfaceBindingSurfaceRest()),
+            b, points->size(), *In<Mat4d>(io, SurfaceBindingSurfaceRest()),
             *In<Mat4d>(io, SurfaceBindingTargetRest()),
             *In<Mat4d>(io, SurfaceBindingSurfaceToBinding()), frames, counts,
             indices, surface.data(), surface.size(), &toTarget))
         return Fail(error, "SurfaceBinding",
                     "unusable binding arrays, stencil, mask or coordinate "
                     "frame");
-    std::vector<Vec3f> points = ToVector(in);
     if (!rigExec::RigExecApplySurfaceBinding<Vec3f, Vec3d, Mat4d>(
             b, surface.data(), surface.size(), counts, indices, toTarget,
-            points.data(), points.size()) ||
-        !AllFinite(points))
+            points->data(), points->size()) ||
+        !AllFinite(*points))
         return Fail(error, "SurfaceBinding", "a bound point is not finite");
-    return WritePoints(io, SurfaceBindingOut(), in, points,
-                       In<Envelope>(io, SurfaceBindingEnvelope()),
-                       "SurfaceBinding", error);
+    return true;
 }
 
 bool
@@ -126,26 +125,32 @@ Check(const rigExec::RigExecOpCheck &check, std::string *error)
                    !SameCount(CheckElements(check, SurfaceBindingFrames()), 2)))
         return Fail(error, "SurfaceBinding",
                     "needs the surface's and the target's frames");
-    return EnvelopeFits(check, SurfaceBindingPoints(), SurfaceBindingEnvelope(),
-                        "SurfaceBinding", error);
+    return true;
+}
+
+rigExec::RigExecRangePlan
+Plan(const rigExec::RigExecOpBatch &, size_t)
+{
+    return rigExec::RigExecRangePlan::Whole;
 }
 
 bool
-Run(const rigExec::RigExecOpBatch &batch, size_t *failed, std::string *error)
+RunRange(const rigExec::RigExecOpBatch &batch, size_t k,
+         const rigExec::RigExecOpRange &range, std::string *error)
 {
-    const uint8_t *limit =
-        rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kLimit);
-    const uint8_t *smooth =
-        rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kSmooth);
-    const uint8_t *framed =
-        rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kFramed);
-    return EachInstance(batch, failed, [&](size_t k) {
-        SurfaceBindingPayload p;
-        p.limit = limit[k] != 0;
-        p.smooth = smooth[k] != 0;
-        p.framed = framed[k] != 0;
-        return BindOne(rigExec::RigExecBatchInstance(batch, k), p, error);
-    });
+    const rigExec::RigExecOpIo io = rigExec::RigExecBatchInstance(batch, k);
+    SurfaceBindingPayload p;
+    p.limit = rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kLimit)[k] != 0;
+    p.smooth = rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kSmooth)[k] != 0;
+    p.framed = rigExec::RigExecPayloadColumnOf<uint8_t>(batch, kFramed)[k] != 0;
+    std::vector<Vec3f> points;
+    GatherWhole(io, range, SurfaceBindingPoints(), &points);
+    if (!BindOne(io, p, &points, error))
+        return false;
+    std::copy(points.begin() + std::ptrdiff_t(range.begin),
+              points.begin() + std::ptrdiff_t(range.end),
+              RangeOut<Vec3f>(io, range, SurfaceBindingOut()));
+    return true;
 }
 
 void
@@ -254,8 +259,8 @@ using rigExec::kRigExecPortOptional;
 using rigExec::kRigExecPortOutput;
 
 const rigExec::RigExecPortDesc kPorts[] = {
-    {&SurfaceBindingPoints(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
-     "points"},
+    {&SurfaceBindingPoints(), &rigExecStd::Vec3fArray(),
+     kRigExecPortInput | rigExec::kRigExecPortNeighbourhood, "points"},
     Authored({&SurfaceBindingVertices(), &rigExecStd::IntArray(),
               kRigExecPortInput, "vertices"},
              kVertices),
@@ -318,13 +323,12 @@ const rigExec::RigExecPortDesc kPorts[] = {
              kFrames),
     {&SurfaceBindingSurface(), &rigExecStd::Vec3fArray(), kRigExecPortInput,
      "surfacePoints"},
-    {&SurfaceBindingCounts(), &rigExecStd::IntArray(), kRigExecPortInput,
-     "faceVertexCounts"},
-    {&SurfaceBindingIndices(), &rigExecStd::IntArray(), kRigExecPortInput,
-     "faceVertexIndices"},
-    {&SurfaceBindingEnvelope(), &rigExecStd::FloatArray(),
-     kRigExecPortInput | kRigExecPortOptional, "envelope"},
-    {&SurfaceBindingOut(), &rigExecStd::Vec3fArray(), kRigExecPortOutput, "out",
+    {&SurfaceBindingCounts(), &rigExecStd::IntArray(),
+     kRigExecPortInput | kRigExecPortOptional, "faceVertexCounts"},
+    {&SurfaceBindingIndices(), &rigExecStd::IntArray(),
+     kRigExecPortInput | kRigExecPortOptional, "faceVertexIndices"},
+    {&SurfaceBindingOut(), &rigExecStd::Vec3fArray(),
+     kRigExecPortOutput | rigExec::kRigExecPortPointwise, "out",
      rigExec::RigExecOutputBound::Input, &SurfaceBindingPoints()},
 };
 
@@ -335,11 +339,13 @@ const rigExec::RigExecOpDesc kDesc = [] {
     d.schema = &kBindingSchema;
     d.ports = kPorts;
     d.portCount = std::size(kPorts);
-    d.runBatch = &Run;
+    d.range.plan = &Plan;
+    d.range.run = &RunRange;
     d.validate = &Check;
-    d.capabilities =
-        rigExec::kRigExecOpBakeable | rigExec::kRigExecOpFreezable |
-        rigExec::kRigExecOpSeparateBlend | rigExec::kRigExecOpFromLeaves;
+    d.capabilities = rigExec::kRigExecOpBakeable |
+                     rigExec::kRigExecOpFreezable |
+                     rigExec::kRigExecOpSeparateBlend |
+                     rigExec::kRigExecOpFromLeaves | rigExec::kRigExecOpRanged;
     d.payloadFields = kFields;
     d.payloadFieldCount = std::size(kFields);
     d.payloadVersion = 1;

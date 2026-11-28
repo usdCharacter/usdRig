@@ -147,8 +147,11 @@ enum class OpLookupSource : uint8_t {
     SolverInput = 60,
     /// An External revision `object`'s declared input: its leaf `part`,
     /// as the input type it feeds reads it (small values copied, arrays
-    /// lent).
+    /// lent); a points array read through a phase is the phase's points.
     ExternalInput = 80,
+    /// An array of the arrays lookups `object` .. `object` + `part` - 1
+    /// answer, joined end to end.
+    Joined = 81,
 };
 
 /// OpLookup::read of a RestInputs lookup: the RestCompose input it answers.
@@ -797,6 +800,7 @@ OpLookupSourceRuns(uint8_t source)
            source == uint8_t(OpLookupSource::ChainVersion) ||
            source == uint8_t(OpLookupSource::WeightFieldInputs) ||
            source == uint8_t(OpLookupSource::List) ||
+           source == uint8_t(OpLookupSource::Joined) ||
            source == uint8_t(OpLookupSource::Selected) ||
            source == uint8_t(OpLookupSource::RevisionLeaf) ||
            source == uint8_t(OpLookupSource::ExternalInput) ||
@@ -1269,11 +1273,17 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
                               size_t(lookup.object) + size_t(lookup.part) <=
                                   layout->lookups.size();
                 for (int32_t e = 0; listed && e < lookup.part; ++e) {
-                    const uint8_t source =
-                        layout->lookups[lookup.object + uint32_t(e)].source;
-                    listed = OpLookupSourceRuns(source) &&
-                             source != uint8_t(OpLookupSource::List) &&
-                             source != uint8_t(OpLookupSource::Selected);
+                    const OpLookup &element =
+                        layout->lookups[lookup.object + uint32_t(e)];
+                    // A listed matrix may select among its candidates.
+                    listed =
+                        OpLookupSourceRuns(element.source) &&
+                        element.source != uint8_t(OpLookupSource::List) &&
+                        element.source != uint8_t(OpLookupSource::Joined) &&
+                        (element.source != uint8_t(OpLookupSource::Selected) ||
+                         (element.part > 0 &&
+                          size_t(element.object) + size_t(element.part) <=
+                              layout->lookups.size()));
                 }
                 if (!listed)
                     return OpLayoutFail(
@@ -1282,6 +1292,36 @@ LayOutOpSteps(OpStepLayout *layout, std::string *error)
                                    std::to_string(input.object) +
                                    ", whose elements the layout lacks or "
                                    "its input cannot hold");
+            }
+            if (lookup.source == uint8_t(OpLookupSource::Joined)) {
+                const RigExecTypeDesc &type =
+                    *RigExecRegistry::Get()
+                         .TypeAt(layout->nodes[input.node]
+                                     .op->ports[input.port]
+                                     .type->Index())
+                         .desc;
+                bool joined = lookup.part >= 0 && type.element && type.resize &&
+                              type.data && type.count &&
+                              RigExecRegistry::Get()
+                                  .TypeAt(type.element->Index())
+                                  .desc->triviallyCopyable &&
+                              size_t(lookup.object) + size_t(lookup.part) <=
+                                  layout->lookups.size();
+                for (int32_t e = 0; joined && e < lookup.part; ++e) {
+                    const uint8_t source =
+                        layout->lookups[lookup.object + uint32_t(e)].source;
+                    joined = OpLookupSourceRuns(source) &&
+                             source != uint8_t(OpLookupSource::List) &&
+                             source != uint8_t(OpLookupSource::Joined) &&
+                             source != uint8_t(OpLookupSource::Selected);
+                }
+                if (!joined)
+                    return OpLayoutFail(
+                        error, "node " + std::to_string(input.node) +
+                                   " joins lookups from " +
+                                   std::to_string(lookup.object) +
+                                   ", which the layout lacks or its input "
+                                   "cannot hold");
             }
             if (lookup.source == uint8_t(OpLookupSource::Selected)) {
                 bool selectable = lookup.part > 0 &&
@@ -1702,6 +1742,7 @@ OpLookUp(Host &host, uint32_t index, const OpLookup &lookup,
         return true;
     }
     case OpLookupSource::List:
+    case OpLookupSource::Joined:
     case OpLookupSource::Selected:
         break;
     case OpLookupSource::RestFrame:
@@ -1814,6 +1855,27 @@ OpLookUpAt(const OpStepLayout &layout, Host &host, uint32_t index,
                                        " selects among matrices none of "
                                        "which is present");
     }
+    if (lookup.source == uint8_t(OpLookupSource::Joined)) {
+        const size_t size =
+            RigExecRegistry::Get().TypeAt(type.element->Index()).desc->size;
+        OpPortValue part(type);
+        size_t total = 0;
+        type.resize(value, 0);
+        for (uint32_t e = 0; e < uint32_t(lookup.part); ++e) {
+            if (!OpLookUp(host, lookup.object + e,
+                          layout.lookups[lookup.object + e], type, part.Value(),
+                          error))
+                return false;
+            const size_t count = type.count(part.Value());
+            if (!count)
+                continue;
+            type.resize(value, total + count);
+            std::memcpy(static_cast<uint8_t *>(type.data(value)) + total * size,
+                        type.data(part.Value()), count * size);
+            total += count;
+        }
+        return true;
+    }
     if (lookup.source != uint8_t(OpLookupSource::List))
         return OpLookUp(host, index, lookup, type, value, error);
     const RigExecTypeDesc &element =
@@ -1821,9 +1883,8 @@ OpLookUpAt(const OpStepLayout &layout, Host &host, uint32_t index,
     type.resize(value, size_t(lookup.part));
     auto *elements = static_cast<uint8_t *>(type.data(value));
     for (uint32_t e = 0; e < uint32_t(lookup.part); ++e)
-        if (!OpLookUp(host, lookup.object + e,
-                      layout.lookups[lookup.object + e], element,
-                      elements + e * element.size, error))
+        if (!OpLookUpAt(layout, host, lookup.object + e, element,
+                        elements + e * element.size, error))
             return false;
     return true;
 }

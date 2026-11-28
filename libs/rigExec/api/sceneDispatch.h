@@ -57,7 +57,7 @@ struct RigExecSceneHooks {
                             RigExecTypedValueStore *, std::string *) = nullptr;
     bool (*ensureOpRegistry)(std::string *) = nullptr;
     bool (*bindsExternalOp)(const RigExecRevisionBinding &) = nullptr;
-    bool (*buildExternalOp)(const RigExecRevisionBinding &,
+    bool (*buildExternalOp)(const RigExecExternalOpContext &,
                             RigExecRigDescBuilder &, RigExecExternalOpPlan *,
                             std::string *) = nullptr;
 };
@@ -113,12 +113,12 @@ bool RigExecDispatchRunAutoClavicle(const RigExecBoundAutoClavicle &operation,
 /// plugins discovery finds.
 bool RigExecDispatchEnsureOpRegistry(std::string *error);
 
-/// Whether an op plugin's binder binds \p binding's External mover; false
-/// without the scene library.
+/// Whether a built-in or op plugin binder binds \p binding's External
+/// mover; false without the scene library.
 bool RigExecDispatchBindsExternalOp(const RigExecRevisionBinding &binding);
 
-/// Adds \p binding's op node to \p builder through its binder.
-bool RigExecDispatchBuildExternalOp(const RigExecRevisionBinding &binding,
+/// Adds \p context's op node to \p builder through its binder.
+bool RigExecDispatchBuildExternalOp(const RigExecExternalOpContext &context,
                                     RigExecRigDescBuilder &builder,
                                     RigExecExternalOpPlan *plan,
                                     std::string *error);

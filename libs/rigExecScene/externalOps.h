@@ -45,6 +45,10 @@ struct RigExecExternalOpFeed {
     const RigExecPortHandle *port = nullptr;
     RigExecExternalOpSource source = RigExecExternalOpSource::Points;
     uint32_t index = 0;
+    /// Input or Influence: 0 feeds the one value at `index`; n > 0 feeds the
+    /// n from `index` as one array of the port's type, scalars of its
+    /// element type listed in order, arrays of its type joined end to end.
+    uint32_t count = 0;
 };
 
 /// The node a binder added: its full-strength output and its feeds.
@@ -54,16 +58,50 @@ struct RigExecExternalOpPlan {
     RigExecNodeId node = kRigExecInvalidIndex;
     const RigExecPortHandle *out = nullptr;
     std::vector<RigExecExternalOpFeed> feeds;
+    /// The declared inputs build read through RigExecExternalOpPin: an
+    /// authored edit to one rebuilds.
+    std::vector<uint32_t> pins;
 };
+
+/// What build sees: the binding, and per declared input its Build-time
+/// value where nothing can move it (no time samples, connection, upstream
+/// value or override), else an empty value.
+struct RigExecExternalOpContext {
+    const RigExecRevisionBinding &binding;
+    const std::vector<VtValue> &pinnable;
+};
+
+/// Declared input \p input's Build-time value, recorded in \p plan's pins;
+/// null with \p error when it is animated or connected, which build then
+/// refuses with.
+inline const VtValue *
+RigExecExternalOpPin(const RigExecExternalOpContext &context, uint32_t input,
+                     RigExecExternalOpPlan &plan, std::string *error)
+{
+    plan.pins.push_back(input);
+    const VtValue *value =
+        input < context.pinnable.size() ? &context.pinnable[input] : nullptr;
+    if (value && !value->IsEmpty())
+        return value;
+    if (error)
+        *error = context.binding.moverPath.GetString() + ": declared input " +
+                 (input < context.binding.externalInputs.size()
+                      ? context.binding.externalInputs[input].path.GetString()
+                      : std::to_string(input)) +
+                 " sets its op's structure and must not be animated or "
+                 "connected";
+    return nullptr;
+}
 
 /// How one External mover runs as an op: the mover's schema type, the op,
 /// and build, which adds the op's node to the builder from compile facts
-/// alone (the binding and its declared inputs' keys) and lists its feeds.
+/// (the binding, its declared inputs' keys and the values it pins) and lists
+/// its feeds.
 struct RigExecExternalOpBinder {
     uint32_t structSize = sizeof(RigExecExternalOpBinder);
     const char *schemaType = "";
     const RigExecOpHandle &(*op)() = nullptr;
-    bool (*build)(const RigExecRevisionBinding &, RigExecRigDescBuilder &,
+    bool (*build)(const RigExecExternalOpContext &, RigExecRigDescBuilder &,
                   RigExecExternalOpPlan &, std::string *) = nullptr;
 };
 
@@ -86,13 +124,13 @@ bool RigExecAddExternalOpBinders(
     const std::vector<const RigExecExternalOpBinder *> &binders,
     std::string *error);
 
-/// Whether an op plugin's binder binds \p binding's mover, after op plugin
-/// discovery.
+/// Whether a built-in or op plugin binder binds \p binding's mover, after
+/// op plugin discovery.
 bool RigExecBindsExternalOp(const RigExecRevisionBinding &binding);
 
-/// Adds \p binding's op node through its plugin binder. False with
-/// \p error when none binds it, or the binder refuses.
-bool RigExecBuildExternalOp(const RigExecRevisionBinding &binding,
+/// Adds \p context's op node through its binder. False with \p error when
+/// none binds it, or the binder refuses.
+bool RigExecBuildExternalOp(const RigExecExternalOpContext &context,
                             RigExecRigDescBuilder &builder,
                             RigExecExternalOpPlan *plan, std::string *error);
 

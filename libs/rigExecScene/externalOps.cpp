@@ -19,6 +19,7 @@
 #include "pxr/base/vt/array.h"
 #include "pxr/base/vt/types.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <iterator>
@@ -27,7 +28,7 @@ namespace rigExec {
 
 namespace {
 
-/// A built-in mover's op, written from one frame's values until its binder
+/// The cloth mover's op, written from one frame's values until its binder
 /// builds from compile facts.
 struct LegacyBinder {
     const char *schemaType = "";
@@ -116,7 +117,9 @@ Valid(const RigExecInputId &id)
     return id.index != kRigExecInvalidIndex;
 }
 
-// --- Patch ---------------------------------------------------------------
+// --- Built-in binders ------------------------------------------------------
+
+using Source = RigExecExternalOpSource;
 
 /// An open, closed or periodic form; false for any other.
 bool
@@ -151,164 +154,6 @@ Scalar(const VtValue &value, double *out)
     return false;
 }
 
-struct PatchValues {
-    rigExecOps::PatchPayload payload;
-    RigExecArray<Vec3f> controls, uvPoints;
-    RigExecArray<double> pointWeights, uKnots, vKnots, weights;
-    std::vector<RigExecArray<Vec3f>> shapes;
-    RigExecArray<int> lower, upper;
-};
-
-/// The patch mover's declared inputs as the op's payload and inputs.
-bool
-ReadPatch(const RigExecRevisionBinding &binding,
-          const RigExecExternalOpValues &values, PatchValues *out)
-{
-    using namespace patchInputs;
-    const std::vector<VtValue> &in = *values.inputs;
-    const Layout layout = LayoutOf(binding.externalInputs);
-    if (in.size() != InputCount(layout))
-        return false;
-    VtVec3fArray controls, uvPoints;
-    VtDoubleArray pointWeights, uKnots, vKnots;
-    rigExecOps::PatchPayload &p = out->payload;
-    if (!As(in[PatchPoints], &controls) ||
-        !As(in[PatchPointWeights], &pointWeights) ||
-        !As(in[PatchUVertexCount], &p.uVertexCount) ||
-        !As(in[PatchVVertexCount], &p.vVertexCount) ||
-        !As(in[PatchUOrder], &p.uOrder) || !As(in[PatchVOrder], &p.vOrder) ||
-        !As(in[PatchUKnots], &uKnots) || !As(in[PatchVKnots], &vKnots) ||
-        !Periodic(in[PatchUForm], &p.uPeriodic) ||
-        !Periodic(in[PatchVForm], &p.vPeriodic) || !As(in[UvPoints], &uvPoints))
-        return false;
-    out->controls = ToStd(controls);
-    out->uvPoints = ToStd(uvPoints);
-    out->pointWeights = ToArray(pointWeights);
-    out->uKnots = ToArray(uKnots);
-    out->vKnots = ToArray(vKnots);
-    out->shapes.resize(layout.shapes);
-    for (size_t k = 0; k < layout.shapes; ++k) {
-        VtVec3fArray shape;
-        if (!As(in[UvShapes + k], &shape))
-            return false;
-        out->shapes[k] = ToStd(shape);
-    }
-    // One weight per shape; an unconnected, empty array leaves every shape
-    // at zero.
-    const size_t weightsBegin = WeightsBegin(layout);
-    if (layout.connected) {
-        out->weights = RigExecArray<double>(layout.shapes);
-        for (size_t k = 0; k < layout.shapes; ++k)
-            if (!Scalar(in[weightsBegin + k], &out->weights[k]))
-                return false;
-    } else {
-        VtFloatArray authored;
-        if (!As(in[weightsBegin], &authored))
-            return false;
-        out->weights = RigExecArray<double>(authored.empty() ? layout.shapes
-                                                             : authored.size());
-        for (size_t k = 0; k < out->weights.Size(); ++k)
-            out->weights[k] = authored.empty() ? 0.0 : double(authored[k]);
-    }
-    VtIntArray lower, upper;
-    const size_t contactsBegin = ContactsBegin(layout);
-    if (!As(in[contactsBegin], &lower) || !As(in[contactsBegin + 1], &upper))
-        return false;
-    out->lower = ToArray(lower);
-    out->upper = ToArray(upper);
-    return true;
-}
-
-/// The patch's other inputs, in the order the binding writes them; the
-/// shapes, which take many values, write one each.
-const RigExecPortHandle &(*const kPatchLeading[])() = {
-    &rigExecOps::PatchControlPoints, &rigExecOps::PatchPointWeights,
-    &rigExecOps::PatchUKnots, &rigExecOps::PatchVKnots,
-    &rigExecOps::PatchUvPoints};
-const RigExecPortHandle &(*const kPatchTrailing[])() = {
-    &rigExecOps::PatchUvWeights, &rigExecOps::PatchContactLower,
-    &rigExecOps::PatchContactUpper};
-
-bool
-AddPatch(const RigExecRevisionBinding &binding,
-         const RigExecExternalOpValues &values, RigExecRigDescBuilder &builder,
-         RigExecExternalOpNode &node, std::string *error)
-{
-    PatchValues v;
-    if (!ReadPatch(binding, values, &v))
-        return Fail(error, "patch mover inputs do not translate");
-    node.node = builder.AddOp(rigExecOps::Patch(), &v.payload);
-    for (const auto port : kPatchLeading)
-        node.inputs.push_back(builder.BindInput(node.node, port()));
-    for (size_t k = 0; k < v.shapes.size(); ++k)
-        node.inputs.push_back(
-            builder.BindInput(node.node, rigExecOps::PatchUvShapes()));
-    for (const auto port : kPatchTrailing)
-        node.inputs.push_back(builder.BindInput(node.node, port()));
-    node.points = builder.BindInput(node.node, rigExecOps::PatchPoints());
-    node.envelope = builder.BindInput(node.node, rigExecOps::PatchEnvelope());
-    node.out = builder.BindOutput(node.node, rigExecOps::PatchOut());
-    node.payload = std::make_shared<rigExecOps::PatchPayload>(v.payload);
-    return true;
-}
-
-/// Translates \p values; false where they do not, and with \p moved set
-/// where they translate to another payload or shape count than \p node's.
-bool
-ReadPatchFor(const RigExecRevisionBinding &binding,
-             const RigExecExternalOpValues &values,
-             const RigExecExternalOpNode &node, PatchValues *v, bool *moved)
-{
-    if (!ReadPatch(binding, values, v))
-        return false;
-    const auto *kept =
-        static_cast<const rigExecOps::PatchPayload *>(node.payload.get());
-    *moved = !kept || !(*kept == v->payload) ||
-             node.inputs.size() != std::size(kPatchLeading) + v->shapes.size() +
-                                       std::size(kPatchTrailing);
-    return true;
-}
-
-bool
-WritePatch(const RigExecRevisionBinding &binding,
-           const RigExecExternalOpValues &values,
-           const RigExecExternalOpNode &node, RigExecEvaluator &evaluator,
-           std::string *error)
-{
-    PatchValues v;
-    bool moved = false;
-    if (!ReadPatchFor(binding, values, node, &v, &moved))
-        return Fail(error, "patch mover inputs do not translate");
-    if (moved)
-        return Fail(error, "patch mover settings changed");
-    const void *leading[] = {&v.controls, &v.pointWeights, &v.uKnots, &v.vKnots,
-                             &v.uvPoints};
-    const void *trailing[] = {&v.weights, &v.lower, &v.upper};
-    size_t i = 0;
-    for (const void *value : leading)
-        if (!evaluator.SetInput(node.inputs[i++], value, error))
-            return false;
-    for (const RigExecArray<Vec3f> &shape : v.shapes)
-        if (!evaluator.SetInput(node.inputs[i++], &shape, error))
-            return false;
-    for (const void *value : trailing)
-        if (!evaluator.SetInput(node.inputs[i++], value, error))
-            return false;
-    return true;
-}
-
-bool
-PatchStale(const RigExecRevisionBinding &binding,
-           const RigExecExternalOpValues &values,
-           const RigExecExternalOpNode &node)
-{
-    PatchValues v;
-    bool moved = false;
-    return ReadPatchFor(binding, values, node, &v, &moved) && moved;
-}
-
-// --- SurfaceBinding --------------------------------------------------------
-
 Mat4d
 ToStd(const GfMatrix4d &m)
 {
@@ -319,311 +164,223 @@ ToStd(const GfMatrix4d &m)
     return out;
 }
 
-struct SurfaceBindingValues {
-    rigExecOps::SurfaceBindingPayload payload;
-    RigExecArray<int> ints[surfaceBindingInputs::kIntArrays];
-    RigExecArray<float> floats[surfaceBindingInputs::kFloatArrays];
-    RigExecArray<Vec3f> offsets, surface;
-    float strength = 0.0f, deltaMultiplier = 0.0f;
-    Mat4d surfaceRest, targetRest, surfaceToBinding;
-    RigExecArray<Mat4d> frames;
-    RigExecArray<int> counts, indices;
-};
-
-/// The surface binding mover's declared inputs and frames as the op's
-/// payload and inputs.
+/// Pins declared input \p k of \p context and reads it as \p T through
+/// \p read, false with \p error where it cannot be pinned or does not read.
+template <class T, class Read>
 bool
-ReadSurfaceBinding(const RigExecRevisionBinding &,
-                   const RigExecExternalOpValues &values,
-                   SurfaceBindingValues *out)
+PinAs(const RigExecExternalOpContext &context, size_t k,
+      RigExecExternalOpPlan &plan, const char *what, Read read, T *out,
+      std::string *error)
+{
+    const VtValue *value =
+        RigExecExternalOpPin(context, uint32_t(k), plan, error);
+    if (!value)
+        return false;
+    if (!read(*value, out))
+        return Fail(error, context.binding.moverPath.GetString() + ": " + what +
+                               " is not usable");
+    return true;
+}
+
+bool
+ReadInt(const VtValue &value, int32_t *out)
+{
+    if (!value.IsHolding<int>())
+        return false;
+    *out = int32_t(value.UncheckedGet<int>());
+    return true;
+}
+
+bool
+ReadBool(const VtValue &value, bool *out)
+{
+    return As(value, out);
+}
+
+bool
+BuildPatch(const RigExecExternalOpContext &context,
+           RigExecRigDescBuilder &builder, RigExecExternalOpPlan &plan,
+           std::string *error)
+{
+    using namespace patchInputs;
+    namespace op = rigExecOps;
+    const RigExecRevisionBinding &binding = context.binding;
+    const Layout layout = LayoutOf(binding.externalInputs);
+    if (binding.externalInputs.size() != InputCount(layout))
+        return Fail(error, binding.moverPath.GetString() +
+                               ": the patch mover declares other inputs");
+    op::PatchPayload p;
+    if (!PinAs(context, PatchUVertexCount, plan, "the u vertex count", &ReadInt,
+               &p.uVertexCount, error) ||
+        !PinAs(context, PatchVVertexCount, plan, "the v vertex count", &ReadInt,
+               &p.vVertexCount, error) ||
+        !PinAs(context, PatchUOrder, plan, "the u order", &ReadInt, &p.uOrder,
+               error) ||
+        !PinAs(context, PatchVOrder, plan, "the v order", &ReadInt, &p.vOrder,
+               error) ||
+        !PinAs(context, PatchUForm, plan, "the u form", &Periodic, &p.uPeriodic,
+               error) ||
+        !PinAs(context, PatchVForm, plan, "the v form", &Periodic, &p.vPeriodic,
+               error))
+        return false;
+    p.shapes = int32_t(layout.shapes);
+    const uint32_t shapes = uint32_t(layout.shapes);
+    const uint32_t weights = uint32_t(WeightsBegin(layout));
+    const uint32_t contacts = uint32_t(ContactsBegin(layout));
+    plan.node = builder.AddOp(op::Patch(), &p);
+    plan.out = &op::PatchOut();
+    plan.feeds = {{&op::PatchPoints(), Source::Points},
+                  {&op::PatchControlPoints(), Source::Input, PatchPoints},
+                  {&op::PatchPointWeights(), Source::Input, PatchPointWeights},
+                  {&op::PatchUKnots(), Source::Input, PatchUKnots},
+                  {&op::PatchVKnots(), Source::Input, PatchVKnots},
+                  {&op::PatchUvPoints(), Source::Input, UvPoints},
+                  {&op::PatchContactLower(), Source::Input, contacts},
+                  {&op::PatchContactUpper(), Source::Input, contacts + 1}};
+    if (shapes)
+        plan.feeds.push_back(
+            {&op::PatchUvShapes(), Source::Input, UvShapes, shapes});
+    if (!layout.connected)
+        plan.feeds.push_back(
+            {&op::PatchAuthoredUvWeights(), Source::Input, weights});
+    else if (shapes)
+        plan.feeds.push_back(
+            {&op::PatchUvWeights(), Source::Input, weights, shapes});
+    return true;
+}
+
+/// A surface or normal mode: \p yes for \p on, false for \p off.
+template <const char *const *Modes>
+bool
+ReadMode(const VtValue &value, bool *on)
+{
+    const char *mode = nullptr;
+    if (!Text(value, &mode) || (!Is(mode, Modes[0]) && !Is(mode, Modes[1])))
+        return false;
+    *on = Is(mode, Modes[1]);
+    return true;
+}
+
+constexpr const char *kSurfaceModes[] = {"polygon", "limit"};
+constexpr const char *kNormalModes[] = {"geometric", "smooth"};
+
+bool
+BuildSurfaceBinding(const RigExecExternalOpContext &context,
+                    RigExecRigDescBuilder &builder, RigExecExternalOpPlan &plan,
+                    std::string *error)
 {
     using namespace surfaceBindingInputs;
-    const std::vector<VtValue> &in = *values.inputs;
-    if (in.size() != InputCount)
+    namespace op = rigExecOps;
+    const RigExecRevisionBinding &binding = context.binding;
+    if (binding.externalInputs.size() != InputCount)
+        return Fail(error, binding.moverPath.GetString() +
+                               ": the surface binding declares other inputs");
+    op::SurfaceBindingPayload p;
+    if (!PinAs(context, SurfaceMode, plan, "the surface mode",
+               &ReadMode<kSurfaceModes>, &p.limit, error) ||
+        !PinAs(context, NormalMode, plan, "the normal mode",
+               &ReadMode<kNormalModes>, &p.smooth, error))
         return false;
-    for (size_t i = 0; i < kIntArrays; ++i) {
-        VtIntArray a;
-        if (!As(in[FirstInt + i], &a))
-            return false;
-        out->ints[i] = ToArray(a);
-    }
-    for (size_t i = 0; i < kFloatArrays; ++i) {
-        VtFloatArray a;
-        if (!As(in[FirstFloat + i], &a))
-            return false;
-        out->floats[i] = ToArray(a);
-    }
-    VtVec3fArray offsets, surface;
-    const char *mode = nullptr, *normal = nullptr;
-    GfMatrix4d surfaceRest, targetRest, surfaceToBinding;
-    if (!As(in[OffsetVectors], &offsets) || !Text(in[SurfaceMode], &mode) ||
-        !Text(in[NormalMode], &normal) || !As(in[Strength], &out->strength) ||
-        !As(in[DeltaMultiplier], &out->deltaMultiplier) ||
-        (!Is(mode, "polygon") && !Is(mode, "limit")) ||
-        (!Is(normal, "geometric") && !Is(normal, "smooth")) ||
-        !As(in[SurfacePoints], &surface) ||
-        !As(in[SurfaceRestMatrix], &surfaceRest) ||
-        !As(in[TargetRestMatrix], &targetRest) ||
-        !As(in[SurfaceToBinding], &surfaceToBinding))
-        return false;
-    rigExecOps::SurfaceBindingPayload &p = out->payload;
-    p.limit = Is(mode, "limit");
-    p.smooth = Is(normal, "smooth");
-    p.framed = values.influenceTransforms != nullptr;
-    out->offsets = ToStd(offsets);
-    out->surface = ToStd(surface);
-    out->surfaceRest = ToStd(surfaceRest);
-    out->targetRest = ToStd(targetRest);
-    out->surfaceToBinding = ToStd(surfaceToBinding);
-    if (p.framed) {
-        const std::vector<GfMatrix4d> &frames = *values.influenceTransforms;
-        out->frames = RigExecArray<Mat4d>(frames.size());
-        for (size_t k = 0; k < frames.size(); ++k)
-            out->frames[k] = ToStd(frames[k]);
-    }
+    p.framed = !binding.influences.empty();
+    if (p.framed && binding.influences.size() != 2)
+        return Fail(error, binding.moverPath.GetString() +
+                               ": a surface binding is framed by the "
+                               "surface's and the target's frames");
+    plan.node = builder.AddOp(op::SurfaceBinding(), &p);
+    plan.out = &op::SurfaceBindingOut();
+    const RigExecPortHandle &(*const ints[kIntArrays])() = {
+        &op::SurfaceBindingVertices,       &op::SurfaceBindingVertexOffsets,
+        &op::SurfaceBindingPolygonOffsets, &op::SurfaceBindingPointIndices,
+        &op::SurfaceBindingLimitOffsets,   &op::SurfaceBindingLimitIndices};
+    const RigExecPortHandle &(*const floats[kFloatArrays])() = {
+        &op::SurfaceBindingBarycentricWeights,
+        &op::SurfaceBindingBindingWeights,
+        &op::SurfaceBindingMask,
+        &op::SurfaceBindingDeltaMultipliers,
+        &op::SurfaceBindingLimitWeights,
+        &op::SurfaceBindingLimitDuWeights,
+        &op::SurfaceBindingLimitDvWeights};
+    plan.feeds = {{&op::SurfaceBindingPoints(), Source::Points}};
+    for (size_t i = 0; i < kIntArrays; ++i)
+        plan.feeds.push_back(
+            {&ints[i](), Source::Input, uint32_t(FirstInt + i)});
+    for (size_t i = 0; i < kFloatArrays; ++i)
+        plan.feeds.push_back(
+            {&floats[i](), Source::Input, uint32_t(FirstFloat + i)});
+    for (const auto &[port, input] :
+         {std::make_pair(&op::SurfaceBindingOffsets, OffsetVectors),
+          std::make_pair(&op::SurfaceBindingStrength, Strength),
+          std::make_pair(&op::SurfaceBindingDeltaMultiplier, DeltaMultiplier),
+          std::make_pair(&op::SurfaceBindingSurfaceRest, SurfaceRestMatrix),
+          std::make_pair(&op::SurfaceBindingTargetRest, TargetRestMatrix),
+          std::make_pair(&op::SurfaceBindingSurfaceToBinding, SurfaceToBinding),
+          std::make_pair(&op::SurfaceBindingSurface, SurfacePoints)})
+        plan.feeds.push_back({&port(), Source::Input, uint32_t(input)});
     // Faces are read for smooth normals only.
     if (p.smooth) {
-        VtIntArray counts, indices;
-        if (!As(in[SurfaceCounts], &counts) ||
-            !As(in[SurfaceIndices], &indices))
-            return false;
-        out->counts = ToArray(counts);
-        out->indices = ToArray(indices);
+        plan.feeds.push_back(
+            {&op::SurfaceBindingCounts(), Source::Input, SurfaceCounts});
+        plan.feeds.push_back(
+            {&op::SurfaceBindingIndices(), Source::Input, SurfaceIndices});
     }
+    if (p.framed)
+        plan.feeds.push_back(
+            {&op::SurfaceBindingFrames(), Source::Influence, 0, 2});
     return true;
 }
 
-/// The binding's inputs, in the order the binding writes them; Frames
-/// last, written when framed.
-const RigExecPortHandle &(*const kSurfaceBindingPorts[])() = {
-    &rigExecOps::SurfaceBindingVertices,
-    &rigExecOps::SurfaceBindingVertexOffsets,
-    &rigExecOps::SurfaceBindingPolygonOffsets,
-    &rigExecOps::SurfaceBindingPointIndices,
-    &rigExecOps::SurfaceBindingLimitOffsets,
-    &rigExecOps::SurfaceBindingLimitIndices,
-    &rigExecOps::SurfaceBindingBarycentricWeights,
-    &rigExecOps::SurfaceBindingBindingWeights,
-    &rigExecOps::SurfaceBindingMask,
-    &rigExecOps::SurfaceBindingDeltaMultipliers,
-    &rigExecOps::SurfaceBindingLimitWeights,
-    &rigExecOps::SurfaceBindingLimitDuWeights,
-    &rigExecOps::SurfaceBindingLimitDvWeights,
-    &rigExecOps::SurfaceBindingOffsets,
-    &rigExecOps::SurfaceBindingStrength,
-    &rigExecOps::SurfaceBindingDeltaMultiplier,
-    &rigExecOps::SurfaceBindingSurfaceRest,
-    &rigExecOps::SurfaceBindingTargetRest,
-    &rigExecOps::SurfaceBindingSurfaceToBinding,
-    &rigExecOps::SurfaceBindingSurface,
-    &rigExecOps::SurfaceBindingCounts,
-    &rigExecOps::SurfaceBindingIndices};
+constexpr const char *kSkinningMethods[] = {"classicLinear", "dualQuaternion"};
 
 bool
-AddSurfaceBinding(const RigExecRevisionBinding &binding,
-                  const RigExecExternalOpValues &values,
-                  RigExecRigDescBuilder &builder, RigExecExternalOpNode &node,
-                  std::string *error)
-{
-    SurfaceBindingValues v;
-    if (!ReadSurfaceBinding(binding, values, &v))
-        return Fail(error, "surface binding inputs do not translate");
-    node.node = builder.AddOp(rigExecOps::SurfaceBinding(), &v.payload);
-    for (const auto port : kSurfaceBindingPorts)
-        node.inputs.push_back(builder.BindInput(node.node, port()));
-    if (v.payload.framed)
-        node.inputs.push_back(
-            builder.BindInput(node.node, rigExecOps::SurfaceBindingFrames()));
-    node.points =
-        builder.BindInput(node.node, rigExecOps::SurfaceBindingPoints());
-    node.envelope =
-        builder.BindInput(node.node, rigExecOps::SurfaceBindingEnvelope());
-    node.out = builder.BindOutput(node.node, rigExecOps::SurfaceBindingOut());
-    node.payload =
-        std::make_shared<rigExecOps::SurfaceBindingPayload>(v.payload);
-    return true;
-}
-
-bool
-ReadSurfaceBindingFor(const RigExecRevisionBinding &binding,
-                      const RigExecExternalOpValues &values,
-                      const RigExecExternalOpNode &node,
-                      SurfaceBindingValues *v, bool *moved)
-{
-    if (!ReadSurfaceBinding(binding, values, v))
-        return false;
-    const auto *kept = static_cast<const rigExecOps::SurfaceBindingPayload *>(
-        node.payload.get());
-    *moved = !kept || !(*kept == v->payload);
-    return true;
-}
-
-bool
-WriteSurfaceBinding(const RigExecRevisionBinding &binding,
-                    const RigExecExternalOpValues &values,
-                    const RigExecExternalOpNode &node,
-                    RigExecEvaluator &evaluator, std::string *error)
-{
-    SurfaceBindingValues v;
-    bool moved = false;
-    if (!ReadSurfaceBindingFor(binding, values, node, &v, &moved))
-        return Fail(error, "surface binding inputs do not translate");
-    if (moved)
-        return Fail(error, "surface binding settings changed");
-    std::vector<const void *> ordered;
-    for (const RigExecArray<int> &a : v.ints)
-        ordered.push_back(&a);
-    for (const RigExecArray<float> &a : v.floats)
-        ordered.push_back(&a);
-    for (const void *value : {static_cast<const void *>(&v.offsets),
-                              static_cast<const void *>(&v.strength),
-                              static_cast<const void *>(&v.deltaMultiplier),
-                              static_cast<const void *>(&v.surfaceRest),
-                              static_cast<const void *>(&v.targetRest),
-                              static_cast<const void *>(&v.surfaceToBinding),
-                              static_cast<const void *>(&v.surface),
-                              static_cast<const void *>(&v.counts),
-                              static_cast<const void *>(&v.indices)})
-        ordered.push_back(value);
-    if (v.payload.framed)
-        ordered.push_back(&v.frames);
-    if (ordered.size() != node.inputs.size())
-        return Fail(error, "surface binding inputs changed");
-    for (size_t i = 0; i < ordered.size(); ++i)
-        if (!evaluator.SetInput(node.inputs[i], ordered[i], error))
-            return false;
-    return true;
-}
-
-bool
-SurfaceBindingStale(const RigExecRevisionBinding &binding,
-                    const RigExecExternalOpValues &values,
-                    const RigExecExternalOpNode &node)
-{
-    SurfaceBindingValues v;
-    bool moved = false;
-    return ReadSurfaceBindingFor(binding, values, node, &v, &moved) && moved;
-}
-
-// --- LayeredSkin -----------------------------------------------------------
-
-struct LayeredSkinValues {
-    rigExecOps::LayeredSkinPayload payload;
-    RigExecArray<Mat4d> transforms;
-    RigExecArray<int> indices;
-    RigExecArray<float> weights, mask;
-    RigExecArray<Vec3f> base;
-    Mat4d inputTransform;
-};
-
-/// The layered skin mover's declared inputs, influences and transform as
-/// the op's payload and inputs.
-bool
-ReadLayeredSkin(const RigExecRevisionBinding &,
-                const RigExecExternalOpValues &values, LayeredSkinValues *out)
-{
-    using namespace layeredSkinInputs;
-    const std::vector<VtValue> &in = *values.inputs;
-    if (in.size() != kInputCount || !values.influenceTransforms ||
-        values.influenceTransforms->empty())
-        return false;
-    VtIntArray indices;
-    VtFloatArray weights, mask;
-    const char *method = nullptr;
-    bool fromBase = false, transformInput = false;
-    rigExecOps::LayeredSkinPayload &p = out->payload;
-    if (!As(in[kJointIndices], &indices) || !As(in[kJointWeights], &weights) ||
-        !As(in[kElementSize], &p.elementSize) ||
-        !Text(in[kSkinningMethod], &method) || !As(in[kMask], &mask) ||
-        !As(in[kUseBaseInput], &fromBase) ||
-        !As(in[kTransformInput], &transformInput))
-        return false;
-    if ((transformInput && !values.transform) ||
-        (!Is(method, "classicLinear") && !Is(method, "dualQuaternion")))
-        return false;
-    p.dualQuaternion = Is(method, "dualQuaternion");
-    const std::vector<GfMatrix4d> &transforms = *values.influenceTransforms;
-    out->transforms = RigExecArray<Mat4d>(transforms.size());
-    for (size_t k = 0; k < transforms.size(); ++k)
-        out->transforms[k] = ToStd(transforms[k]);
-    out->indices = ToArray(indices);
-    out->weights = ToArray(weights);
-    out->mask = ToArray(mask);
-    if (fromBase && values.basePoints)
-        out->base = ToStd(values.basePoints->data(), values.basePoints->size());
-    out->inputTransform =
-        ToStd(transformInput ? *values.transform : GfMatrix4d(1));
-    return true;
-}
-
-const RigExecPortHandle &(*const kLayeredSkinPorts[])() = {
-    &rigExecOps::LayeredSkinTransforms, &rigExecOps::LayeredSkinIndices,
-    &rigExecOps::LayeredSkinWeights,    &rigExecOps::LayeredSkinMask,
-    &rigExecOps::LayeredSkinBase,       &rigExecOps::LayeredSkinInputTransform};
-
-bool
-AddLayeredSkin(const RigExecRevisionBinding &binding,
-               const RigExecExternalOpValues &values,
-               RigExecRigDescBuilder &builder, RigExecExternalOpNode &node,
-               std::string *error)
-{
-    LayeredSkinValues v;
-    if (!ReadLayeredSkin(binding, values, &v))
-        return Fail(error, "layered skin inputs do not translate");
-    node.node = builder.AddOp(rigExecOps::LayeredSkin(), &v.payload);
-    for (const auto port : kLayeredSkinPorts)
-        node.inputs.push_back(builder.BindInput(node.node, port()));
-    node.points = builder.BindInput(node.node, rigExecOps::LayeredSkinPoints());
-    node.envelope =
-        builder.BindInput(node.node, rigExecOps::LayeredSkinEnvelope());
-    node.out = builder.BindOutput(node.node, rigExecOps::LayeredSkinOut());
-    node.payload = std::make_shared<rigExecOps::LayeredSkinPayload>(v.payload);
-    return true;
-}
-
-bool
-ReadLayeredSkinFor(const RigExecRevisionBinding &binding,
-                   const RigExecExternalOpValues &values,
-                   const RigExecExternalOpNode &node, LayeredSkinValues *v,
-                   bool *moved)
-{
-    if (!ReadLayeredSkin(binding, values, v))
-        return false;
-    const auto *kept =
-        static_cast<const rigExecOps::LayeredSkinPayload *>(node.payload.get());
-    *moved = !kept || !(*kept == v->payload);
-    return true;
-}
-
-bool
-WriteLayeredSkin(const RigExecRevisionBinding &binding,
-                 const RigExecExternalOpValues &values,
-                 const RigExecExternalOpNode &node, RigExecEvaluator &evaluator,
+BuildLayeredSkin(const RigExecExternalOpContext &context,
+                 RigExecRigDescBuilder &builder, RigExecExternalOpPlan &plan,
                  std::string *error)
 {
-    LayeredSkinValues v;
-    bool moved = false;
-    if (!ReadLayeredSkinFor(binding, values, node, &v, &moved))
-        return Fail(error, "layered skin inputs do not translate");
-    if (moved)
-        return Fail(error, "layered skin settings changed");
-    const void *ordered[] = {&v.transforms, &v.indices, &v.weights,
-                             &v.mask,       &v.base,    &v.inputTransform};
-    for (size_t i = 0; i < std::size(ordered); ++i)
-        if (!evaluator.SetInput(node.inputs[i], ordered[i], error))
-            return false;
+    using namespace layeredSkinInputs;
+    namespace op = rigExecOps;
+    const RigExecRevisionBinding &binding = context.binding;
+    if (binding.externalInputs.size() != kInputCount)
+        return Fail(error, binding.moverPath.GetString() +
+                               ": the layered skin declares other inputs");
+    if (binding.influences.empty())
+        return Fail(error,
+                    binding.moverPath.GetString() + ": names no influences");
+    op::LayeredSkinPayload p;
+    bool fromBase = false, transformInput = false;
+    if (!PinAs(context, kElementSize, plan, "the element size", &ReadInt,
+               &p.elementSize, error) ||
+        !PinAs(context, kSkinningMethod, plan, "the skinning method",
+               &ReadMode<kSkinningMethods>, &p.dualQuaternion, error) ||
+        !PinAs(context, kUseBaseInput, plan, "inputs:useBaseInput", &ReadBool,
+               &fromBase, error) ||
+        !PinAs(context, kTransformInput, plan, "the transform input", &ReadBool,
+               &transformInput, error))
+        return false;
+    plan.node = builder.AddOp(op::LayeredSkin(), &p);
+    plan.out = &op::LayeredSkinOut();
+    plan.feeds = {{&op::LayeredSkinPoints(), Source::Points},
+                  {&op::LayeredSkinTransforms(), Source::Influence, 0,
+                   uint32_t(binding.influences.size())},
+                  {&op::LayeredSkinIndices(), Source::Input, kJointIndices},
+                  {&op::LayeredSkinWeights(), Source::Input, kJointWeights},
+                  {&op::LayeredSkinMask(), Source::Input, kMask}};
+    if (fromBase)
+        plan.feeds.push_back({&op::LayeredSkinBase(), Source::BasePoints});
+    if (transformInput)
+        plan.feeds.push_back(
+            {&op::LayeredSkinInputTransform(), Source::Transform});
     return true;
 }
 
-bool
-LayeredSkinStale(const RigExecRevisionBinding &binding,
-                 const RigExecExternalOpValues &values,
-                 const RigExecExternalOpNode &node)
-{
-    LayeredSkinValues v;
-    bool moved = false;
-    return ReadLayeredSkinFor(binding, values, node, &v, &moved) && moved;
-}
+const RigExecExternalOpBinder kBuiltinBinders[] = {
+    {sizeof(RigExecExternalOpBinder), SchemaTypeName::RigExecPatchMover,
+     &rigExecOps::Patch, &BuildPatch},
+    {sizeof(RigExecExternalOpBinder),
+     SchemaTypeName::RigExecSurfaceBindingMover, &rigExecOps::SurfaceBinding,
+     &BuildSurfaceBinding},
+    {sizeof(RigExecExternalOpBinder), SchemaTypeName::RigExecLayeredSkinMover,
+     &rigExecOps::LayeredSkin, &BuildLayeredSkin},
+};
 
 // --- Cloth -----------------------------------------------------------------
 
@@ -791,13 +548,7 @@ ClothStale(const RigExecRevisionBinding &binding,
 
 // --- Table ----------------------------------------------------------------
 
-const LegacyBinder kBuiltinBinders[] = {
-    {SchemaTypeName::RigExecPatchMover, &rigExecOps::Patch, &AddPatch,
-     &WritePatch, &PatchStale},
-    {SchemaTypeName::RigExecSurfaceBindingMover, &rigExecOps::SurfaceBinding,
-     &AddSurfaceBinding, &WriteSurfaceBinding, &SurfaceBindingStale},
-    {SchemaTypeName::RigExecLayeredSkinMover, &rigExecOps::LayeredSkin,
-     &AddLayeredSkin, &WriteLayeredSkin, &LayeredSkinStale},
+const LegacyBinder kLegacyBinders[] = {
     {SchemaTypeName::RigExecClothMover, &rigExecOps::Cloth, &AddCloth,
      &WriteCloth, &ClothStale},
 };
@@ -810,7 +561,7 @@ std::atomic<bool> gAdded{false};
 const LegacyBinder *
 FindLegacy(const char *schemaType)
 {
-    for (const LegacyBinder &binder : kBuiltinBinders)
+    for (const LegacyBinder &binder : kLegacyBinders)
         if (std::strcmp(binder.schemaType, schemaType) == 0)
             return &binder;
     return nullptr;
@@ -834,12 +585,26 @@ Legacy(const RigExecRevisionBinding &binding)
                : FindLegacy(binding.externalSchema.GetText());
 }
 
-/// \p binding's plugin binder, after op plugin discovery.
+const RigExecExternalOpBinder *
+FindBuiltin(const char *schemaType)
+{
+    for (const RigExecExternalOpBinder &binder : kBuiltinBinders)
+        if (std::strcmp(binder.schemaType, schemaType) == 0)
+            return &binder;
+    return nullptr;
+}
+
+/// \p binding's built-in binder, or its plugin binder after op plugin
+/// discovery.
 const RigExecExternalOpBinder *
 Planned(const RigExecRevisionBinding &binding)
 {
-    if (binding.externalSchema.IsEmpty() ||
-        !RigExecEnsureSceneOpRegistry(nullptr))
+    if (binding.externalSchema.IsEmpty())
+        return nullptr;
+    if (const RigExecExternalOpBinder *builtin =
+            FindBuiltin(binding.externalSchema.GetText()))
+        return builtin;
+    if (!RigExecEnsureSceneOpRegistry(nullptr))
         return nullptr;
     return FindAdded(binding.externalSchema.GetText());
 }
@@ -860,8 +625,9 @@ SetValue(RigExecEvaluator &evaluator, const RigExecInputId &id,
         return set(int32_t(value.UncheckedGet<int>()));
     if (type == &rigExecStd::FloatType() && value.IsHolding<float>())
         return set(value.UncheckedGet<float>());
-    if (type == &rigExecStd::DoubleType() && value.IsHolding<double>())
-        return set(value.UncheckedGet<double>());
+    double scalar = 0.0;
+    if (type == &rigExecStd::DoubleType() && Scalar(value, &scalar))
+        return set(scalar);
     if (type == &rigExecStd::Vec3fType() && value.IsHolding<GfVec3f>()) {
         const GfVec3f &v = value.UncheckedGet<GfVec3f>();
         return set(Vec3f(v[0], v[1], v[2]));
@@ -877,6 +643,37 @@ SetValue(RigExecEvaluator &evaluator, const RigExecInputId &id,
     if (type == &rigExecStd::Vec3fArray() && value.IsHolding<VtVec3fArray>())
         return vec3fs(value.UncheckedGet<VtVec3fArray>());
     return Fail(error, "a declared input does not hold its op input's type");
+}
+
+/// Declared inputs [index, index + count) as one array of \p type: scalars
+/// listed, arrays joined end to end.
+bool
+SetValues(RigExecEvaluator &evaluator, const RigExecInputId &id,
+          const RigExecTypeHandle *type, const std::vector<VtValue> &inputs,
+          size_t index, size_t count, std::string *error)
+{
+    if (index + count > inputs.size())
+        return Fail(error, "a declared input the mover lacks");
+    if (type == &rigExecStd::DoubleArray()) {
+        RigExecArray<double> out(count);
+        for (size_t k = 0; k < count; ++k)
+            if (!Scalar(inputs[index + k], &out[k]))
+                return Fail(error, "a declared input is not a number");
+        return evaluator.SetInput(id, &out, error);
+    }
+    if (type == &rigExecStd::Vec3fArray()) {
+        std::vector<Vec3f> joined;
+        for (size_t k = 0; k < count; ++k) {
+            const VtValue &value = inputs[index + k];
+            if (!value.IsHolding<VtVec3fArray>())
+                return Fail(error, "a declared input is not a point array");
+            for (const GfVec3f &p : value.UncheckedGet<VtVec3fArray>())
+                joined.emplace_back(p[0], p[1], p[2]);
+        }
+        const RigExecArray<Vec3f> out(joined.data(), joined.size());
+        return evaluator.SetInput(id, &out, error);
+    }
+    return Fail(error, "declared inputs do not join into their op input");
 }
 
 /// Writes one frame of \p node's feeds.
@@ -907,8 +704,13 @@ WritePlanned(const RigExecExternalOpValues &values,
         case RigExecExternalOpSource::Input:
             if (!values.inputs || feed.index >= values.inputs->size())
                 return Fail(error, "a declared input the mover lacks");
-            ok = SetValue(evaluator, id, desc.ports[feed.port->Index()].type,
-                          (*values.inputs)[feed.index], error);
+            ok = feed.count
+                     ? SetValues(evaluator, id,
+                                 desc.ports[feed.port->Index()].type,
+                                 *values.inputs, feed.index, feed.count, error)
+                     : SetValue(evaluator, id,
+                                desc.ports[feed.port->Index()].type,
+                                (*values.inputs)[feed.index], error);
             break;
         case RigExecExternalOpSource::Transform:
             if (!values.transform)
@@ -916,14 +718,23 @@ WritePlanned(const RigExecExternalOpValues &values,
             ok = SetValue(evaluator, id, &rigExecStd::Mat4dType(),
                           VtValue(*values.transform), error);
             break;
-        case RigExecExternalOpSource::Influence:
+        case RigExecExternalOpSource::Influence: {
+            const size_t count = feed.count ? feed.count : 1;
             if (!values.influenceTransforms ||
-                feed.index >= values.influenceTransforms->size())
+                feed.index + count > values.influenceTransforms->size())
                 return Fail(error, "an influence the mover lacks");
-            ok = SetValue(evaluator, id, &rigExecStd::Mat4dType(),
-                          VtValue((*values.influenceTransforms)[feed.index]),
-                          error);
+            if (!feed.count) {
+                ok = SetValue(
+                    evaluator, id, &rigExecStd::Mat4dType(),
+                    VtValue((*values.influenceTransforms)[feed.index]), error);
+                break;
+            }
+            RigExecArray<Mat4d> list(count);
+            for (size_t k = 0; k < count; ++k)
+                list[k] = ToStd((*values.influenceTransforms)[feed.index + k]);
+            ok = evaluator.SetInput(id, &list, error);
             break;
+        }
         }
         if (!ok)
             return false;
@@ -945,7 +756,8 @@ RigExecAddExternalOpBinders(
         if (!binder || binder->structSize != sizeof(RigExecExternalOpBinder) ||
             !binder->schemaType || !binder->op || !binder->build)
             return Fail(error, "an incomplete op binder");
-        bool taken = FindLegacy(binder->schemaType) != nullptr;
+        bool taken = FindLegacy(binder->schemaType) != nullptr ||
+                     FindBuiltin(binder->schemaType) != nullptr;
         for (size_t j = 0; j < i && !taken; ++j)
             taken =
                 std::strcmp(binders[j]->schemaType, binder->schemaType) == 0;
@@ -965,16 +777,17 @@ RigExecBindsExternalOp(const RigExecRevisionBinding &binding)
 }
 
 bool
-RigExecBuildExternalOp(const RigExecRevisionBinding &binding,
+RigExecBuildExternalOp(const RigExecExternalOpContext &context,
                        RigExecRigDescBuilder &builder,
                        RigExecExternalOpPlan *plan, std::string *error)
 {
+    const RigExecRevisionBinding &binding = context.binding;
     const RigExecExternalOpBinder *binder = Planned(binding);
     if (!binder)
         return Fail(error, binding.moverPath.GetString() +
-                               ": no op plugin binds its mover");
+                               ": no op binder binds its mover");
     RigExecExternalOpPlan built;
-    if (!binder->build(binding, builder, built, error))
+    if (!binder->build(context, builder, built, error))
         return false;
     if (built.node == kRigExecInvalidIndex || !built.out)
         return Fail(error, binding.moverPath.GetString() +
@@ -1018,7 +831,9 @@ RigExecAddExternalOp(const RigExecRevisionBinding &binding,
         return Fail(error, "mover has no op");
     result.op = &planned->op();
     result.planned = true;
-    if (!RigExecBuildExternalOp(binding, *builder, &result.plan, error))
+    result.source = *values.inputs;
+    if (!RigExecBuildExternalOp({binding, result.source}, *builder,
+                                &result.plan, error))
         return false;
     result.node = result.plan.node;
     for (const RigExecExternalOpFeed &feed : result.plan.feeds)
@@ -1039,9 +854,9 @@ RigExecWriteExternalOpInputs(const RigExecRevisionBinding &binding,
     if (!evaluator || !values.inputs)
         return Fail(error, "null evaluator or inputs");
     if (node.planned)
-        return node.op == RigExecExternalOpHandle(binding)
+        return !RigExecExternalOpNodeStale(binding, values, node)
                    ? WritePlanned(values, points, node, *evaluator, error)
-                   : Fail(error, "node is not this mover's op");
+                   : Fail(error, "the mover's op settings changed");
     const LegacyBinder *op = Legacy(binding);
     if (!op || node.op != &op->op())
         return Fail(error, "node is not this mover's op");
@@ -1062,8 +877,28 @@ RigExecExternalOpNodeStale(const RigExecRevisionBinding &binding,
                            const RigExecExternalOpValues &values,
                            const RigExecExternalOpNode &node)
 {
-    if (node.planned)
-        return node.op != RigExecExternalOpHandle(binding);
+    if (node.planned) {
+        if (node.op != RigExecExternalOpHandle(binding) || !values.inputs)
+            return true;
+        for (const uint32_t k : node.plan.pins)
+            if (k >= values.inputs->size() || k >= node.source.size() ||
+                (*values.inputs)[k] != node.source[k])
+                return true;
+        // The binding's structure (its influences, say) can move the feeds.
+        RigExecRigDescBuilder scratch;
+        RigExecExternalOpPlan plan;
+        if (!RigExecBuildExternalOp({binding, *values.inputs}, scratch, &plan,
+                                    nullptr))
+            return true;
+        const auto same = [](const RigExecExternalOpFeed &a,
+                             const RigExecExternalOpFeed &b) {
+            return a.port == b.port && a.source == b.source &&
+                   a.index == b.index && a.count == b.count;
+        };
+        return !std::equal(plan.feeds.begin(), plan.feeds.end(),
+                           node.plan.feeds.begin(), node.plan.feeds.end(),
+                           same);
+    }
     const LegacyBinder *op = Legacy(binding);
     if (!op || node.op != &op->op())
         return true;

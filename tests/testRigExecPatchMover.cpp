@@ -197,13 +197,6 @@ CheckRuntime(const UsdStageRefPtr &stage, const char *what, const SdfPath &avar,
         std::printf("%s open: %s\n", what, error.c_str());
         return;
     }
-    const auto *handler = RigExecFindMoverHandler(TfToken("RigExecPatchMover"));
-    CHECK(handler && handler->runtimeKernel.IsSet());
-    if (!handler) {
-        return;
-    }
-    CHECK(player->SetExternalKernel("RigExecPatchMover", handler->runtimeKernel,
-                                    &error));
     CHECK(player->GetMissingExternalKernels().empty());
     const auto compare = [&](const RigExecRigPose &pose, const char *phase) {
         std::vector<std::string> diffs;

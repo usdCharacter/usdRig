@@ -160,10 +160,11 @@ const rigExec::RigExecOpLibraryDesc kLibrary = [] {
 /// The mover's declared inputs are its gain, then an optional reference
 /// points array; it measures against its target's base points.
 bool
-Build(const rigExec::RigExecRevisionBinding &binding,
+Build(const rigExec::RigExecExternalOpContext &context,
       rigExec::RigExecRigDescBuilder &builder,
       rigExec::RigExecExternalOpPlan &plan, std::string *)
 {
+    const rigExec::RigExecRevisionBinding &binding = context.binding;
     using Source = rigExec::RigExecExternalOpSource;
     plan.node = builder.AddOp(Quadratic());
     plan.out = &QuadraticOut();
